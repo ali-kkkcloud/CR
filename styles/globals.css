@@ -1,0 +1,78 @@
+:root {
+  --bg:       #0a0a0a;
+  --surface:  #111111;
+  --s2:       #161616;
+  --s3:       #1a1a1a;
+  --border:   #222222;
+  --border2:  #2a2a2a;
+  --green:    #22c55e;
+  --green-d:  #16a34a;
+  --glow:     #22c55e14;
+  --text:     #ffffff;
+  --muted:    #6b7280;
+  --muted2:   #374151;
+  --red:      #ef4444;
+  --amber:    #f59e0b;
+  --blue:     #3b82f6;
+  --purple:   #a78bfa;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+a { color: var(--green); text-decoration: none; }
+button { cursor: pointer; font-family: inherit; }
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--s2);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--glow);
+}
+select option { background: var(--s2); }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+.badge { display: inline-block; border-radius: 4px; padding: 2px 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+.badge-green  { background: #22c55e22; color: #4ade80; border: 1px solid #22c55e33; }
+.badge-red    { background: #ef444422; color: #f87171; border: 1px solid #ef444433; }
+.badge-amber  { background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b33; }
+.badge-blue   { background: #3b82f622; color: #60a5fa; border: 1px solid #3b82f633; }
+
+.spinner {
+  width: 20px; height: 20px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.live-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
