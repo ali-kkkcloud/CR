@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import Navbar from '../components/Navbar'
@@ -7,16 +7,27 @@ export default function Admin() {
   const router = useRouter()
   const [user, setUser] = useState(null)
   const [overview, setOverview] = useState(null)
+  const [progress, setProgress] = useState(null)
   const [footage, setFootage] = useState({ pending: [], completed: [] })
   const [activeTab, setActiveTab] = useState('overview')
+  const [footageSearchInput, setFootageSearchInput] = useState('')
   const [footageSearch, setFootageSearch] = useState('')
+  const [dateFilter, setDateFilter] = useState('')
   const [loading, setLoading] = useState(true)
+  const debounceRef = useRef(null)
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setFootageSearch(footageSearchInput), 300)
+    return () => clearTimeout(debounceRef.current)
+  }, [footageSearchInput])
 
   useEffect(() => {
     fetch('/api/auth/me').then(r => r.json()).then(d => {
       if (!d.user || d.user.role !== 'admin') { router.replace('/login'); return }
       setUser(d.user)
       loadData()
+      loadProgress()
       setLoading(false)
     })
   }, [])
@@ -30,50 +41,62 @@ export default function Admin() {
     setFootage({ pending: ft.pending || [], completed: ft.completed || [] })
   }, [])
 
+  const loadProgress = useCallback(async () => {
+    const data = await fetch('/api/admin/employee-progress').then(r => r.json())
+    if (data.progress) setProgress(data)
+  }, [])
+
   useEffect(() => {
-    const id = setInterval(loadData, 60000)
+    const id = setInterval(() => { loadData(); loadProgress() }, 60000)
     return () => clearInterval(id)
-  }, [loadData])
+  }, [loadData, loadProgress])
 
-  function downloadFootageCSV() {
-    const all = [...(footage.pending || []), ...(footage.completed || [])]
-    const rows = [
-      ['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Resolved','Resolved At','Location'],
-      ...all.map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.details, i.raisedBy, i.resolved?'Yes':'No', i.resolvedAt, i.location])
-    ]
+  function downloadCSV(rows, filename) {
     const csv  = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url  = URL.createObjectURL(blob)
     const a    = document.createElement('a')
     a.href = url
-    a.download = `Footage_All_${new Date().toLocaleDateString('en-IN').replace(/\//g,'-')}.csv`
+    a.download = filename
     a.click()
   }
 
-  function downloadPendingCSV() {
-    const rows = [
-      ['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Location'],
-      ...(footage.pending || []).map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.details, i.raisedBy, i.location])
-    ]
-    const csv  = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href = url
-    a.download = `Footage_Pending_${new Date().toLocaleDateString('en-IN').replace(/\//g,'-')}.csv`
-    a.click()
+  function matchDateFlexible(raisedAtStr, isoDate) {
+    if (!isoDate) return true
+    const [y, m, d] = isoDate.split('-')
+    const ddmmyyyy = `${d}/${m}/${y}`
+    return (raisedAtStr || '').includes(ddmmyyyy)
   }
 
-  const filterFootage = (list) => {
-    if (!footageSearch.trim()) return list
-    const q = footageSearch.trim().toLowerCase()
-    return list.filter(item =>
-      (item.vehicle  || '').toLowerCase().includes(q) ||
-      (item.issueId  || '').toString().toLowerCase().includes(q) ||
-      (item.client   || '').toLowerCase().includes(q) ||
-      (item.raisedBy || '').toLowerCase().includes(q)
-    )
-  }
+  const filteredPending = useMemo(() => {
+    let list = footage.pending
+    if (dateFilter) list = list.filter(item => matchDateFlexible(item.raisedAt, dateFilter))
+    if (footageSearch.trim()) {
+      const q = footageSearch.trim().toLowerCase()
+      list = list.filter(item =>
+        (item.vehicle  || '').toLowerCase().includes(q) ||
+        (item.issueId  || '').toString().toLowerCase().includes(q) ||
+        (item.client   || '').toLowerCase().includes(q) ||
+        (item.raisedBy || '').toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [footage.pending, footageSearch, dateFilter])
+
+  const filteredCompleted = useMemo(() => {
+    let list = footage.completed
+    if (dateFilter) list = list.filter(item => matchDateFlexible(item.raisedAt, dateFilter))
+    if (footageSearch.trim()) {
+      const q = footageSearch.trim().toLowerCase()
+      list = list.filter(item =>
+        (item.vehicle  || '').toLowerCase().includes(q) ||
+        (item.issueId  || '').toString().toLowerCase().includes(q) ||
+        (item.client   || '').toLowerCase().includes(q) ||
+        (item.raisedBy || '').toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [footage.completed, footageSearch, dateFilter])
 
   if (loading || !overview) return (
     <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh'}}>
@@ -99,15 +122,17 @@ export default function Admin() {
         <div style={s.body}>
 
           <div style={s.tabs}>
-            {['overview','footage','redistribution'].map(t => (
+            {['overview','progress','footage','redistribution'].map(t => (
               <button key={t} style={activeTab===t ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab(t)}>
-                {t === 'overview' ? 'Employee Overview' :
-                 t === 'footage'  ? `Footage Requests (${footage.pending.length} pending)` :
-                                    `Redistribution Log (${redistribution.length})`}
+                {t === 'overview'        ? 'Employee Overview' :
+                 t === 'progress'        ? 'Employee Progress' :
+                 t === 'footage'         ? `Footage Requests (${footage.pending.length} pending)` :
+                                           `Redistribution Log (${redistribution.length})`}
               </button>
             ))}
           </div>
 
+          {/* ══════════ OVERVIEW TAB ══════════ */}
           {activeTab === 'overview' && (
             <>
               <div style={s.kpiGrid}>
@@ -171,28 +196,93 @@ export default function Admin() {
             </>
           )}
 
-          {activeTab === 'footage' && (
-            <div style={{maxWidth:'900px'}}>
-              <div style={{display:'flex',gap:'10px',marginBottom:'16px',flexWrap:'wrap',alignItems:'center'}}>
-                <div style={s.footSumCard}><span style={{color:'#f59e0b',fontSize:'22px',fontWeight:'700'}}>{footage.pending.length}</span><span style={{color:'#6b7280',fontSize:'10px'}}>PENDING</span></div>
-                <div style={s.footSumCard}><span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{footage.completed.length}</span><span style={{color:'#6b7280',fontSize:'10px'}}>COMPLETED</span></div>
-                <div style={{flex:1, minWidth:'220px'}}>
-                  <input style={s.searchInp} placeholder="🔍 Search vehicle no., issue ID, client, employee..." value={footageSearch} onChange={e => setFootageSearch(e.target.value)} />
+          {/* ══════════ EMPLOYEE PROGRESS TAB ══════════ */}
+          {activeTab === 'progress' && (
+            <div>
+              <div style={s.sectionHd}>
+                EMPLOYEE PROGRESS — LAST 7 DAYS
+                <span style={{color:'#374151',fontWeight:'400',letterSpacing:'0',fontSize:'11px',marginLeft:'8px'}}>Attendance, work output, footage</span>
+              </div>
+
+              {!progress ? (
+                <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
+              ) : (
+                <div style={s.progressGrid}>
+                  {progress.progress.map(emp => (
+                    <div key={emp.name} style={s.progCard}>
+                      <div style={s.progHeader}>
+                        <div style={{...s.empAva, background: emp.isNight ? '#7c3aed' : '#16a34a'}}>{emp.name.slice(0,2).toUpperCase()}</div>
+                        <div style={{flex:1}}>
+                          <div style={{color:'#fff', fontSize:'14px', fontWeight:'700'}}>{emp.name}</div>
+                          <div style={{color:'#6b7280', fontSize:'10px'}}>{emp.isNight ? 'Night' : 'Day'} {emp.shiftStart}:00–{emp.shiftEnd}:00</div>
+                        </div>
+                        <div style={{textAlign:'right'}}>
+                          <div style={{color:'#22c55e', fontSize:'16px', fontWeight:'700'}}>{emp.daysPresent}/7</div>
+                          <div style={{color:'#6b7280', fontSize:'9px'}}>days present</div>
+                        </div>
+                      </div>
+
+                      <div style={s.attendanceStrip}>
+                        {emp.attendance.slice().reverse().map((a, i) => (
+                          <div key={i} style={s.attendanceDay} title={`${a.date}: ${a.status}${a.startTime ? ' · ' + a.startTime : ''}${a.endTime ? ' → ' + a.endTime : ''}`}>
+                            <div style={{
+                              ...s.attendanceDot,
+                              background: a.status === 'active' ? '#22c55e' : a.status === 'completed' ? '#3b82f6' : '#ef4444',
+                            }}></div>
+                            <div style={s.attendanceDate}>{a.date.split('/')[0]}/{a.date.split('/')[1]}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={s.progStatsGrid}>
+                        <div style={s.progStat}><div style={{color:'#22c55e',fontSize:'15px',fontWeight:'700'}}>{emp.todayClientsCount}</div><div style={{color:'#6b7280',fontSize:'8px'}}>CLIENTS TODAY</div></div>
+                        <div style={s.progStat}><div style={{color:'#a78bfa',fontSize:'15px',fontWeight:'700'}}>{emp.todayUpdatesCount}</div><div style={{color:'#6b7280',fontSize:'8px'}}>UPDATES</div></div>
+                        <div style={s.progStat}><div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'700'}}>{emp.todayMisaligns}</div><div style={{color:'#6b7280',fontSize:'8px'}}>MISALIGNS</div></div>
+                        <div style={s.progStat}><div style={{color:'#f87171',fontSize:'15px',fontWeight:'700'}}>{emp.todayAlerts}</div><div style={{color:'#6b7280',fontSize:'8px'}}>ALERTS</div></div>
+                      </div>
+                      <div style={s.progStatsGrid}>
+                        <div style={s.progStat}><div style={{color:'#22c55e',fontSize:'15px',fontWeight:'700'}}>{emp.footageCompletedToday}</div><div style={{color:'#6b7280',fontSize:'8px'}}>FOOTAGE DONE TODAY</div></div>
+                        <div style={s.progStat}><div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'700'}}>{emp.footagePending}</div><div style={{color:'#6b7280',fontSize:'8px'}}>FOOTAGE PENDING</div></div>
+                        <div style={s.progStat}><div style={{color: emp.daysAbsent > 0 ? '#f87171' : '#22c55e',fontSize:'15px',fontWeight:'700'}}>{emp.daysAbsent}</div><div style={{color:'#6b7280',fontSize:'8px'}}>DAYS MISSED</div></div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* ══════════ FOOTAGE TAB ══════════ */}
+          {activeTab === 'footage' && (
+            <div style={{maxWidth:'1000px'}}>
+              <div style={{display:'flex',gap:'10px',marginBottom:'16px',flexWrap:'wrap',alignItems:'center'}}>
+                <div style={s.footSumCard}><span style={{color:'#f59e0b',fontSize:'22px',fontWeight:'700'}}>{filteredPending.length}</span><span style={{color:'#6b7280',fontSize:'10px'}}>PENDING</span></div>
+                <div style={s.footSumCard}><span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{filteredCompleted.length}</span><span style={{color:'#6b7280',fontSize:'10px'}}>COMPLETED</span></div>
+                <div style={{flex:1, minWidth:'220px'}}>
+                  <input style={s.searchInp} placeholder="🔍 Search vehicle no., issue ID, client, employee..." value={footageSearchInput} onChange={e => setFootageSearchInput(e.target.value)} />
+                </div>
+                <input type="date" style={s.dateInp} value={dateFilter} onChange={e => setDateFilter(e.target.value)} title="Filter by Raised date" />
+                {dateFilter && <button style={s.clearBtn} onClick={() => setDateFilter('')}>✕ Clear</button>}
                 <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-                  <button onClick={downloadPendingCSV} style={s.dlBtn}>⬇ Pending CSV</button>
-                  <button onClick={downloadFootageCSV} style={s.dlBtn}>⬇ All CSV</button>
+                  <button onClick={() => downloadCSV(
+                    [['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Location'], ...filteredPending.map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.details, i.raisedBy, i.location])],
+                    `Footage_Pending_${dateFilter || 'all'}.csv`
+                  )} style={s.dlBtn}>⬇ Pending CSV</button>
+                  <button onClick={() => downloadCSV(
+                    [['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Resolved','Resolved At','Location'], ...[...filteredPending, ...filteredCompleted].map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.details, i.raisedBy, i.resolved?'Yes':'No', i.resolvedAt, i.location])],
+                    `Footage_All_${dateFilter || 'all'}.csv`
+                  )} style={s.dlBtn}>⬇ All CSV</button>
                 </div>
               </div>
 
-              {footage.pending.length === 0 && footage.completed.length === 0 && (
-                <div style={{color:'#6b7280',textAlign:'center',padding:'3rem'}}>No footage requests found.</div>
+              {filteredPending.length === 0 && filteredCompleted.length === 0 && (
+                <div style={{color:'#6b7280',textAlign:'center',padding:'3rem'}}>No footage requests found{dateFilter || footageSearch ? ' for this filter' : ''}.</div>
               )}
 
-              {filterFootage(footage.pending).length > 0 && (
+              {filteredPending.length > 0 && (
                 <>
-                  <div style={s.sectionHd}>PENDING ({filterFootage(footage.pending).length})</div>
-                  {filterFootage(footage.pending).map(item => (
+                  <div style={s.sectionHd}>PENDING ({filteredPending.length})</div>
+                  {filteredPending.map(item => (
                     <div key={item.issueId} style={s.footCard}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',flexWrap:'wrap'}}>
                         <div style={{flex:1, minWidth:'200px'}}>
@@ -212,10 +302,10 @@ export default function Admin() {
                 </>
               )}
 
-              {filterFootage(footage.completed).length > 0 && (
+              {filteredCompleted.length > 0 && (
                 <>
-                  <div style={{...s.sectionHd, marginTop:'20px'}}>COMPLETED ({filterFootage(footage.completed).length})</div>
-                  {filterFootage(footage.completed).map(item => (
+                  <div style={{...s.sectionHd, marginTop:'20px'}}>COMPLETED ({filteredCompleted.length})</div>
+                  {filteredCompleted.map(item => (
                     <div key={item.issueId} style={{...s.footCard, opacity:0.6}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',flexWrap:'wrap'}}>
                         <div style={{flex:1, minWidth:'200px'}}>
@@ -235,6 +325,7 @@ export default function Admin() {
             </div>
           )}
 
+          {/* ══════════ REDISTRIBUTION TAB ══════════ */}
           {activeTab === 'redistribution' && (
             <div style={{maxWidth:'900px'}}>
               <div style={s.sectionHd}>TODAY'S REDISTRIBUTION LOG</div>
@@ -292,8 +383,19 @@ const s = {
   footCard: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'14px', marginBottom:'8px' },
   footSumCard: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 20px', display:'flex', flexDirection:'column', alignItems:'center', gap:'2px', minWidth:'90px' },
   searchInp: { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'10px 14px', boxSizing:'border-box' },
+  dateInp: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'9px 10px', boxSizing:'border-box' },
+  clearBtn: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#6b7280', fontSize:'11px', padding:'9px 12px', cursor:'pointer', whiteSpace:'nowrap' },
   dlBtn: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#6b7280', fontSize:'11px', padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' },
   table: { width:'100%', borderCollapse:'collapse', background:'#111', borderRadius:'10px', overflow:'hidden', border:'1px solid #222' },
   tableHd: { color:'#6b7280', fontSize:'10px', letterSpacing:'0.5px', padding:'10px 14px', textAlign:'left', fontWeight:'600' },
   tableTd: { color:'#fff', fontSize:'12px', padding:'10px 14px' },
+  progressGrid: { display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'12px' },
+  progCard: { background:'#111', border:'1px solid #222', borderRadius:'12px', padding:'16px' },
+  progHeader: { display:'flex', alignItems:'center', gap:'10px', marginBottom:'14px' },
+  attendanceStrip: { display:'flex', gap:'4px', marginBottom:'14px', justifyContent:'space-between' },
+  attendanceDay: { display:'flex', flexDirection:'column', alignItems:'center', gap:'3px', flex:1 },
+  attendanceDot: { width:'18px', height:'18px', borderRadius:'5px' },
+  attendanceDate: { color:'#6b7280', fontSize:'8px' },
+  progStatsGrid: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'6px', marginBottom:'6px' },
+  progStat: { background:'#161616', borderRadius:'6px', padding:'7px', textAlign:'center' },
 }
