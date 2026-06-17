@@ -1,1 +1,79 @@
+import { getUserFromReq } from '../../../lib/auth'
+import { readSheet, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
 
+export default async function handler(req, res) {
+  if (req.method !== 'GET') return res.status(405).end()
+  const user = getUserFromReq(req)
+  if (!user) return res.status(401).json({ error: 'Unauthorized' })
+
+  try {
+    const date = (req.query.date || todayStr()).toString()
+
+    const [updateRows, redistRows] = await Promise.all([
+      readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
+      readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`),
+    ])
+
+    const myUpdates = updateRows.slice(1).filter(r => r[0] === date && r[2] === user.name)
+    const redistTo   = redistRows.slice(1).filter(r => r[0] === date && r[3] === user.name)
+    const redistFrom = redistRows.slice(1).filter(r => r[0] === date && r[2] === user.name)
+
+    const hourMap = {}
+    myUpdates.forEach(r => {
+      const hour = parseInt(r[4])
+      if (!hourMap[hour]) hourMap[hour] = []
+      hourMap[hour].push({
+        client: r[3],
+        status: r[5] || '',
+        misalignVehicles: r[6] || '',
+        alertCount: r[7] || '',
+        fatigue: r[8] || '',
+        fatigueCount: r[9] || '',
+        filled: !!(r[5] || r[6] || r[7]),
+        time: r[1] || '',
+      })
+    })
+
+    redistTo.forEach(r => {
+      const hour = parseInt(r[5])
+      if (!hourMap[hour]) hourMap[hour] = []
+      const clientName = r[4]
+      const exists = hourMap[hour].some(c => c.client === clientName)
+      if (!exists) {
+        hourMap[hour].push({
+          client: clientName,
+          status: '', misalignVehicles: '', alertCount: '', fatigue: '', fatigueCount: '',
+          filled: false,
+          isRedistributed: true,
+          fromEmployee: r[2],
+        })
+      }
+    })
+
+    const timeline = Object.keys(hourMap)
+      .map(h => parseInt(h))
+      .sort((a, b) => a - b)
+      .map(hour => ({
+        hour,
+        clients: hourMap[hour],
+        totalClients: hourMap[hour].length,
+        completedClients: hourMap[hour].filter(c => c.filled).length,
+      }))
+
+    const totalClients = timeline.reduce((s, t) => s + t.totalClients, 0)
+    const totalCompleted = timeline.reduce((s, t) => s + t.completedClients, 0)
+
+    return res.status(200).json({
+      date,
+      timeline,
+      totalClients,
+      totalCompleted,
+      totalMissed: totalClients - totalCompleted,
+      redistributedAway: redistFrom.map(r => ({ client: r[4], toEmployee: r[3], hour: parseInt(r[5]) })),
+    })
+
+  } catch (err) {
+    console.error('My day error:', err)
+    return res.status(500).json({ error: 'Server error' })
+  }
+}
