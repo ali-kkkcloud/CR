@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import Navbar from '../components/Navbar'
@@ -15,13 +15,22 @@ export default function Dashboard() {
   const [clients,      setClients]      = useState([])
   const [filled,       setFilled]       = useState({})
   const [footage,      setFootage]      = useState({ pending: [], completed: [] })
+  const [footageSearchInput, setFootageSearchInput] = useState('')
   const [footageSearch, setFootageSearch] = useState('')
+  const [dateFilter,   setDateFilter]   = useState('')
   const [activeTab,    setActiveTab]    = useState('clients')
   const [saving,       setSaving]       = useState({})
   const [showReport,   setShowReport]   = useState(false)
   const [report,       setReport]       = useState(null)
-  const hourRef  = useRef(currentHour)
-  const autoRef  = useRef(null)
+  const hourRef    = useRef(currentHour)
+  const autoRef    = useRef(null)
+  const debounceRef = useRef(null)
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setFootageSearch(footageSearchInput), 300)
+    return () => clearTimeout(debounceRef.current)
+  }, [footageSearchInput])
 
   useEffect(() => {
     async function init() {
@@ -137,21 +146,60 @@ export default function Dashboard() {
     a.click()
   }
 
+  function downloadFootageCSV(list, filename) {
+    const rows = [
+      ['Issue ID','Client','Vehicle','Raised At','Details','Location','Resolved','Resolved At'],
+      ...list.map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.details, i.location, i.resolved?'Yes':'No', i.resolvedAt])
+    ]
+    const csv  = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+  }
+
   const hourLabel = (h) => {
     const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
     const suf  = (n) => n >= 12 ? 'PM' : 'AM'
     return `${to12(h)}:00 ${suf(h)} – ${to12((h+1)%24)}:00 ${suf((h+1)%24)}`
   }
 
-  const filterFootage = (list) => {
-    if (!footageSearch.trim()) return list
-    const q = footageSearch.trim().toLowerCase()
-    return list.filter(item =>
-      (item.vehicle  || '').toLowerCase().includes(q) ||
-      (item.issueId  || '').toString().toLowerCase().includes(q) ||
-      (item.client   || '').toLowerCase().includes(q)
-    )
+  function matchDateFlexible(raisedAtStr, isoDate) {
+    if (!isoDate) return true
+    const [y, m, d] = isoDate.split('-')
+    const ddmmyyyy = `${d}/${m}/${y}`
+    return (raisedAtStr || '').includes(ddmmyyyy)
   }
+
+  const filteredPending = useMemo(() => {
+    let list = footage.pending
+    if (dateFilter) list = list.filter(item => matchDateFlexible(item.raisedAt, dateFilter))
+    if (footageSearch.trim()) {
+      const q = footageSearch.trim().toLowerCase()
+      list = list.filter(item =>
+        (item.vehicle || '').toLowerCase().includes(q) ||
+        (item.issueId || '').toString().toLowerCase().includes(q) ||
+        (item.client  || '').toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [footage.pending, footageSearch, dateFilter])
+
+  const filteredCompleted = useMemo(() => {
+    let list = footage.completed
+    if (dateFilter) list = list.filter(item => matchDateFlexible(item.raisedAt, dateFilter))
+    if (footageSearch.trim()) {
+      const q = footageSearch.trim().toLowerCase()
+      list = list.filter(item =>
+        (item.vehicle || '').toLowerCase().includes(q) ||
+        (item.issueId || '').toString().toLowerCase().includes(q) ||
+        (item.client  || '').toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [footage.completed, footageSearch, dateFilter])
 
   if (shiftStatus === 'loading') return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh'}}><div className="spinner"></div></div>
 
@@ -215,22 +263,26 @@ export default function Dashboard() {
                   ) : (
                     <>
                       <div style={s.tHead}>
-                        <div style={{...s.th, flex:2}}>CLIENT</div>
+                        <div style={{...s.th, flex:1.8}}>CLIENT</div>
+                        <div style={{...s.th, flex:0.6, textAlign:'center'}}>VEH</div>
                         <div style={{...s.th, flex:1.2}}>STATUS</div>
                         <div style={{...s.th, flex:1.5}}>MISALIGN VEHICLES</div>
                         <div style={{...s.th, flex:0.8}}>ALERTS</div>
                         <div style={{...s.th, flex:1.2}}>FATIGUE</div>
                         <div style={{...s.th, flex:0.6, textAlign:'center'}}>SAVE</div>
                       </div>
-                      {clients.map(({ client, isRedistributed, fromEmployee }) => {
+                      {clients.map(({ client, vehicleCount, isRedistributed, fromEmployee }) => {
                         const f   = filled[client] || {}
                         const key = (field) => `${client}_${field}`
                         const fatigueIsYes = (f.fatigue || 'No') === 'Yes'
                         return (
                           <div key={client} style={{...s.tRow, ...(isRedistributed ? s.redistributedRow : {})}}>
-                            <div style={{...s.td, flex:2}}>
+                            <div style={{...s.td, flex:1.8}}>
                               <div style={s.clientName}>{client}</div>
                               {isRedistributed && <div style={s.redistTag}>↩ from {fromEmployee}</div>}
+                            </div>
+                            <div style={{...s.td, flex:0.6, justifyContent:'center'}}>
+                              <span style={s.vehBadge}>{vehicleCount || 0}</span>
                             </div>
                             <div style={{...s.td, flex:1.2}}>
                               <select style={s.sel} value={f.status || ''} onChange={e => saveUpdate(client, 'status', e.target.value)}>
@@ -268,23 +320,30 @@ export default function Dashboard() {
                 <div style={s.footageWrap}>
                   <div style={s.footSummary}>
                     <div style={s.footStat}>
-                      <span style={{color:'#f59e0b',fontSize:'22px',fontWeight:'700'}}>{footage.pending.length}</span>
+                      <span style={{color:'#f59e0b',fontSize:'22px',fontWeight:'700'}}>{filteredPending.length}</span>
                       <span style={{color:'#6b7280',fontSize:'10px',letterSpacing:'0.5px'}}>PENDING</span>
                     </div>
                     <div style={s.footStat}>
-                      <span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{footage.completed.length}</span>
+                      <span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{filteredCompleted.length}</span>
                       <span style={{color:'#6b7280',fontSize:'10px',letterSpacing:'0.5px'}}>COMPLETED</span>
                     </div>
-                    <div style={{...s.footStat, flex:1, alignItems:'stretch', minWidth:'200px'}}>
-                      <input style={s.searchInp} placeholder="🔍 Search by vehicle no. or issue ID..." value={footageSearch} onChange={e => setFootageSearch(e.target.value)} />
+                    <div style={{flex:1, minWidth:'200px'}}>
+                      <input style={s.searchInp} placeholder="🔍 Search by vehicle no. or issue ID..." value={footageSearchInput} onChange={e => setFootageSearchInput(e.target.value)} />
                     </div>
+                    <div>
+                      <input type="date" style={s.dateInp} value={dateFilter} onChange={e => setDateFilter(e.target.value)} title="Filter by Raised date" />
+                    </div>
+                    {dateFilter && (
+                      <button style={s.clearBtn} onClick={() => setDateFilter('')}>✕ Clear date</button>
+                    )}
+                    <button style={s.dlBtnSmall} onClick={() => downloadFootageCSV([...filteredPending, ...filteredCompleted], `Footage_${user.name}_${new Date().toLocaleDateString('en-IN').replace(/\//g,'-')}.csv`)}>⬇ CSV</button>
                   </div>
 
-                  {footage.pending.length === 0 && footage.completed.length === 0 && (
-                    <div style={s.emptyMsg}>No footage requests assigned to you.</div>
+                  {filteredPending.length === 0 && filteredCompleted.length === 0 && (
+                    <div style={s.emptyMsg}>No footage requests found{dateFilter || footageSearch ? ' for this filter' : ' assigned to you'}.</div>
                   )}
 
-                  {filterFootage(footage.pending).map(item => (
+                  {filteredPending.map(item => (
                     <div key={item.issueId} style={s.footCard}>
                       <div style={s.footTop}>
                         <div>
@@ -297,10 +356,10 @@ export default function Dashboard() {
                     </div>
                   ))}
 
-                  {filterFootage(footage.completed).length > 0 && (
+                  {filteredCompleted.length > 0 && (
                     <>
                       <div style={{color:'#374151',fontSize:'10px',letterSpacing:'1px',margin:'16px 0 8px',fontWeight:'600'}}>COMPLETED</div>
-                      {filterFootage(footage.completed).map(item => (
+                      {filteredCompleted.map(item => (
                         <div key={item.issueId} style={{...s.footCard, opacity:0.6}}>
                           <div style={s.footTop}>
                             <div>
@@ -368,20 +427,24 @@ const s = {
   tabActive:    { color:'#22c55e', borderBottomColor:'#22c55e', fontWeight:'600' },
   tabCount:     { background:'#22c55e22', border:'1px solid #22c55e33', borderRadius:'10px', padding:'1px 7px', fontSize:'10px', color:'#22c55e', fontWeight:'700' },
   tableWrap:    { background:'#111', border:'1px solid #222', borderRadius:'12px', overflow:'hidden', overflowX:'auto' },
-  tHead:        { display:'flex', gap:'8px', padding:'10px 16px', background:'#161616', borderBottom:'1px solid #222', minWidth:'780px' },
+  tHead:        { display:'flex', gap:'8px', padding:'10px 16px', background:'#161616', borderBottom:'1px solid #222', minWidth:'860px' },
   th:           { color:'#6b7280', fontSize:'9px', letterSpacing:'1px', fontWeight:'600', flex:1 },
-  tRow:         { display:'flex', gap:'8px', padding:'10px 16px', borderBottom:'1px solid #1a1a1a', alignItems:'center', minWidth:'780px' },
+  tRow:         { display:'flex', gap:'8px', padding:'10px 16px', borderBottom:'1px solid #1a1a1a', alignItems:'center', minWidth:'860px' },
   redistributedRow: { borderLeft:'3px solid #f59e0b', background:'#1a1400' },
   td:           { flex:1, display:'flex', alignItems:'center' },
   clientName:   { color:'#fff', fontSize:'12px', fontWeight:'600' },
   redistTag:    { color:'#f59e0b', fontSize:'10px', marginTop:'2px' },
+  vehBadge:     { background:'#16161688', border:'1px solid #2a2a2a', borderRadius:'6px', padding:'2px 8px', color:'#9ca3af', fontSize:'11px', fontWeight:'600' },
   sel:          { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'6px', color:'#22c55e', fontSize:'11px', padding:'5px 6px' },
   inp:          { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'6px', color:'#fff', fontSize:'11px', padding:'5px 8px' },
   searchInp:    { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'10px 14px', boxSizing:'border-box' },
+  dateInp:      { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'9px 10px', boxSizing:'border-box' },
+  clearBtn:     { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#6b7280', fontSize:'11px', padding:'9px 12px', cursor:'pointer', whiteSpace:'nowrap' },
+  dlBtnSmall:   { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#6b7280', fontSize:'11px', padding:'9px 12px', cursor:'pointer', whiteSpace:'nowrap' },
   emptyMsg:     { color:'#6b7280', textAlign:'center', padding:'3rem', fontSize:'14px' },
-  footageWrap:  { maxWidth:'900px' },
-  footSummary:  { display:'flex', gap:'12px', marginBottom:'16px', flexWrap:'wrap' },
-  footStat:     { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 20px', display:'flex', flexDirection:'column', alignItems:'center', gap:'2px', minWidth:'100px' },
+  footageWrap:  { maxWidth:'1000px' },
+  footSummary:  { display:'flex', gap:'10px', marginBottom:'16px', flexWrap:'wrap', alignItems:'center' },
+  footStat:     { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 20px', display:'flex', flexDirection:'column', alignItems:'center', gap:'2px', minWidth:'90px' },
   footCard:     { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'14px', marginBottom:'8px' },
   footTop:      { display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:'12px' },
   footClient:   { color:'#fff', fontSize:'13px', fontWeight:'600', marginBottom:'4px' },
