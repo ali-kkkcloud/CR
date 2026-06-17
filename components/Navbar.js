@@ -1,9 +1,11 @@
 import { useRouter } from 'next/router'
 import { useEffect, useState } from 'react'
+import LogoutModal from './LogoutModal'
 
 export default function Navbar({ user, shiftStatus, onEndShift }) {
   const router = useRouter()
   const [clock, setClock] = useState('')
+  const [showLogout, setShowLogout] = useState(false)
 
   useEffect(() => {
     function tick() {
@@ -17,35 +19,45 @@ export default function Navbar({ user, shiftStatus, onEndShift }) {
     return () => clearInterval(id)
   }, [])
 
-  async function handleLogout() {
+  async function handleLogoutConfirm() {
     await fetch('/api/auth/logout', { method:'POST' })
+    setShowLogout(false)
     router.push('/login')
   }
 
   return (
-    <nav style={s.nav}>
-      <div style={s.left}>
-        <img src="/cautio_shield.webp" alt="Cautio" style={s.logo}
-          onError={e => e.target.style.display='none'}/>
-        <span style={s.brand}>Cau<span style={{color:'#22c55e'}}>tio</span> CRM</span>
-        {user?.role === 'admin' && <span style={s.adminBadge}>ADMIN</span>}
-        {shiftStatus === 'active' && (
-          <span style={s.shiftPill}>
-            <span className="live-dot" style={{width:6,height:6}}></span>
-            SHIFT ACTIVE
-          </span>
-        )}
-      </div>
-      <div style={s.right}>
-        <span style={s.clock}>{clock}</span>
-        {user?.role !== 'admin' && shiftStatus === 'active' && onEndShift && (
-          <button onClick={onEndShift} style={s.endBtn}>⏹ End Shift</button>
-        )}
-        <div style={s.avatar} onClick={handleLogout} title="Click to logout">
-          {(user?.name||'U').slice(0,2).toUpperCase()}
+    <>
+      <nav style={s.nav}>
+        <div style={s.left}>
+          <img src="/cautio_shield.webp" alt="Cautio" style={s.logo}
+            onError={e => e.target.style.display='none'}/>
+          <span style={s.brand}>Cau<span style={{color:'#22c55e'}}>tio</span> CRM</span>
+          {user?.role === 'admin' && <span style={s.adminBadge}>ADMIN</span>}
+          {shiftStatus === 'active' && (
+            <span style={s.shiftPill}>
+              <span className="live-dot" style={{width:6,height:6}}></span>
+              SHIFT ACTIVE
+            </span>
+          )}
         </div>
-      </div>
-    </nav>
+        <div style={s.right}>
+          <span style={s.clock}>{clock}</span>
+          {user?.role !== 'admin' && shiftStatus === 'active' && onEndShift && (
+            <button onClick={onEndShift} style={s.endBtn}>⏹ End Shift</button>
+          )}
+          <button style={s.logoutBtn} onClick={() => setShowLogout(true)}>
+            <div style={s.avatar}>{(user?.name||'U').slice(0,2).toUpperCase()}</div>
+            <span style={s.logoutTxt}>Logout</span>
+          </button>
+        </div>
+      </nav>
+
+      <LogoutModal
+        show={showLogout}
+        onConfirm={handleLogoutConfirm}
+        onCancel={() => setShowLogout(false)}
+      />
+    </>
   )
 }
 
@@ -59,5 +71,7 @@ const s = {
   right:     { display:'flex', alignItems:'center', gap:'12px' },
   clock:     { color:'#6b7280', fontSize:'12px', whiteSpace:'nowrap', fontVariantNumeric:'tabular-nums' },
   endBtn:    { background:'#ef444422', border:'1px solid #ef444433', borderRadius:'8px', color:'#f87171', fontSize:'12px', fontWeight:'600', padding:'6px 12px', cursor:'pointer', whiteSpace:'nowrap' },
-  avatar:    { width:'32px', height:'32px', borderRadius:'50%', background:'#22c55e', color:'#000', fontSize:'11px', fontWeight:'700', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', flexShrink:0 },
+  logoutBtn: { background:'transparent', border:'none', display:'flex', alignItems:'center', gap:'8px', cursor:'pointer', padding:'4px 8px 4px 4px', borderRadius:'20px' },
+  avatar:    { width:'30px', height:'30px', borderRadius:'50%', background:'#22c55e', color:'#000', fontSize:'11px', fontWeight:'700', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 },
+  logoutTxt: { color:'#6b7280', fontSize:'12px', fontWeight:'500' },
 }
