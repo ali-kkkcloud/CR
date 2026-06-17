@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [footageSearchInput, setFootageSearchInput] = useState('')
   const [footageSearch, setFootageSearch] = useState('')
   const [dateFilter,   setDateFilter]   = useState('')
+  const [myDay,        setMyDay]        = useState(null)
   const [activeTab,    setActiveTab]    = useState('clients')
   const [saving,       setSaving]       = useState({})
   const [showReport,   setShowReport]   = useState(false)
@@ -67,17 +68,28 @@ export default function Dashboard() {
     setFootage({ pending: data.pending || [], completed: data.completed || [] })
   }, [])
 
+  const loadMyDay = useCallback(async () => {
+    const res  = await fetch('/api/dashboard/my-day')
+    const data = await res.json()
+    setMyDay(data)
+  }, [])
+
   useEffect(() => {
     if (shiftStatus !== 'active') return
     loadClients()
     loadFootage()
     autoRef.current = setInterval(() => {
       const h = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours()
-      if (h !== hourRef.current) loadClients()
+      if (h !== hourRef.current) { loadClients(); loadMyDay() }
       loadFootage()
+      if (activeTab === 'myday') loadMyDay()
     }, 60000)
     return () => clearInterval(autoRef.current)
-  }, [shiftStatus])
+  }, [shiftStatus, activeTab])
+
+  useEffect(() => {
+    if (activeTab === 'myday' && shiftStatus === 'active') loadMyDay()
+  }, [activeTab, shiftStatus])
 
   async function handleStartShift() {
     const res  = await fetch('/api/shift/start', { method: 'POST' })
@@ -250,6 +262,9 @@ export default function Dashboard() {
                 <button style={activeTab==='clients' ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab('clients')}>
                   Clients<span style={s.tabCount}>{clients.length}</span>
                 </button>
+                <button style={activeTab==='myday' ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab('myday')}>
+                  My Day
+                </button>
                 <button style={activeTab==='footage' ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab('footage')}>
                   Footage Requests
                   {footage.pending.length > 0 && <span style={{...s.tabCount, background:'#ef444422', color:'#f87171', border:'1px solid #ef444433'}}>{footage.pending.length}</span>}
@@ -311,6 +326,51 @@ export default function Dashboard() {
                           </div>
                         )
                       })}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'myday' && (
+                <div style={{maxWidth:'900px'}}>
+                  {!myDay ? (
+                    <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
+                  ) : (
+                    <>
+                      <div style={s.dayStatsRow}>
+                        <div style={s.dayStat}><span style={{color:'#fff',fontSize:'20px',fontWeight:'700'}}>{myDay.totalClients}</span><span style={{color:'#6b7280',fontSize:'10px'}}>TOTAL TODAY</span></div>
+                        <div style={s.dayStat}><span style={{color:'#22c55e',fontSize:'20px',fontWeight:'700'}}>{myDay.totalCompleted}</span><span style={{color:'#6b7280',fontSize:'10px'}}>COMPLETED</span></div>
+                        <div style={s.dayStat}><span style={{color:'#f87171',fontSize:'20px',fontWeight:'700'}}>{myDay.totalMissed}</span><span style={{color:'#6b7280',fontSize:'10px'}}>MISSED</span></div>
+                      </div>
+
+                      {myDay.timeline.length === 0 ? (
+                        <div style={s.emptyMsg}>No activity yet today.</div>
+                      ) : (
+                        myDay.timeline.map(slot => (
+                          <div key={slot.hour} style={s.timelineSlot}>
+                            <div style={s.timelineSlotHead}>
+                              <span style={{color:'#fff',fontSize:'13px',fontWeight:'700'}}>{hourLabel(slot.hour)}</span>
+                              <span style={{color: slot.completedClients === slot.totalClients ? '#22c55e' : '#f59e0b', fontSize:'11px'}}>
+                                {slot.completedClients}/{slot.totalClients} done
+                              </span>
+                            </div>
+                            <div style={s.timelineClients}>
+                              {slot.clients.map((c, i) => (
+                                <div key={i} style={{...s.timelineClientChip, ...(c.filled ? s.chipDone : s.chipPending)}}>
+                                  {c.filled ? '✓' : c.isRedistributed ? '↩' : '○'} {c.client}
+                                  {c.isRedistributed && <span style={{opacity:0.6}}> (from {c.fromEmployee})</span>}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))
+                      )}
+
+                      {myDay.redistributedAway?.length > 0 && (
+                        <div style={s.redistAwayBox}>
+                          ↪ You passed {myDay.redistributedAway.length} client(s) to other employees today (early shift end or reassignment).
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -457,4 +517,13 @@ const s = {
   redistInfo:   { background:'#1a1200', border:'1px solid #f59e0b33', borderRadius:'8px', padding:'10px 14px', color:'#fbbf24', fontSize:'12px', margin:'1rem 0' },
   downloadBtn:  { width:'100%', background:'#22c55e', border:'none', borderRadius:'8px', color:'#000', fontWeight:'700', fontSize:'14px', padding:'12px', cursor:'pointer', marginBottom:'8px', marginTop:'1rem' },
   logoutFinalBtn: { width:'100%', background:'transparent', border:'1px solid #222', borderRadius:'8px', color:'#6b7280', fontSize:'14px', padding:'10px', cursor:'pointer' },
+  dayStatsRow:  { display:'flex', gap:'10px', marginBottom:'16px' },
+  dayStat:      { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 24px', display:'flex', flexDirection:'column', alignItems:'center', gap:'4px' },
+  timelineSlot: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' },
+  timelineSlotHead: { display:'flex', justifyContent:'space-between', marginBottom:'8px' },
+  timelineClients: { display:'flex', flexWrap:'wrap', gap:'6px' },
+  timelineClientChip: { fontSize:'11px', padding:'4px 10px', borderRadius:'6px', border:'1px solid' },
+  chipDone:    { background:'#22c55e14', borderColor:'#22c55e33', color:'#4ade80' },
+  chipPending: { background:'#f59e0b14', borderColor:'#f59e0b33', color:'#fbbf24' },
+  redistAwayBox: { background:'#1a1200', border:'1px solid #f59e0b33', borderRadius:'8px', padding:'10px 14px', color:'#fbbf24', fontSize:'12px', marginTop:'10px' },
 }
