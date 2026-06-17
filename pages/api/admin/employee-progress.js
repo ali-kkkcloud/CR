@@ -4,10 +4,25 @@ import { ALL_EMPLOYEES } from '../../../lib/schedule'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
-function dateNDaysAgo(n) {
-  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-  d.setDate(d.getDate() - n)
+function toISTDate(d) {
   return d.toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' })
+}
+
+function parseDDMMYYYY(str) {
+  const [d, m, y] = str.split('/').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function dateRangeArray(fromStr, toStr) {
+  const from = parseDDMMYYYY(fromStr)
+  const to   = parseDDMMYYYY(toStr)
+  const dates = []
+  const cur = new Date(from)
+  while (cur <= to) {
+    dates.push(toISTDate(cur))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return dates
 }
 
 export default async function handler(req, res) {
@@ -17,7 +32,19 @@ export default async function handler(req, res) {
 
   try {
     const today = todayStr()
-    const last7Dates = Array.from({ length: 7 }, (_, i) => dateNDaysAgo(i))
+    let fromDate = req.query.from || ''
+    let toDate   = req.query.to   || ''
+
+    function isoToDDMMYYYY(iso) {
+      if (!iso) return null
+      const [y, m, d] = iso.split('-')
+      return `${d}/${m}/${y}`
+    }
+
+    const fromDDMMYYYY = isoToDDMMYYYY(fromDate) || today
+    const toDDMMYYYY   = isoToDDMMYYYY(toDate)   || today
+
+    const rangeDates = dateRangeArray(fromDDMMYYYY, toDDMMYYYY)
 
     const [shiftRows, updateRows, footageRows] = await Promise.all([
       readSheet(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`),
@@ -26,7 +53,7 @@ export default async function handler(req, res) {
     ])
 
     const progress = ALL_EMPLOYEES.map(emp => {
-      const attendance = last7Dates.map(date => {
+      const attendance = rangeDates.map(date => {
         const rowsForDate = shiftRows.slice(1).filter(r => r[1] === emp.name && r[2] === date)
         if (rowsForDate.length === 0) {
           return { date, status: 'absent', startTime: '', endTime: '', duration: '' }
@@ -44,8 +71,9 @@ export default async function handler(req, res) {
       const daysPresent = attendance.filter(a => a.status !== 'absent').length
       const daysAbsent   = attendance.filter(a => a.status === 'absent').length
 
-      const todayUpdates = updateRows.slice(1).filter(r => r[0] === today && r[2] === emp.name)
-      const todayClients = [...new Set(todayUpdates.map(r => r[3]))]
+      const rangeSet = new Set(rangeDates)
+      const rangeUpdates = updateRows.slice(1).filter(r => rangeSet.has(r[0]) && r[2] === emp.name)
+      const rangeClients = [...new Set(rangeUpdates.map(r => r[3]))]
 
       const myFootage = footageRows.slice(1).filter(r => {
         const sub = (r[5]  || '').toString().toLowerCase()
@@ -53,9 +81,10 @@ export default async function handler(req, res) {
         return sub.includes('customer request for video') && by === emp.name.toLowerCase()
       })
       const footagePending = myFootage.filter(r => (r[13]||'').toString().toLowerCase() !== 'yes').length
-      const footageCompletedToday = myFootage.filter(r => {
+      const footageCompletedInRange = myFootage.filter(r => {
         const resolvedAt = (r[14]||'').toString()
-        return (r[13]||'').toString().toLowerCase()==='yes' && resolvedAt.includes(today)
+        if ((r[13]||'').toString().toLowerCase() !== 'yes') return false
+        return rangeDates.some(d => resolvedAt.includes(d))
       }).length
 
       return {
@@ -66,16 +95,17 @@ export default async function handler(req, res) {
         attendance,
         daysPresent,
         daysAbsent,
-        todayClientsCount: todayClients.length,
-        todayUpdatesCount: todayUpdates.length,
-        todayMisaligns: todayUpdates.filter(r => r[6] && r[6] !== '—' && r[6] !== '').length,
-        todayAlerts: todayUpdates.reduce((s,r)=>s+(parseInt(r[7])||0),0),
+        totalDaysInRange: rangeDates.length,
+        rangeClientsCount: rangeClients.length,
+        rangeUpdatesCount: rangeUpdates.length,
+        rangeMisaligns: rangeUpdates.filter(r => r[6] && r[6] !== '—' && r[6] !== '').length,
+        rangeAlerts: rangeUpdates.reduce((s,r)=>s+(parseInt(r[7])||0),0),
         footagePending,
-        footageCompletedToday,
+        footageCompletedInRange,
       }
     })
 
-    return res.status(200).json({ progress, dates: last7Dates })
+    return res.status(200).json({ progress, dates: rangeDates, from: fromDDMMYYYY, to: toDDMMYYYY })
 
   } catch (err) {
     console.error('Employee progress error:', err)
