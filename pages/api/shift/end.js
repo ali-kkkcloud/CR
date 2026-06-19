@@ -1,10 +1,10 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, appendRow, updateRowCells,
+  readSheet, appendRow, appendRows, updateRowCells,
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration,
-  fetchClientVehicleCounts
+  fetchClientVehicleCounts, getLeaveMapForDate
 } from '../../../lib/sheets'
-import { computeRedistributionLog } from '../../../lib/schedule'
+import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution } from '../../../lib/schedule'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -14,18 +14,17 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
-    const today   = todayStr()
-    const now     = nowStr()
-    const nowTime = nowIST()
+    const today       = todayStr()
+    const now         = nowStr()
+    const nowTime     = nowIST()
     const currentHour = nowTime.getHours()
 
+    // ── 1. Update shift log ──
     const shiftRows = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
     let shiftRowIndex = -1, startTimeStr = ''
     for (let i = shiftRows.length - 1; i >= 1; i--) {
       if (shiftRows[i][0] === user.empId && shiftRows[i][2] === today && shiftRows[i][6] === 'Active') {
-        shiftRowIndex = i + 1
-        startTimeStr  = shiftRows[i][3]
-        break
+        shiftRowIndex = i + 1; startTimeStr = shiftRows[i][3]; break
       }
     }
     const duration = startTimeStr ? calcDuration(today, startTimeStr, today, now) : '—'
@@ -33,58 +32,71 @@ export default async function handler(req, res) {
       await updateRowCells(CRM_SHEET_ID, TABS.SHIFT_LOG, shiftRowIndex, 5, [now, duration, 'Ended'])
     }
 
-    const activeMap = {}
-    for (let i = 1; i < shiftRows.length; i++) {
-      const r = shiftRows[i]
-      if (r[2] === today) activeMap[r[1]] = r[6]
-    }
-    activeMap[user.name] = 'Ended'
-    const remainingActive = Object.entries(activeMap)
-      .filter(([name, status]) => status === 'Active' && name !== user.name)
-      .map(([name]) => name)
-
-    const vehicleMap = await fetchClientVehicleCounts()
-    const redistribution = computeRedistributionLog(user.name, currentHour, remainingActive, vehicleMap)
-
-    for (const r of redistribution) {
-      await appendRow(CRM_SHEET_ID, TABS.REDISTRIB, [today, now, user.name, r.toEmployee, r.client, r.hour, 'Auto - Early End'])
-    }
-
+    // ── 2. Redistribute only THIS HOUR's unfilled clients ──
     const updateRows = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`)
-    const myUpdates  = updateRows.slice(1).filter(r => r[0] === today && r[2] === user.name)
+    const myHourRows = updateRows.slice(1)
+      .filter(r => r[0] === today && r[2] === user.name && parseInt(r[4]) === currentHour)
+    const unfilledClients = myHourRows
+      .filter(r => !(r[5] || '').toString().trim())
+      .map(r => r[3])
 
+    const leaveMap = await getLeaveMapForDate(today)
+    const remainingScheduled = getScheduledEmployeesAtHour(currentHour, leaveMap)
+      .map(e => e.name)
+      .filter(n => n !== user.name)
+    const vehicleMap = await fetchClientVehicleCounts()
+
+    const redistribution = computeCurrentHourRedistribution(
+      user.name, currentHour, unfilledClients, remainingScheduled, vehicleMap
+    )
+
+    if (redistribution.length > 0) {
+      const redistRows = redistribution.map(r => [
+        today, now, r.fromEmployee, r.toEmployee, r.client, r.hour, 'Early End'
+      ])
+      await appendRows(CRM_SHEET_ID, TABS.REDISTRIB, redistRows)
+
+      // Also write placeholder rows in CRM_Updates for new owners
+      const placeholders = redistribution.map(r => [
+        today, now, r.toEmployee, r.client, String(r.hour), '', '', '', 'No', '', ''
+      ])
+      await appendRows(CRM_SHEET_ID, TABS.CRM_UPDATES, placeholders)
+    }
+
+    // ── 3. CRM summary ──
+    const myUpdates = updateRows.slice(1).filter(r => r[0] === today && r[2] === user.name)
+
+    // ── 4. Footage summary ──
     const footageRows = await readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:S`)
     const myFootage = footageRows.slice(1).filter(r => {
-      const sub = (r[5]  || '').toString().toLowerCase()
+      const sub = (r[5] || '').toString().toLowerCase()
       const by  = (r[10] || '').toString().trim().toLowerCase()
       return sub.includes('customer request for video') && by === user.name.toLowerCase()
     })
+    const pendingFootage = myFootage.filter(r => (r[13] || '').toString().toLowerCase() !== 'yes')
     const footageCompletedToday = myFootage.filter(r => {
-      const resolvedAt = (r[14] || '').toString()
-      return (r[13] || '').toString().toLowerCase() === 'yes' && resolvedAt.includes(today)
+      return (r[13] || '').toString().toLowerCase() === 'yes' && (r[14] || '').includes(today)
     }).length
-    const footagePending = myFootage.filter(r => (r[13] || '').toString().toLowerCase() !== 'yes').length
 
     const report = {
-      employee:       user.name,
-      date:           today,
-      shiftStart:     startTimeStr,
-      shiftEnd:       now,
-      duration,
-      clientsHandled: [...new Set(myUpdates.map(r => r[3]))].length,
-      totalUpdates:   myUpdates.length,
-      misalignCount:  myUpdates.filter(r => r[6] && r[6] !== '—' && r[6] !== '').length,
-      alertTotal:     myUpdates.reduce((s, r) => s + (parseInt(r[7]) || 0), 0),
-      fatigueCount:   myUpdates.filter(r => (r[8] || '').toLowerCase() === 'yes').length,
-      fatigueTotal:   myUpdates.reduce((s, r) => s + (parseInt(r[9]) || 0), 0),
-      redistributed:    redistribution.length,
-      redistributedTo:  redistribution.map(r => r.toEmployee),
+      employee: user.name, date: today,
+      shiftStart: startTimeStr, shiftEnd: now, duration,
+      clientsHandled:  [...new Set(myUpdates.map(r => r[3]))].length,
+      totalUpdates:    myUpdates.length,
+      misalignCount:   myUpdates.filter(r => r[6] && r[6] !== '—' && r[6] !== '').length,
+      alertTotal:      myUpdates.reduce((s, r) => s + (parseInt(r[7]) || 0), 0),
+      fatigueCount:    myUpdates.filter(r => (r[8] || '').toLowerCase() === 'yes').length,
+      redistributed:   redistribution.length,
+      redistributedTo: redistribution.map(r => r.toEmployee),
       footageCompletedToday,
-      footagePending,
+      footagePending: pendingFootage.length,
+      pendingFootageItems: pendingFootage.map(r => ({
+        issueId: r[0] || '', client: r[2] || '', vehicle: r[9] || '',
+        raisedAt: r[3] || '', details: r[6] || '',
+      })),
     }
 
     return res.status(200).json({ success: true, report })
-
   } catch (err) {
     console.error('Shift end error:', err)
     return res.status(500).json({ error: 'Server error' })
