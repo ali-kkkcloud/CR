@@ -3,17 +3,36 @@ import { useRouter } from 'next/router'
 import Head from 'next/head'
 import Navbar from '../components/Navbar'
 
+function todayISO() {
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  return d.toISOString().split('T')[0]
+}
+
 export default function Admin() {
   const router = useRouter()
   const [user, setUser] = useState(null)
   const [overview, setOverview] = useState(null)
   const [progress, setProgress] = useState(null)
-  const [footage, setFootage] = useState({ pending: [], completed: [] })
+  const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
+  const [fullDayData, setFullDayData] = useState(null)
+  const [fullDayDate, setFullDayDate] = useState(todayISO())
+  const [fullDayLoading, setFullDayLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('overview')
   const [footageSearchInput, setFootageSearchInput] = useState('')
   const [footageSearch, setFootageSearch] = useState('')
   const [dateFilter, setDateFilter] = useState('')
+  const [fromDate, setFromDate] = useState(todayISO())
+  const [toDate, setToDate] = useState(todayISO())
   const [loading, setLoading] = useState(true)
+  const [markLeaveModal, setMarkLeaveModal] = useState(null)
+  const [leaveFromHour, setLeaveFromHour] = useState(8)
+  const [leaveToHour, setLeaveToHour] = useState(17)
+  const [leaveReason, setLeaveReason] = useState('')
+  const [markingLeave, setMarkingLeave] = useState(false)
+  const [closeFollowupModal, setCloseFollowupModal] = useState(null)
+  const [closeReason, setCloseReason] = useState('')
+  const [closingFollowup, setClosingFollowup] = useState(false)
+  const [expandedEmp, setExpandedEmp] = useState(null)
   const debounceRef = useRef(null)
 
   useEffect(() => {
@@ -27,7 +46,6 @@ export default function Admin() {
       if (!d.user || d.user.role !== 'admin') { router.replace('/login'); return }
       setUser(d.user)
       loadData()
-      loadProgress()
       setLoading(false)
     })
   }, [])
@@ -38,34 +56,85 @@ export default function Admin() {
       fetch('/api/footage/list').then(r => r.json()),
     ])
     if (ov.employees) setOverview(ov)
-    setFootage({ pending: ft.pending || [], completed: ft.completed || [] })
+    setFootage({ pending: ft.pending || [], completed: ft.completed || [], followups: ft.followups || [] })
   }, [])
 
-  const loadProgress = useCallback(async () => {
-    const data = await fetch('/api/admin/employee-progress').then(r => r.json())
+  const loadProgress = useCallback(async (from, to) => {
+    const data = await fetch(`/api/admin/employee-progress?from=${from}&to=${to}`).then(r => r.json())
     if (data.progress) setProgress(data)
   }, [])
 
+  const loadFullDay = useCallback(async (dateISO) => {
+    setFullDayLoading(true)
+    setFullDayData(null)
+    const ddmmyyyy = dateISO.split('-').reverse().join('/')
+    const data = await fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`).then(r => r.json())
+    setFullDayData(data)
+    setFullDayLoading(false)
+  }, [])
+
   useEffect(() => {
-    const id = setInterval(() => { loadData(); loadProgress() }, 60000)
+    if (activeTab === 'progress') loadProgress(fromDate, toDate)
+  }, [activeTab, fromDate, toDate])
+
+  useEffect(() => {
+    if (activeTab === 'fullday') loadFullDay(fullDayDate)
+  }, [activeTab, fullDayDate])
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (activeTab === 'overview') loadData()
+    }, 60000)
     return () => clearInterval(id)
-  }, [loadData, loadProgress])
+  }, [activeTab])
+
+  async function handleMarkLeave() {
+    if (!markLeaveModal) return
+    setMarkingLeave(true)
+    await fetch('/api/admin/mark-leave', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        empName: markLeaveModal.name,
+        date: fullDayDate.split('-').reverse().join('/'),
+        fromHour: leaveFromHour,
+        toHour: leaveToHour,
+        reason: leaveReason || 'Admin marked',
+      }),
+    })
+    setMarkingLeave(false)
+    setMarkLeaveModal(null)
+    setLeaveReason('')
+    loadFullDay(fullDayDate)
+    loadData()
+  }
+
+  async function handleCloseFollowup() {
+    if (!closeFollowupModal) return
+    setClosingFollowup(true)
+    await fetch('/api/footage/close-followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ issueId: closeFollowupModal.issueId, reason: closeReason }),
+    })
+    setClosingFollowup(false)
+    setCloseFollowupModal(null)
+    setCloseReason('')
+    loadData()
+  }
 
   function downloadCSV(rows, filename) {
     const csv  = rows.map(r => r.map(c => `"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url  = URL.createObjectURL(blob)
     const a    = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
+    a.href = url; a.download = filename; a.click()
   }
 
   function matchDateFlexible(raisedAtStr, isoDate) {
     if (!isoDate) return true
     const [y, m, d] = isoDate.split('-')
-    const ddmmyyyy = `${d}/${m}/${y}`
-    return (raisedAtStr || '').includes(ddmmyyyy)
+    return (raisedAtStr || '').includes(`${d}/${m}/${y}`)
   }
 
   const filteredPending = useMemo(() => {
@@ -106,13 +175,21 @@ export default function Admin() {
 
   const { employees, kpis, redistribution } = overview
 
-  const statusColor = (s) => ({
-    'Active':      '#22c55e',
-    'Ended':       '#6b7280',
-    'Week Off':    '#f59e0b',
-    'Not Started': '#ef4444',
-    'Off Shift':   '#374151',
-  }[s] || '#6b7280')
+  const statusMeta = (s) => ({
+    'Active':      { color:'#22c55e', label:'Active' },
+    'Ended':       { color:'#6b7280', label:'Shift ended' },
+    'Week Off':    { color:'#f59e0b', label:'Week off' },
+    'Not Started': { color:'#ef4444', label:'Not started' },
+    'Off Shift':   { color:'#374151', label:'Off shift' },
+  }[s] || { color:'#6b7280', label:s })
+
+  const hourLabel = (h) => {
+    const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
+    const suf  = (n) => n >= 12 ? 'PM' : 'AM'
+    return `${to12(h)}:00 ${suf(h)}`
+  }
+
+  const hours = Array.from({ length: 24 }, (_, i) => i)
 
   return (
     <>
@@ -122,129 +199,201 @@ export default function Admin() {
         <div style={s.body}>
 
           <div style={s.tabs}>
-            {['overview','progress','footage','redistribution'].map(t => (
-              <button key={t} style={activeTab===t ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab(t)}>
-                {t === 'overview'        ? 'Employee Overview' :
-                 t === 'progress'        ? 'Employee Progress' :
-                 t === 'footage'         ? `Footage Requests (${footage.pending.length} pending)` :
-                                           `Redistribution Log (${redistribution.length})`}
+            {[
+              { k:'overview',   label:'Overview' },
+              { k:'fullday',    label:'Full Day View' },
+              { k:'progress',   label:'Employee Progress' },
+              { k:'footage',    label:`Footage (${footage.pending.length})` },
+              { k:'followups',  label:`Follow-ups (${footage.followups.length})` },
+              { k:'redistribution', label:`Redistribution (${redistribution.length})` },
+            ].map(t => (
+              <button key={t.k} style={activeTab===t.k ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab(t.k)}>
+                {t.label}
               </button>
             ))}
           </div>
 
-          {/* ══════════ OVERVIEW TAB ══════════ */}
+          {/* ══════════ OVERVIEW ══════════ */}
           {activeTab === 'overview' && (
             <>
-              <div style={s.kpiGrid}>
+              <div style={s.kpiStrip}>
                 {[
-                  { label:'TOTAL', val: kpis.total, color:'#22c55e' },
-                  { label:'ACTIVE', val: kpis.active, color:'#22c55e' },
-                  { label:'WEEK OFF', val: kpis.weekOff, color:'#f59e0b' },
-                  { label:'NOT STARTED', val: kpis.notStarted, color:'#ef4444' },
-                  { label:'FOOTAGE PENDING', val: footage.pending.length, color:'#3b82f6' },
+                  { label:'Total Employees', val:kpis.total,       color:'#fff'    },
+                  { label:'Active Now',      val:kpis.active,      color:'#4ade80' },
+                  { label:'Week Off',        val:kpis.weekOff,     color:'#fbbf24' },
+                  { label:'Not Started',     val:kpis.notStarted,  color:'#f87171' },
+                  { label:'Footage Pending', val:footage.pending.length, color:'#60a5fa' },
+                  { label:'Follow-ups',      val:footage.followups.length, color:'#f59e0b' },
                 ].map(k => (
-                  <div key={k.label} style={s.kpi}>
-                    <div style={{...s.kpiNum, color: k.color}}>{k.val}</div>
-                    <div style={s.kpiLbl}>{k.label}</div>
+                  <div key={k.label} style={s.kpiPill}>
+                    <span style={{color:k.color, fontSize:'20px', fontWeight:'700'}}>{k.val}</span>
+                    <span style={{color:'#6b7280', fontSize:'11px'}}>{k.label}</span>
                   </div>
                 ))}
               </div>
 
-              <div style={s.sectionHd}>EMPLOYEE STATUS — LIVE
-                <span style={{color:'#374151',fontWeight:'400',letterSpacing:'0',fontSize:'11px',marginLeft:'8px'}}>Auto-refreshes every 60s</span>
-              </div>
-
-              <div style={s.empGrid}>
-                {employees.map(emp => (
-                  <div key={emp.name} style={{
-                    ...s.empCard,
-                    ...(emp.statusLabel === 'Not Started' ? s.empCardAbsent : {}),
-                    ...(emp.isWeekOff ? s.empCardWeekOff : {}),
-                  }}>
-                    <div style={s.empTop}>
-                      <div style={{...s.empAva, background: emp.isNight ? '#7c3aed' : emp.isWeekOff ? '#92400e' : '#16a34a'}}>
-                        {emp.name.slice(0,2).toUpperCase()}
+              <div style={s.empListCard}>
+                {employees.map(emp => {
+                  const meta = statusMeta(emp.statusLabel)
+                  return (
+                    <div key={emp.name} style={s.empRow}>
+                      <div style={{...s.empDot, background:meta.color}}></div>
+                      <div style={s.empNameCol}>
+                        <div style={s.empNameTxt}>{emp.name}</div>
+                        <div style={s.empSubTxt}>{emp.isNight?'Night':'Day'} · {emp.shiftStart}:00–{emp.shiftEnd}:00</div>
                       </div>
-                      <div style={{flex:1, minWidth:0}}>
-                        <div style={{color: emp.statusLabel==='Not Started' ? '#f87171' : '#fff', fontSize:'13px', fontWeight:'600', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{emp.name}</div>
-                        <div style={{color:'#6b7280', fontSize:'10px'}}>
-                          {emp.isNight ? 'Night' : 'Day'} {emp.shiftStart}:00–{emp.shiftEnd}:00
-                          {emp.startTime && ` · Started ${emp.startTime}`}
-                        </div>
-                      </div>
-                      <div style={{...s.statusDot, background: statusColor(emp.statusLabel), flexShrink:0}}></div>
+                      <div style={{...s.empStatusTag, color:meta.color}}>{meta.label}</div>
+                      {(emp.statusLabel==='Active'||emp.statusLabel==='Ended') ? (
+                        <>
+                          <MiniStat label="Updates" val={emp.totalUpdates}/>
+                          <MiniStat label="Pending" val={emp.pendingCount} warn={emp.pendingCount>0}/>
+                          <div style={s.empDuration}>{emp.duration||(emp.startTime?'in progress':'—')}</div>
+                        </>
+                      ) : <div style={{flex:1}}></div>}
+                      <button style={s.viewBtn} onClick={()=>{ setFullDayDate(todayISO()); setExpandedEmp(emp.name); setActiveTab('fullday') }}>
+                        View day →
+                      </button>
                     </div>
-
-                    {(emp.statusLabel === 'Active' || emp.statusLabel === 'Ended') ? (
-                      <div style={s.empStats}>
-                        <div style={s.empStat}><div style={{color:'#22c55e',fontSize:'16px',fontWeight:'700'}}>{emp.totalUpdates}</div><div style={{color:'#6b7280',fontSize:'9px'}}>Updates</div></div>
-                        <div style={s.empStat}><div style={{color: emp.pendingCount>0 ? '#f59e0b' : '#22c55e', fontSize:'16px', fontWeight:'700'}}>{emp.pendingCount}</div><div style={{color:'#6b7280',fontSize:'9px'}}>Pending</div></div>
-                        <div style={s.empStat}><div style={{color:'#6b7280',fontSize:'13px',fontWeight:'600'}}>{emp.duration || '—'}</div><div style={{color:'#6b7280',fontSize:'9px'}}>Duration</div></div>
-                      </div>
-                    ) : emp.isWeekOff ? (
-                      <div style={{background:'#1a1200',borderRadius:'6px',padding:'8px',textAlign:'center',color:'#fbbf24',fontSize:'11px',marginTop:'8px'}}>Week off — no clients assigned</div>
-                    ) : emp.statusLabel === 'Not Started' ? (
-                      <div style={{background:'#200808',border:'1px solid #3a1515',borderRadius:'6px',padding:'8px',textAlign:'center',color:'#f87171',fontSize:'11px',marginTop:'8px'}}>Has not started shift</div>
-                    ) : (
-                      <div style={{background:'#161616',borderRadius:'6px',padding:'8px',textAlign:'center',color:'#374151',fontSize:'11px',marginTop:'8px'}}>Off shift hours</div>
-                    )}
-
-                    <div style={{...s.statusBadge, color: statusColor(emp.statusLabel), borderColor: statusColor(emp.statusLabel)+'33', background: statusColor(emp.statusLabel)+'11'}}>{emp.statusLabel}</div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </>
           )}
 
-          {/* ══════════ EMPLOYEE PROGRESS TAB ══════════ */}
+          {/* ══════════ FULL DAY VIEW (new — full visibility) ══════════ */}
+          {activeTab === 'fullday' && (
+            <div>
+              <div style={s.filterBar}>
+                <span style={s.filterLbl}>DATE</span>
+                <input type="date" style={s.dateInp} value={fullDayDate} onChange={e => { setFullDayDate(e.target.value); setExpandedEmp(null) }}/>
+                <button style={s.quickBtn} onClick={() => { setFullDayDate(todayISO()); setExpandedEmp(null) }}>Today</button>
+                <span style={{color:'#6b7280',fontSize:'11px',marginLeft:'auto'}}>Click employee row to expand hours. Use "Mark Leave" to exclude from distribution.</span>
+              </div>
+
+              {fullDayLoading ? (
+                <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
+              ) : !fullDayData ? (
+                <div style={{color:'#6b7280',textAlign:'center',padding:'3rem'}}>Loading...</div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
+                  {fullDayData.employees.map(emp => {
+                    const isExpanded = expandedEmp === emp.name
+                    const totalMissed = emp.hours.reduce((s,h)=>s+h.missedClients,0)
+                    const totalDone   = emp.hours.reduce((s,h)=>s+h.completedClients,0)
+                    const totalAll    = emp.hours.reduce((s,h)=>s+h.totalClients,0)
+
+                    return (
+                      <div key={emp.name} style={{...s.fdEmpCard, ...(isExpanded?{borderColor:'#22c55e44'}:{})}}>
+                        <div style={s.fdEmpHeader} onClick={()=>setExpandedEmp(isExpanded?null:emp.name)}>
+                          <div style={{...s.empDot, background: emp.loggedIn ? '#22c55e' : emp.hours.some(h=>h.isOnLeave) ? '#f59e0b' : '#374151', flexShrink:0}}></div>
+                          <div style={s.empNameCol}>
+                            <div style={{color:'#fff',fontSize:'13px',fontWeight:'600'}}>{emp.name}</div>
+                            <div style={{color:'#6b7280',fontSize:'10px'}}>
+                              {emp.isNight?'Night':'Day'} {emp.shiftStart}:00–{emp.shiftEnd}:00
+                              {emp.loggedIn && ` · Logged in ${emp.startTime}${emp.endTime ? ' → '+emp.endTime : ''}`}
+                              {!emp.loggedIn && <span style={{color:'#f87171'}}> · Not logged in</span>}
+                            </div>
+                          </div>
+                          <div style={{display:'flex',gap:'16px',alignItems:'center',marginLeft:'auto'}}>
+                            <MiniStat label="Assigned" val={totalAll}/>
+                            <MiniStat label="Done" val={totalDone}/>
+                            <MiniStat label="Missed" val={totalMissed} warn={totalMissed>0}/>
+                          </div>
+                          <button
+                            style={{...s.quickBtn, marginLeft:'12px', background:'#1a1200', borderColor:'#f59e0b33', color:'#fbbf24'}}
+                            onClick={e => { e.stopPropagation(); setMarkLeaveModal(emp); setLeaveFromHour(emp.shiftStart); setLeaveToHour(emp.shiftEnd) }}
+                          >
+                            Mark Leave
+                          </button>
+                          <span style={{color:'#374151',fontSize:'16px',marginLeft:'8px'}}>{isExpanded?'▲':'▼'}</span>
+                        </div>
+
+                        {isExpanded && (
+                          <div style={{borderTop:'1px solid #222',marginTop:'10px',paddingTop:'10px'}}>
+                            {emp.hours.length === 0 ? (
+                              <div style={{color:'#6b7280',fontSize:'12px',padding:'8px'}}>No scheduled hours with clients.</div>
+                            ) : (
+                              <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
+                                {emp.hours.map(h => (
+                                  <div key={h.hour} style={{
+                                    background: h.isOnLeave ? '#1a1200' : '#161616',
+                                    borderRadius:'8px', padding:'10px 14px',
+                                    border:`1px solid ${h.isOnLeave?'#f59e0b33':'#2a2a2a'}`,
+                                  }}>
+                                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:'6px'}}>
+                                      <span style={{color:h.isOnLeave?'#fbbf24':'#fff',fontSize:'12px',fontWeight:'600'}}>
+                                        {hourLabel(h.hour)} {h.isOnLeave && '· ON LEAVE'}
+                                      </span>
+                                      {!h.isOnLeave && (
+                                        <span style={{color:h.completedClients===h.totalClients&&h.totalClients>0?'#22c55e':'#f59e0b',fontSize:'11px'}}>
+                                          {h.completedClients}/{h.totalClients} done
+                                        </span>
+                                      )}
+                                    </div>
+                                    {!h.isOnLeave && (
+                                      <div style={{display:'flex',flexWrap:'wrap',gap:'5px'}}>
+                                        {h.clients.length === 0 ? (
+                                          <span style={{color:'#374151',fontSize:'11px'}}>No clients this hour</span>
+                                        ) : h.clients.map((c,i) => (
+                                          <div key={i} style={{
+                                            fontSize:'10px', padding:'3px 9px', borderRadius:'5px', border:'1px solid',
+                                            background: c.filled ? '#22c55e14' : '#f87171' + '14',
+                                            borderColor: c.filled ? '#22c55e33' : '#f8717133',
+                                            color: c.filled ? '#4ade80' : '#f87171',
+                                          }} title={c.filled ? `Updated at ${c.updatedAt}` : 'Not updated'}>
+                                            {c.filled ? '✓' : '○'} {c.client}
+                                            {c.vehicleCount > 0 && <span style={{opacity:0.6}}> ({c.vehicleCount}v)</span>}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══════════ EMPLOYEE PROGRESS ══════════ */}
           {activeTab === 'progress' && (
             <div>
-              <div style={s.sectionHd}>
-                EMPLOYEE PROGRESS — LAST 7 DAYS
-                <span style={{color:'#374151',fontWeight:'400',letterSpacing:'0',fontSize:'11px',marginLeft:'8px'}}>Attendance, work output, footage</span>
+              <div style={s.filterBar}>
+                <span style={s.filterLbl}>FROM</span>
+                <input type="date" style={s.dateInp} value={fromDate} onChange={e=>setFromDate(e.target.value)}/>
+                <span style={s.filterLbl}>TO</span>
+                <input type="date" style={s.dateInp} value={toDate} onChange={e=>setToDate(e.target.value)}/>
+                <button style={s.quickBtn} onClick={()=>{setFromDate(todayISO());setToDate(todayISO())}}>Today</button>
+                <button style={s.quickBtn} onClick={()=>{
+                  const d=new Date();d.setDate(d.getDate()-6);
+                  setFromDate(d.toISOString().split('T')[0]);setToDate(todayISO())
+                }}>Last 7 days</button>
+                {progress&&<span style={{color:'#6b7280',fontSize:'11px',marginLeft:'auto'}}>{progress.dates.length} day(s)</span>}
               </div>
 
               {!progress ? (
                 <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
               ) : (
-                <div style={s.progressGrid}>
+                <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
                   {progress.progress.map(emp => (
-                    <div key={emp.name} style={s.progCard}>
-                      <div style={s.progHeader}>
-                        <div style={{...s.empAva, background: emp.isNight ? '#7c3aed' : '#16a34a'}}>{emp.name.slice(0,2).toUpperCase()}</div>
-                        <div style={{flex:1}}>
-                          <div style={{color:'#fff', fontSize:'14px', fontWeight:'700'}}>{emp.name}</div>
-                          <div style={{color:'#6b7280', fontSize:'10px'}}>{emp.isNight ? 'Night' : 'Day'} {emp.shiftStart}:00–{emp.shiftEnd}:00</div>
-                        </div>
-                        <div style={{textAlign:'right'}}>
-                          <div style={{color:'#22c55e', fontSize:'16px', fontWeight:'700'}}>{emp.daysPresent}/7</div>
-                          <div style={{color:'#6b7280', fontSize:'9px'}}>days present</div>
-                        </div>
+                    <div key={emp.name} style={s.progRow}>
+                      <div style={{...s.empDot,background:emp.isNight?'#a78bfa':'#4ade80'}}></div>
+                      <div style={s.empNameCol}>
+                        <div style={s.empNameTxt}>{emp.name}</div>
+                        <div style={s.empSubTxt}>{emp.daysPresent}/{emp.totalDaysInRange} days present</div>
                       </div>
-
-                      <div style={s.attendanceStrip}>
-                        {emp.attendance.slice().reverse().map((a, i) => (
-                          <div key={i} style={s.attendanceDay} title={`${a.date}: ${a.status}${a.startTime ? ' · ' + a.startTime : ''}${a.endTime ? ' → ' + a.endTime : ''}`}>
-                            <div style={{
-                              ...s.attendanceDot,
-                              background: a.status === 'active' ? '#22c55e' : a.status === 'completed' ? '#3b82f6' : '#ef4444',
-                            }}></div>
-                            <div style={s.attendanceDate}>{a.date.split('/')[0]}/{a.date.split('/')[1]}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div style={s.progStatsGrid}>
-                        <div style={s.progStat}><div style={{color:'#22c55e',fontSize:'15px',fontWeight:'700'}}>{emp.todayClientsCount}</div><div style={{color:'#6b7280',fontSize:'8px'}}>CLIENTS TODAY</div></div>
-                        <div style={s.progStat}><div style={{color:'#a78bfa',fontSize:'15px',fontWeight:'700'}}>{emp.todayUpdatesCount}</div><div style={{color:'#6b7280',fontSize:'8px'}}>UPDATES</div></div>
-                        <div style={s.progStat}><div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'700'}}>{emp.todayMisaligns}</div><div style={{color:'#6b7280',fontSize:'8px'}}>MISALIGNS</div></div>
-                        <div style={s.progStat}><div style={{color:'#f87171',fontSize:'15px',fontWeight:'700'}}>{emp.todayAlerts}</div><div style={{color:'#6b7280',fontSize:'8px'}}>ALERTS</div></div>
-                      </div>
-                      <div style={s.progStatsGrid}>
-                        <div style={s.progStat}><div style={{color:'#22c55e',fontSize:'15px',fontWeight:'700'}}>{emp.footageCompletedToday}</div><div style={{color:'#6b7280',fontSize:'8px'}}>FOOTAGE DONE TODAY</div></div>
-                        <div style={s.progStat}><div style={{color:'#f59e0b',fontSize:'15px',fontWeight:'700'}}>{emp.footagePending}</div><div style={{color:'#6b7280',fontSize:'8px'}}>FOOTAGE PENDING</div></div>
-                        <div style={s.progStat}><div style={{color: emp.daysAbsent > 0 ? '#f87171' : '#22c55e',fontSize:'15px',fontWeight:'700'}}>{emp.daysAbsent}</div><div style={{color:'#6b7280',fontSize:'8px'}}>DAYS MISSED</div></div>
-                      </div>
+                      <AttendanceDots attendance={emp.attendance}/>
+                      <MiniStat label="Clients" val={emp.rangeClientsCount}/>
+                      <MiniStat label="Updates" val={emp.rangeUpdatesCount}/>
+                      <MiniStat label="Footage done" val={emp.footageCompletedInRange}/>
+                      <MiniStat label="Footage left" val={emp.footagePending} warn={emp.footagePending>0}/>
+                      <MiniStat label="Days missed" val={emp.daysAbsent} warn={emp.daysAbsent>0}/>
                     </div>
                   ))}
                 </div>
@@ -252,100 +401,125 @@ export default function Admin() {
             </div>
           )}
 
-          {/* ══════════ FOOTAGE TAB ══════════ */}
+          {/* ══════════ FOOTAGE ══════════ */}
           {activeTab === 'footage' && (
             <div style={{maxWidth:'1000px'}}>
-              <div style={{display:'flex',gap:'10px',marginBottom:'16px',flexWrap:'wrap',alignItems:'center'}}>
-                <div style={s.footSumCard}><span style={{color:'#f59e0b',fontSize:'22px',fontWeight:'700'}}>{filteredPending.length}</span><span style={{color:'#6b7280',fontSize:'10px'}}>PENDING</span></div>
-                <div style={s.footSumCard}><span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{filteredCompleted.length}</span><span style={{color:'#6b7280',fontSize:'10px'}}>COMPLETED</span></div>
-                <div style={{flex:1, minWidth:'220px'}}>
-                  <input style={s.searchInp} placeholder="🔍 Search vehicle no., issue ID, client, employee..." value={footageSearchInput} onChange={e => setFootageSearchInput(e.target.value)} />
-                </div>
-                <input type="date" style={s.dateInp} value={dateFilter} onChange={e => setDateFilter(e.target.value)} title="Filter by Raised date" />
-                {dateFilter && <button style={s.clearBtn} onClick={() => setDateFilter('')}>✕ Clear</button>}
-                <div style={{display:'flex',gap:'6px',flexWrap:'wrap'}}>
-                  <button onClick={() => downloadCSV(
-                    [['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Location'], ...filteredPending.map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.details, i.raisedBy, i.location])],
-                    `Footage_Pending_${dateFilter || 'all'}.csv`
-                  )} style={s.dlBtn}>⬇ Pending CSV</button>
-                  <button onClick={() => downloadCSV(
-                    [['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Resolved','Resolved At','Location'], ...[...filteredPending, ...filteredCompleted].map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.details, i.raisedBy, i.resolved?'Yes':'No', i.resolvedAt, i.location])],
-                    `Footage_All_${dateFilter || 'all'}.csv`
-                  )} style={s.dlBtn}>⬇ All CSV</button>
-                </div>
+              <div style={s.filterBar}>
+                <div style={s.footSumCard}><span style={{color:'#f59e0b',fontSize:'20px',fontWeight:'700'}}>{filteredPending.length}</span><span style={{color:'#6b7280',fontSize:'9px'}}>PENDING</span></div>
+                <div style={s.footSumCard}><span style={{color:'#22c55e',fontSize:'20px',fontWeight:'700'}}>{filteredCompleted.length}</span><span style={{color:'#6b7280',fontSize:'9px'}}>COMPLETED</span></div>
+                <input style={{...s.searchInp,flex:1,minWidth:'200px'}} placeholder="🔍 Search vehicle, issue ID, client, employee..." value={footageSearchInput} onChange={e=>setFootageSearchInput(e.target.value)}/>
+                <input type="date" style={s.dateInp} value={dateFilter} onChange={e=>setDateFilter(e.target.value)}/>
+                {dateFilter&&<button style={s.quickBtn} onClick={()=>setDateFilter('')}>✕ Clear</button>}
+                <button onClick={()=>downloadCSV(
+                  [['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Location'],...filteredPending.map(i=>[i.issueId,i.client,i.vehicle,i.raisedAt,i.details,i.raisedBy,i.location])],
+                  `Footage_Pending_${dateFilter||'all'}.csv`
+                )} style={s.quickBtn}>⬇ Pending</button>
+                <button onClick={()=>downloadCSV(
+                  [['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Resolved','Resolved At'],...[...filteredPending,...filteredCompleted].map(i=>[i.issueId,i.client,i.vehicle,i.raisedAt,i.details,i.raisedBy,i.resolved?'Yes':'No',i.resolvedAt])],
+                  `Footage_All_${dateFilter||'all'}.csv`
+                )} style={s.quickBtn}>⬇ All</button>
               </div>
 
-              {filteredPending.length === 0 && filteredCompleted.length === 0 && (
-                <div style={{color:'#6b7280',textAlign:'center',padding:'3rem'}}>No footage requests found{dateFilter || footageSearch ? ' for this filter' : ''}.</div>
-              )}
+              {filteredPending.length===0&&filteredCompleted.length===0&&<div style={{color:'#6b7280',textAlign:'center',padding:'3rem'}}>No footage requests found.</div>}
 
-              {filteredPending.length > 0 && (
-                <>
-                  <div style={s.sectionHd}>PENDING ({filteredPending.length})</div>
-                  {filteredPending.map(item => (
-                    <div key={item.issueId} style={s.footCard}>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',flexWrap:'wrap'}}>
-                        <div style={{flex:1, minWidth:'200px'}}>
-                          <div style={{color:'#fff',fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}><span style={{color:'#60a5fa',marginRight:'6px'}}>▶</span>{item.client} · <span style={{color:'#22c55e'}}>{item.vehicle}</span></div>
-                          <div style={{color:'#6b7280',fontSize:'11px',lineHeight:'1.6'}}>
-                            <span style={{color:'#9ca3af'}}>ID:</span> {item.issueId} &nbsp;·&nbsp;
-                            <span style={{color:'#9ca3af'}}>Raised:</span> {item.raisedAt} &nbsp;·&nbsp;
-                            <span style={{color:'#9ca3af'}}>By:</span> {item.raisedBy}
-                            {item.location && <> &nbsp;·&nbsp; <span style={{color:'#9ca3af'}}>Loc:</span> {item.location}</>}
-                          </div>
-                          {item.details && <div style={{color:'#9ca3af',fontSize:'11px',marginTop:'4px',fontStyle:'italic'}}>{item.details}</div>}
+              {filteredPending.length>0&&<>
+                <div style={s.sectionHd}>PENDING ({filteredPending.length})</div>
+                {filteredPending.map(item=>(
+                  <div key={item.issueId} style={s.footCard}>
+                    <div style={{display:'flex',justifyContent:'space-between',gap:'12px',flexWrap:'wrap'}}>
+                      <div style={{flex:1,minWidth:'200px'}}>
+                        <div style={{color:'#fff',fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}><span style={{color:'#60a5fa',marginRight:'6px'}}>▶</span>{item.client} · <span style={{color:'#22c55e'}}>{item.vehicle}</span></div>
+                        <div style={{color:'#6b7280',fontSize:'11px',lineHeight:'1.6'}}>
+                          <span style={{color:'#9ca3af'}}>ID:</span> {item.issueId} &nbsp;·&nbsp;
+                          <span style={{color:'#9ca3af'}}>By:</span> {item.raisedBy} &nbsp;·&nbsp;
+                          <span style={{color:'#9ca3af'}}>Raised:</span> {item.raisedAt}
+                          {item.location&&<> &nbsp;·&nbsp;<span style={{color:'#9ca3af'}}>Loc:</span> {item.location}</>}
                         </div>
-                        <span className="badge badge-amber">PENDING</span>
+                        {item.details&&<div style={{color:'#9ca3af',fontSize:'11px',marginTop:'4px',fontStyle:'italic'}}>{item.details}</div>}
+                      </div>
+                      <span className="badge badge-amber">PENDING</span>
+                    </div>
+                  </div>
+                ))}
+              </>}
+
+              {filteredCompleted.length>0&&<>
+                <div style={{...s.sectionHd,marginTop:'20px'}}>COMPLETED ({filteredCompleted.length})</div>
+                {filteredCompleted.map(item=>(
+                  <div key={item.issueId} style={{...s.footCard,opacity:0.6}}>
+                    <div style={{display:'flex',justifyContent:'space-between',gap:'12px',flexWrap:'wrap'}}>
+                      <div style={{flex:1,minWidth:'200px'}}>
+                        <div style={{color:'#fff',fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}><span style={{color:'#22c55e',marginRight:'6px'}}>✓</span>{item.client} · <span style={{color:'#22c55e'}}>{item.vehicle}</span></div>
+                        <div style={{color:'#6b7280',fontSize:'11px'}}><span style={{color:'#9ca3af'}}>ID:</span> {item.issueId} &nbsp;·&nbsp;<span style={{color:'#9ca3af'}}>By:</span> {item.raisedBy} &nbsp;·&nbsp;<span style={{color:'#9ca3af'}}>Done:</span> {item.resolvedAt}</div>
+                      </div>
+                      <span className="badge badge-green">DONE</span>
+                    </div>
+                  </div>
+                ))}
+              </>}
+            </div>
+          )}
+
+          {/* ══════════ FOLLOW-UPS ══════════ */}
+          {activeTab === 'followups' && (
+            <div style={{maxWidth:'900px'}}>
+              <div style={s.sectionHd}>OPEN FOLLOW-UPS — Admin can close these</div>
+              {footage.followups.length===0 ? (
+                <div style={{color:'#6b7280',textAlign:'center',padding:'3rem'}}>No open follow-ups.</div>
+              ) : (
+                footage.followups.map(item => (
+                  <div key={item.issueId} style={{...s.footCard,borderColor:'#f59e0b33'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',gap:'12px',flexWrap:'wrap'}}>
+                      <div style={{flex:1,minWidth:'200px'}}>
+                        <div style={{color:'#fff',fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}>
+                          <span style={{color:'#fbbf24',marginRight:'6px'}}>↩</span>
+                          {item.client} · <span style={{color:'#22c55e'}}>{item.vehicle}</span>
+                        </div>
+                        <div style={{color:'#6b7280',fontSize:'11px',lineHeight:'1.6'}}>
+                          <span style={{color:'#9ca3af'}}>ID:</span> {item.issueId} &nbsp;·&nbsp;
+                          <span style={{color:'#9ca3af'}}>Original:</span> {item.originalEmployee} &nbsp;·&nbsp;
+                          <span style={{color:'#9ca3af'}}>Forwarded to:</span> <strong style={{color:'#fff'}}>{item.forwardedTo}</strong> &nbsp;·&nbsp;
+                          <span style={{color:'#9ca3af'}}>At:</span> {item.forwardedAt}
+                        </div>
+                        {item.details&&<div style={{color:'#9ca3af',fontSize:'11px',marginTop:'4px',fontStyle:'italic'}}>{item.details}</div>}
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:'6px',alignItems:'flex-end'}}>
+                        <span className="badge badge-amber">FOLLOW-UP</span>
+                        <button
+                          style={{background:'#1a0808',border:'1px solid #3a1515',borderRadius:'6px',color:'#f87171',fontSize:'10px',padding:'5px 10px',cursor:'pointer'}}
+                          onClick={()=>{ setCloseFollowupModal(item); setCloseReason('') }}
+                        >
+                          Close follow-up
+                        </button>
                       </div>
                     </div>
-                  ))}
-                </>
-              )}
-
-              {filteredCompleted.length > 0 && (
-                <>
-                  <div style={{...s.sectionHd, marginTop:'20px'}}>COMPLETED ({filteredCompleted.length})</div>
-                  {filteredCompleted.map(item => (
-                    <div key={item.issueId} style={{...s.footCard, opacity:0.6}}>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'12px',flexWrap:'wrap'}}>
-                        <div style={{flex:1, minWidth:'200px'}}>
-                          <div style={{color:'#fff',fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}><span style={{color:'#22c55e',marginRight:'6px'}}>✓</span>{item.client} · <span style={{color:'#22c55e'}}>{item.vehicle}</span></div>
-                          <div style={{color:'#6b7280',fontSize:'11px'}}>
-                            <span style={{color:'#9ca3af'}}>ID:</span> {item.issueId} &nbsp;·&nbsp;
-                            <span style={{color:'#9ca3af'}}>By:</span> {item.raisedBy} &nbsp;·&nbsp;
-                            <span style={{color:'#9ca3af'}}>Done:</span> {item.resolvedAt}
-                          </div>
-                        </div>
-                        <span className="badge badge-green">DONE</span>
-                      </div>
-                    </div>
-                  ))}
-                </>
+                  </div>
+                ))
               )}
             </div>
           )}
 
-          {/* ══════════ REDISTRIBUTION TAB ══════════ */}
+          {/* ══════════ REDISTRIBUTION ══════════ */}
           {activeTab === 'redistribution' && (
             <div style={{maxWidth:'900px'}}>
               <div style={s.sectionHd}>TODAY'S REDISTRIBUTION LOG</div>
-              {redistribution.length === 0 ? (
+              {redistribution.length===0 ? (
                 <div style={{color:'#6b7280',textAlign:'center',padding:'3rem'}}>No redistributions today.</div>
               ) : (
                 <table style={s.table}>
                   <thead>
                     <tr style={{background:'#161616'}}>
-                      {['From Employee','To Employee','Client','Hour','Reason'].map(h => <th key={h} style={s.tableHd}>{h}</th>)}
+                      {['From','To','Client','Hour','Reason'].map(h=><th key={h} style={s.tableHd}>{h}</th>)}
                     </tr>
                   </thead>
                   <tbody>
-                    {redistribution.map((r, i) => (
+                    {redistribution.map((r,i)=>(
                       <tr key={i} style={{borderBottom:'1px solid #1a1a1a'}}>
-                        <td style={{...s.tableTd, color:'#f87171'}}>{r.from}</td>
-                        <td style={{...s.tableTd, color:'#22c55e'}}>{r.to}</td>
+                        <td style={{...s.tableTd,color:'#f87171'}}>{r.from}</td>
+                        <td style={{...s.tableTd,color:'#22c55e'}}>{r.to}</td>
                         <td style={s.tableTd}>{r.client}</td>
                         <td style={s.tableTd}>{r.hour}:00</td>
-                        <td style={{...s.tableTd, color:'#6b7280'}}>Auto - Early End</td>
+                        <td style={{...s.tableTd,color:'#6b7280'}}>Early End</td>
                       </tr>
                     ))}
                   </tbody>
@@ -356,7 +530,80 @@ export default function Admin() {
 
         </div>
       </div>
+
+      {/* ══════════ MARK LEAVE MODAL ══════════ */}
+      {markLeaveModal && (
+        <div style={modal.overlay} onClick={()=>setMarkLeaveModal(null)}>
+          <div style={modal.box} onClick={e=>e.stopPropagation()}>
+            <div style={modal.title}>Mark Leave — {markLeaveModal.name}</div>
+            <div style={modal.row}>
+              <div style={{flex:1}}>
+                <label style={modal.lbl}>FROM HOUR</label>
+                <select style={modal.sel} value={leaveFromHour} onChange={e=>setLeaveFromHour(parseInt(e.target.value))}>
+                  {hours.map(h=><option key={h} value={h}>{h}:00</option>)}
+                </select>
+              </div>
+              <div style={{flex:1}}>
+                <label style={modal.lbl}>TO HOUR</label>
+                <select style={modal.sel} value={leaveToHour} onChange={e=>setLeaveToHour(parseInt(e.target.value))}>
+                  {hours.map(h=><option key={h} value={h}>{h}:00</option>)}
+                </select>
+              </div>
+            </div>
+            <label style={modal.lbl}>REASON</label>
+            <input style={modal.inp} placeholder="Optional reason" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/>
+            <div style={modal.btnRow}>
+              <button style={modal.cancelBtn} onClick={()=>setMarkLeaveModal(null)}>Cancel</button>
+              <button style={modal.confirmBtn} onClick={handleMarkLeave} disabled={markingLeave}>
+                {markingLeave?'Marking...':'Mark Leave'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════ CLOSE FOLLOW-UP MODAL ══════════ */}
+      {closeFollowupModal && (
+        <div style={modal.overlay} onClick={()=>setCloseFollowupModal(null)}>
+          <div style={modal.box} onClick={e=>e.stopPropagation()}>
+            <div style={modal.title}>Close Follow-up</div>
+            <div style={{color:'#6b7280',fontSize:'13px',marginBottom:'16px'}}>
+              Issue ID: <strong style={{color:'#fff'}}>{closeFollowupModal.issueId}</strong> · {closeFollowupModal.client} · {closeFollowupModal.vehicle}
+            </div>
+            <label style={modal.lbl}>REASON FOR CLOSING</label>
+            <input style={modal.inp} placeholder="e.g. Footage not available, already resolved..." value={closeReason} onChange={e=>setCloseReason(e.target.value)}/>
+            <div style={modal.btnRow}>
+              <button style={modal.cancelBtn} onClick={()=>setCloseFollowupModal(null)}>Cancel</button>
+              <button style={{...modal.confirmBtn,background:'#ef4444'}} onClick={handleCloseFollowup} disabled={closingFollowup}>
+                {closingFollowup?'Closing...':'Close Follow-up'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
+  )
+}
+
+function MiniStat({ label, val, warn }) {
+  return (
+    <div style={{textAlign:'center',minWidth:'60px'}}>
+      <div style={{color:warn?'#f59e0b':'#fff',fontSize:'14px',fontWeight:'700'}}>{val}</div>
+      <div style={{color:'#6b7280',fontSize:'8px',letterSpacing:'0.3px'}}>{label}</div>
+    </div>
+  )
+}
+
+function AttendanceDots({ attendance }) {
+  return (
+    <div style={{display:'flex',gap:'3px'}}>
+      {attendance.map((a,i)=>(
+        <div key={i} title={`${a.date}: ${a.status}`} style={{
+          width:'10px',height:'10px',borderRadius:'3px',
+          background:a.status==='active'?'#22c55e':a.status==='completed'?'#3b82f6':'#3a1515',
+        }}></div>
+      ))}
+    </div>
   )
 }
 
@@ -365,37 +612,42 @@ const s = {
   tabs: { display:'flex', gap:'4px', borderBottom:'1px solid #222', marginBottom:'20px', overflowX:'auto' },
   tab: { background:'transparent', border:'none', borderBottom:'2px solid transparent', color:'#6b7280', padding:'10px 16px', fontSize:'13px', cursor:'pointer', marginBottom:'-1px', whiteSpace:'nowrap' },
   tabActive: { color:'#22c55e', borderBottomColor:'#22c55e', fontWeight:'600' },
-  kpiGrid: { display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:'10px', marginBottom:'20px' },
-  kpi: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'14px', textAlign:'center' },
-  kpiNum: { fontSize:'24px', fontWeight:'700' },
-  kpiLbl: { color:'#6b7280', fontSize:'9px', letterSpacing:'0.5px', marginTop:'4px' },
-  sectionHd: { color:'#22c55e', fontSize:'10px', letterSpacing:'1.5px', fontWeight:'600', marginBottom:'12px', display:'flex', alignItems:'center' },
-  empGrid: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'10px', marginBottom:'20px' },
-  empCard: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px' },
-  empCardAbsent: { borderColor:'#3a1515', background:'#120808' },
-  empCardWeekOff: { borderColor:'#3a2a00', background:'#14100a' },
-  empTop: { display:'flex', alignItems:'center', gap:'8px', marginBottom:'10px' },
-  empAva: { width:'30px', height:'30px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'10px', fontWeight:'700', color:'#fff', flexShrink:0 },
-  statusDot: { width:'8px', height:'8px', borderRadius:'50%' },
-  empStats: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'6px', marginBottom:'8px' },
-  empStat: { background:'#161616', borderRadius:'6px', padding:'6px', textAlign:'center' },
-  statusBadge: { display:'inline-block', borderRadius:'4px', padding:'2px 8px', fontSize:'9px', fontWeight:'700', border:'1px solid', marginTop:'6px', letterSpacing:'0.5px' },
+  kpiStrip: { display:'flex', gap:'8px', marginBottom:'20px', flexWrap:'wrap' },
+  kpiPill: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'10px 16px', display:'flex', alignItems:'center', gap:'8px' },
+  empListCard: { background:'#111', border:'1px solid #222', borderRadius:'12px', overflow:'hidden' },
+  empRow: { display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom:'1px solid #1a1a1a', flexWrap:'wrap' },
+  empDot: { width:'8px', height:'8px', borderRadius:'50%', flexShrink:0 },
+  empNameCol: { minWidth:'140px' },
+  empNameTxt: { color:'#fff', fontSize:'13px', fontWeight:'600' },
+  empSubTxt: { color:'#6b7280', fontSize:'10px', marginTop:'2px' },
+  empStatusTag: { fontSize:'11px', fontWeight:'600', minWidth:'80px' },
+  empDuration: { color:'#6b7280', fontSize:'12px', minWidth:'70px', textAlign:'center' },
+  viewBtn: { background:'transparent', border:'1px solid #2a2a2a', borderRadius:'6px', color:'#6b7280', fontSize:'11px', padding:'6px 12px', cursor:'pointer', whiteSpace:'nowrap', marginLeft:'auto' },
+  filterBar: { display:'flex', gap:'10px', alignItems:'center', marginBottom:'16px', flexWrap:'wrap', background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 16px' },
+  filterLbl: { color:'#6b7280', fontSize:'10px', letterSpacing:'0.5px', fontWeight:'600' },
+  dateInp: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'8px 10px' },
+  quickBtn: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#9ca3af', fontSize:'11px', padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' },
+  fdEmpCard: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 16px' },
+  fdEmpHeader: { display:'flex', alignItems:'center', gap:'12px', cursor:'pointer', flexWrap:'wrap' },
+  progRow: { display:'flex', alignItems:'center', gap:'12px', background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 16px', flexWrap:'wrap' },
+  sectionHd: { color:'#22c55e', fontSize:'10px', letterSpacing:'1.5px', fontWeight:'600', marginBottom:'12px' },
+  footSumCard: { background:'#161616', borderRadius:'8px', padding:'8px 14px', display:'flex', flexDirection:'column', alignItems:'center', gap:'2px' },
   footCard: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'14px', marginBottom:'8px' },
-  footSumCard: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 20px', display:'flex', flexDirection:'column', alignItems:'center', gap:'2px', minWidth:'90px' },
-  searchInp: { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'10px 14px', boxSizing:'border-box' },
-  dateInp: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'9px 10px', boxSizing:'border-box' },
-  clearBtn: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#6b7280', fontSize:'11px', padding:'9px 12px', cursor:'pointer', whiteSpace:'nowrap' },
-  dlBtn: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#6b7280', fontSize:'11px', padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' },
+  searchInp: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'9px 12px', boxSizing:'border-box' },
   table: { width:'100%', borderCollapse:'collapse', background:'#111', borderRadius:'10px', overflow:'hidden', border:'1px solid #222' },
   tableHd: { color:'#6b7280', fontSize:'10px', letterSpacing:'0.5px', padding:'10px 14px', textAlign:'left', fontWeight:'600' },
   tableTd: { color:'#fff', fontSize:'12px', padding:'10px 14px' },
-  progressGrid: { display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'12px' },
-  progCard: { background:'#111', border:'1px solid #222', borderRadius:'12px', padding:'16px' },
-  progHeader: { display:'flex', alignItems:'center', gap:'10px', marginBottom:'14px' },
-  attendanceStrip: { display:'flex', gap:'4px', marginBottom:'14px', justifyContent:'space-between' },
-  attendanceDay: { display:'flex', flexDirection:'column', alignItems:'center', gap:'3px', flex:1 },
-  attendanceDot: { width:'18px', height:'18px', borderRadius:'5px' },
-  attendanceDate: { color:'#6b7280', fontSize:'8px' },
-  progStatsGrid: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'6px', marginBottom:'6px' },
-  progStat: { background:'#161616', borderRadius:'6px', padding:'7px', textAlign:'center' },
+}
+
+const modal = {
+  overlay: { position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, backdropFilter:'blur(2px)' },
+  box: { background:'#111', border:'1px solid #222', borderRadius:'16px', padding:'1.5rem', width:'360px', maxWidth:'90vw' },
+  title: { color:'#fff', fontSize:'16px', fontWeight:'700', marginBottom:'16px' },
+  row: { display:'flex', gap:'10px', marginBottom:'14px' },
+  lbl: { display:'block', color:'#22c55e', fontSize:'10px', letterSpacing:'1px', fontWeight:'600', marginBottom:'5px' },
+  sel: { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', padding:'8px 10px', fontSize:'13px' },
+  inp: { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', padding:'9px 12px', fontSize:'13px', marginBottom:'16px', boxSizing:'border-box' },
+  btnRow: { display:'flex', gap:'8px' },
+  cancelBtn: { flex:1, background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#6b7280', fontSize:'13px', padding:'10px', cursor:'pointer' },
+  confirmBtn: { flex:1, background:'#22c55e', border:'none', borderRadius:'8px', color:'#000', fontSize:'13px', fontWeight:'700', padding:'10px', cursor:'pointer' },
 }
