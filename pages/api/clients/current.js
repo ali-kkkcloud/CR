@@ -1,6 +1,9 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts } from '../../../lib/sheets'
-import { getClientsForEmployeeAtHour } from '../../../lib/schedule'
+import {
+  readSheet, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
+  fetchClientVehicleCounts, getLeaveMapForDate
+} from '../../../lib/sheets'
+import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour } from '../../../lib/schedule'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -10,44 +13,57 @@ export default async function handler(req, res) {
   try {
     const hour  = nowIST().getHours()
     const today = todayStr()
+    const now   = nowStr()
 
-    const shiftRows = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
-    const activeMap = {}
-    for (let i = 1; i < shiftRows.length; i++) {
-      const r = shiftRows[i]
-      if (r[2] === today) {
-        activeMap[r[1]] = r[6]
-      }
-    }
-    const activeEmployeeNames = Object.entries(activeMap)
-      .filter(([, status]) => status === 'Active')
-      .map(([name]) => name)
+    // ── Get leave map (admin-marked leaves) ──
+    const leaveMap = await getLeaveMapForDate(today)
+
+    // ── Scheduled employees for this hour (leave-aware) ──
+    const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap)
+    const scheduledNames = scheduledEmps.map(e => e.name)
 
     const vehicleMap = await fetchClientVehicleCounts()
 
-    const redistRows = await readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`)
-    const redistributedToMe = redistRows.slice(1)
-      .filter(r => r[0] === today && r[3] === user.name && parseInt(r[5]) === hour)
-      .map(r => ({ fromEmployee: r[2], client: r[4] }))
-
-    const clients = getClientsForEmployeeAtHour(user.name, hour, activeEmployeeNames, vehicleMap, redistributedToMe)
-
+    // ── Locked assignments (already decided this hour) ──
     const updateRows = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`)
-    const filled = updateRows.slice(1)
-      .filter(r => r[0] === today && r[2] === user.name && parseInt(r[4]) === hour)
-      .reduce((acc, r) => {
-        acc[r[3]] = {
-          status:           r[5]  || '',
-          misalignVehicles: r[6]  || '',
-          alertCount:       r[7]  || '',
-          fatigue:          r[8]  || '',
-          fatigueCount:     r[9]  || '',
-          notes:            r[10] || '',
-        }
-        return acc
-      }, {})
+    const lockedAssignments = {}
+    updateRows.slice(1)
+      .filter(r => r[0] === today && parseInt(r[4]) === hour)
+      .forEach(r => { lockedAssignments[r[3]] = r[2] })
 
-    return res.status(200).json({ hour, clients, filled, activeEmployeeCount: activeEmployeeNames.length })
+    const clients = getClientsForEmployeeAtHour(user.name, hour, scheduledNames, vehicleMap, lockedAssignments)
+
+    // ── Write placeholder rows for newly assigned clients ──
+    const existingForMe = new Set(
+      updateRows.slice(1)
+        .filter(r => r[0] === today && r[2] === user.name && parseInt(r[4]) === hour)
+        .map(r => r[3])
+    )
+    const newRows = []
+    clients.forEach(c => {
+      if (c.isCustom) return
+      if (!existingForMe.has(c.client)) {
+        newRows.push([today, now, user.name, c.client, String(hour), '', '', '', 'No', '', ''])
+      }
+    })
+    if (newRows.length > 0) await appendRows(CRM_SHEET_ID, TABS.CRM_UPDATES, newRows)
+
+    // ── Build filled map ──
+    const allMyRows = [
+      ...updateRows.slice(1).filter(r => r[0] === today && r[2] === user.name && parseInt(r[4]) === hour),
+      ...newRows.map(r => r),
+    ]
+    const filled = {}
+    allMyRows.forEach(r => {
+      const hasRealData = !!(r[5] || '').toString().trim()
+      filled[r[3]] = {
+        status: r[5] || '', misalignVehicles: r[6] || '', alertCount: r[7] || '',
+        fatigue: r[8] || '', fatigueCount: r[9] || '', notes: r[10] || '',
+        updatedAt: hasRealData ? (r[1] || '') : '',
+      }
+    })
+
+    return res.status(200).json({ hour, clients, filled, scheduledCount: scheduledNames.length })
 
   } catch (err) {
     console.error('Clients fetch error:', err)
