@@ -1,13 +1,229 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 
 export default function Login() {
-  const router = useRouter()
+  const router   = useRouter()
+  const canvasRef = useRef(null)
   const [empId,    setEmpId]    = useState('')
   const [password, setPassword] = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
+
+  // ── Canvas animation ──
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    let animId
+    let W = canvas.width  = canvas.offsetWidth
+    let H = canvas.height = canvas.offsetHeight
+
+    const onResize = () => {
+      W = canvas.width  = canvas.offsetWidth
+      H = canvas.height = canvas.offsetHeight
+    }
+    window.addEventListener('resize', onResize)
+
+    // Road segments — isometric grid lines
+    const ROADS = [
+      // horizontal
+      { x1:0, y1:0.25, x2:1, y2:0.25, dir:'h' },
+      { x1:0, y1:0.55, x2:1, y2:0.55, dir:'h' },
+      { x1:0, y1:0.82, x2:1, y2:0.82, dir:'h' },
+      // vertical-ish (slight diagonal = tedi)
+      { x1:0.15, y1:0, x2:0.28, y2:1, dir:'v' },
+      { x1:0.48, y1:0, x2:0.60, y2:1, dir:'v' },
+      { x1:0.78, y1:0, x2:0.88, y2:1, dir:'v' },
+    ]
+
+    // Vehicle class
+    class Vehicle {
+      constructor(road, idx) {
+        this.road  = road
+        this.t     = Math.random()
+        this.speed = 0.0006 + Math.random() * 0.0006
+        this.type  = ['car','bus','truck'][Math.floor(Math.random()*3)]
+        this.rev   = idx % 2 === 0
+        this.color = ['#4ade80','#22c55e','#86efac','#16a34a'][Math.floor(Math.random()*4)]
+      }
+
+      pos() {
+        const { x1,y1,x2,y2 } = this.road
+        const t = this.rev ? 1 - this.t : this.t
+        return { x: (x1 + (x2-x1)*t) * W, y: (y1 + (y2-y1)*t) * H }
+      }
+
+      update() {
+        this.t += this.speed
+        if (this.t > 1) this.t = 0
+      }
+
+      draw(ctx) {
+        const { x, y } = this.pos()
+        const dx = (this.road.x2 - this.road.x1)
+        const dy = (this.road.y2 - this.road.y1)
+        const angle = Math.atan2(dy, dx) + (this.rev ? Math.PI : 0)
+
+        ctx.save()
+        ctx.translate(x, y)
+        ctx.rotate(angle)
+
+        const sizes = { car:[16,8], bus:[28,10], truck:[22,10] }
+        const [vw, vh] = sizes[this.type]
+
+        // Vehicle glow
+        ctx.shadowColor = this.color
+        ctx.shadowBlur  = 8
+
+        // Body
+        ctx.fillStyle = this.color
+        ctx.globalAlpha = 0.92
+        ctx.beginPath()
+        ctx.roundRect(-vw/2, -vh/2, vw, vh, 3)
+        ctx.fill()
+
+        // Windows
+        ctx.globalAlpha = 0.35
+        ctx.fillStyle = '#fff'
+        if (this.type === 'bus') {
+          for (let i = 0; i < 3; i++) {
+            ctx.fillRect(-vw/2 + 4 + i*8, -vh/2 + 2, 5, 3)
+          }
+        } else {
+          ctx.fillRect(-vw/2 + 4, -vh/2 + 2, 5, 3)
+        }
+
+        // Wheels
+        ctx.globalAlpha = 0.8
+        ctx.fillStyle = '#0a0a0a'
+        const wheelPositions = this.type === 'truck'
+          ? [[-7,-vh/2-1],[7,-vh/2-1],[-7,vh/2+1],[7,vh/2+1]]
+          : [[-vw/2+4,-vh/2-1],[-vw/2+4,vh/2+1],[vw/2-4,-vh/2-1],[vw/2-4,vh/2+1]]
+        wheelPositions.forEach(([wx,wy]) => {
+          ctx.beginPath()
+          ctx.arc(wx, wy, 2, 0, Math.PI*2)
+          ctx.fill()
+        })
+
+        // Headlights
+        ctx.globalAlpha = 0.9
+        ctx.fillStyle = '#fffde7'
+        ctx.beginPath()
+        ctx.arc(vw/2, -2, 1.5, 0, Math.PI*2)
+        ctx.fill()
+        ctx.beginPath()
+        ctx.arc(vw/2, 2, 1.5, 0, Math.PI*2)
+        ctx.fill()
+
+        ctx.restore()
+        ctx.globalAlpha = 1
+        ctx.shadowBlur  = 0
+      }
+    }
+
+    const vehicles = []
+    ROADS.forEach((road, ri) => {
+      const count = 2 + Math.floor(Math.random()*2)
+      for (let i = 0; i < count; i++) {
+        const v = new Vehicle(road, i)
+        v.t = i / count
+        vehicles.push(v)
+      }
+    })
+
+    // Pulse dots at intersections
+    let pulse = 0
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H)
+
+      // Background
+      ctx.fillStyle = '#040d06'
+      ctx.fillRect(0, 0, W, H)
+
+      // Radial glow center
+      const grd = ctx.createRadialGradient(W*0.45, H*0.45, 0, W*0.45, H*0.45, W*0.6)
+      grd.addColorStop(0,   'rgba(34,197,94,0.12)')
+      grd.addColorStop(1,   'rgba(34,197,94,0)')
+      ctx.fillStyle = grd
+      ctx.fillRect(0, 0, W, H)
+
+      // Grid
+      ctx.strokeStyle = '#0f2416'
+      ctx.lineWidth   = 0.8
+      for (let x = 0; x < W; x += 45) {
+        ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke()
+      }
+      for (let y = 0; y < H; y += 45) {
+        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke()
+      }
+
+      // Roads — glowing lines
+      ROADS.forEach(road => {
+        const x1 = road.x1 * W, y1 = road.y1 * H
+        const x2 = road.x2 * W, y2 = road.y2 * H
+
+        // Road surface
+        ctx.strokeStyle = '#081508'
+        ctx.lineWidth   = 14
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke()
+
+        // Road glow line
+        ctx.shadowColor = '#22c55e'
+        ctx.shadowBlur  = 12
+        ctx.strokeStyle = 'rgba(34,197,94,0.4)'
+        ctx.lineWidth   = 1.5
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke()
+        ctx.shadowBlur  = 0
+
+        // Center dashes
+        ctx.strokeStyle = 'rgba(34,197,94,0.15)'
+        ctx.lineWidth   = 1
+        ctx.setLineDash([8,12])
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke()
+        ctx.setLineDash([])
+      })
+
+      // Intersection pulse dots
+      const intersections = []
+      for (let i = 0; i < ROADS.length; i++) {
+        for (let j = i+1; j < ROADS.length; j++) {
+          const a = ROADS[i], b = ROADS[j]
+          // Simplified: mark midpoints of each road pair as intersection
+          const ix = ((a.x1+a.x2)/2 * W + (b.x1+b.x2)/2 * W) / 2
+          const iy = ((a.y1+a.y2)/2 * H + (b.y1+b.y2)/2 * H) / 2
+          intersections.push({x: ix, y: iy})
+        }
+      }
+
+      pulse = (pulse + 0.02) % (Math.PI * 2)
+      const pAlpha = 0.4 + 0.3 * Math.sin(pulse)
+      const pR     = 6 + 3 * Math.sin(pulse)
+
+      intersections.slice(0,6).forEach(pt => {
+        ctx.shadowColor = '#4ade80'
+        ctx.shadowBlur  = 10
+        ctx.fillStyle   = `rgba(74,222,128,${pAlpha})`
+        ctx.beginPath()
+        ctx.arc(pt.x, pt.y, pR, 0, Math.PI*2)
+        ctx.fill()
+        ctx.shadowBlur = 0
+      })
+
+      // Vehicles
+      vehicles.forEach(v => { v.update(); v.draw(ctx) })
+
+      animId = requestAnimationFrame(draw)
+    }
+
+    draw()
+
+    return () => {
+      cancelAnimationFrame(animId)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [])
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -30,255 +246,169 @@ export default function Login() {
         <title>Cautio CRM — Login</title>
         <meta name="viewport" content="width=device-width, initial-scale=1"/>
         <style>{`
-          @media (max-width: 860px) {
-            .c-left  { display: none !important; }
-            .c-right { flex: 1 !important; }
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { background: #040d06; }
+          @media (max-width: 800px) {
+            .c-canvas { display: none !important; }
+            .c-right  { flex: 1 !important; min-width: unset !important; }
           }
-          @keyframes r1 { 0%{transform:translateX(-50px);opacity:0} 8%{opacity:1} 92%{opacity:1} 100%{transform:translateX(640px);opacity:0} }
-          @keyframes r2 { 0%{transform:translateX(640px);opacity:0} 8%{opacity:1} 92%{opacity:1} 100%{transform:translateX(-50px);opacity:0} }
-          @keyframes d1 { 0%{transform:translateY(-50px);opacity:0} 8%{opacity:1} 92%{opacity:1} 100%{transform:translateY(640px);opacity:0} }
-          @keyframes u1 { 0%{transform:translateY(640px);opacity:0} 8%{opacity:1} 92%{opacity:1} 100%{transform:translateY(-50px);opacity:0} }
-          @keyframes pinpulse { 0%,100%{opacity:.5;transform:scale(1)} 50%{opacity:1;transform:scale(1.15)} }
-          @keyframes roadshine { 0%,100%{opacity:.3} 50%{opacity:.55} }
-
-          .ra { animation: r1 6s  linear infinite }
-          .rb { animation: r1 6s  linear infinite 2.2s }
-          .rc { animation: r1 9s  linear infinite 1s }
-          .rd { animation: r2 7s  linear infinite }
-          .re { animation: r2 7s  linear infinite 3.5s }
-          .da { animation: d1 8s  linear infinite .5s }
-          .db { animation: d1 8s  linear infinite 4.5s }
-          .ua { animation: u1 7.5s linear infinite 1.5s }
-          .ub { animation: u1 7.5s linear infinite 5s }
-          .pa { animation: pinpulse 2.8s ease-in-out infinite }
-          .pb { animation: pinpulse 2.8s ease-in-out infinite 1.4s }
-          .rs { animation: roadshine 3s ease-in-out infinite }
-          .rs2{ animation: roadshine 3s ease-in-out infinite 1.5s }
+          input:-webkit-autofill {
+            -webkit-box-shadow: 0 0 0 30px #161616 inset !important;
+            -webkit-text-fill-color: #fff !important;
+          }
         `}</style>
       </Head>
 
-      <div style={s.page}>
+      <div style={{minHeight:'100vh',display:'flex',background:'#040d06',position:'relative'}}>
 
-        {/* LEFT — Fleet animation */}
-        <div style={s.left} className="c-left">
-          <svg viewBox="0 0 600 600" style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}>
-            <defs>
-              <pattern id="g1" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M40 0L0 0 0 40" fill="none" stroke="#163320" strokeWidth=".7"/>
-              </pattern>
-              <pattern id="g2" width="200" height="200" patternUnits="userSpaceOnUse">
-                <rect width="200" height="200" fill="url(#g1)"/>
-                <path d="M200 0L0 0 0 200" fill="none" stroke="#1e3d28" strokeWidth="1.5"/>
-              </pattern>
-              <radialGradient id="grd" cx="50%" cy="50%" r="60%">
-                <stop offset="0%"   stopColor="#22c55e" stopOpacity=".18"/>
-                <stop offset="100%" stopColor="#22c55e" stopOpacity="0"/>
-              </radialGradient>
-              <filter id="glow"><feGaussianBlur stdDeviation="3"/></filter>
-              <filter id="vglow"><feGaussianBlur stdDeviation="1.5" result="b"/><feComposite in="SourceGraphic" in2="b" operator="over"/></filter>
-            </defs>
+        {/* Canvas animation — full background */}
+        <canvas
+          ref={canvasRef}
+          className="c-canvas"
+          style={{position:'absolute',inset:0,width:'100%',height:'100%',display:'block'}}
+        />
 
-            <rect width="600" height="600" fill="#040d06"/>
-            <rect width="600" height="600" fill="url(#g2)"/>
-            <circle cx="300" cy="300" r="300" fill="url(#grd)"/>
-
-            {/* Horizontal road 1 — y=210 */}
-            <rect x="0" y="204" width="600" height="12" fill="#081508" className="rs"/>
-            <line x1="0" y1="210" x2="600" y2="210" stroke="#22c55e" strokeWidth="1.5" strokeOpacity=".4" filter="url(#glow)" className="rs"/>
-            <line x1="0" y1="210" x2="600" y2="210" stroke="#22c55e" strokeWidth=".5" strokeOpacity=".2"/>
-
-            {/* Horizontal road 2 — y=400 */}
-            <rect x="0" y="394" width="600" height="12" fill="#081508" className="rs2"/>
-            <line x1="0" y1="400" x2="600" y2="400" stroke="#22c55e" strokeWidth="1.5" strokeOpacity=".4" filter="url(#glow)" className="rs2"/>
-
-            {/* Vertical road 1 — x=160 */}
-            <rect x="154" y="0" width="12" height="600" fill="#081508" className="rs"/>
-            <line x1="160" y1="0" x2="160" y2="600" stroke="#22c55e" strokeWidth="1.5" strokeOpacity=".4" filter="url(#glow)" className="rs"/>
-
-            {/* Vertical road 2 — x=440 */}
-            <rect x="434" y="0" width="12" height="600" fill="#081508" className="rs2"/>
-            <line x1="440" y1="0" x2="440" y2="600" stroke="#22c55e" strokeWidth="1.5" strokeOpacity=".4" filter="url(#glow)" className="rs2"/>
-
-            {/* Intersection dots */}
-            {[[160,210],[440,210],[160,400],[440,400]].map(([x,y],i)=>(
-              <g key={i}>
-                <circle cx={x} cy={y} r="20" fill="#22c55e" fillOpacity=".05"/>
-                <circle cx={x} cy={y} r="4"  fill="#22c55e" fillOpacity=".5"/>
-              </g>
-            ))}
-
-            {/* Pins — no city name labels */}
-            <g className="pa" style={{transformOrigin:'160px 210px'}}>
-              <circle cx="160" cy="210" r="7" fill="#4ade80"/>
-              <circle cx="160" cy="210" r="16" fill="none" stroke="#4ade80" strokeWidth="1" strokeOpacity=".35"/>
-            </g>
-            <g className="pb" style={{transformOrigin:'440px 400px'}}>
-              <circle cx="440" cy="400" r="7" fill="#4ade80"/>
-              <circle cx="440" cy="400" r="16" fill="none" stroke="#4ade80" strokeWidth="1" strokeOpacity=".35"/>
-            </g>
-            <circle cx="440" cy="210" r="4" fill="#4ade80" fillOpacity=".6"/>
-            <circle cx="160" cy="400" r="4" fill="#4ade80" fillOpacity=".6"/>
-
-            {/* ── VEHICLES → road y=210 ── */}
-            {/* Car */}
-            <g className="ra" filter="url(#vglow)">
-              <rect x="2" y="204" width="22" height="10" rx="3" fill="#15803d"/>
-              <rect x="4" y="205" width="16" height="6"  rx="1.5" fill="#4ade80" opacity=".55"/>
-              <rect x="5"  y="206" width="4" height="2.5" rx=".5" fill="#fff" opacity=".7"/>
-              <rect x="11" y="206" width="4" height="2.5" rx=".5" fill="#fff" opacity=".7"/>
-              <circle cx="5"  cy="214" r="2.2" fill="#0a0a0a"/>
-              <circle cx="18" cy="214" r="2.2" fill="#0a0a0a"/>
-            </g>
-            {/* Bus */}
-            <g className="rb" filter="url(#vglow)">
-              <rect x="2" y="202" width="36" height="14" rx="2.5" fill="#14532d"/>
-              <rect x="3" y="203" width="34" height="11" rx="1.5" fill="#22c55e" opacity=".8"/>
-              <rect x="4"  y="204" width="6" height="5" rx=".5" fill="#fff" opacity=".45"/>
-              <rect x="12" y="204" width="6" height="5" rx=".5" fill="#fff" opacity=".45"/>
-              <rect x="20" y="204" width="6" height="5" rx=".5" fill="#fff" opacity=".45"/>
-              <rect x="28" y="204" width="6" height="5" rx=".5" fill="#fff" opacity=".45"/>
-              <circle cx="7"  cy="216" r="2.8" fill="#0a0a0a"/>
-              <circle cx="30" cy="216" r="2.8" fill="#0a0a0a"/>
-            </g>
-            {/* Truck */}
-            <g className="rc" filter="url(#vglow)">
-              <rect x="2" y="201" width="40" height="15" rx="2" fill="#14532d"/>
-              <rect x="30" y="202" width="11" height="12" rx="1.5" fill="#0d2015"/>
-              <rect x="31" y="203" width="8"  height="6"  rx="1"   fill="#4ade80" opacity=".4"/>
-              <circle cx="9"  cy="216" r="3" fill="#0a0a0a"/>
-              <circle cx="24" cy="216" r="3" fill="#0a0a0a"/>
-              <circle cx="35" cy="216" r="3" fill="#0a0a0a"/>
-            </g>
-
-            {/* ── VEHICLES ← road y=400 ── */}
-            <g className="rd" filter="url(#vglow)">
-              <rect x="576" y="394" width="22" height="10" rx="3" fill="#15803d"/>
-              <rect x="578" y="395" width="16" height="6"  rx="1.5" fill="#4ade80" opacity=".55"/>
-              <circle cx="579" cy="404" r="2.2" fill="#0a0a0a"/>
-              <circle cx="594" cy="404" r="2.2" fill="#0a0a0a"/>
-            </g>
-            <g className="re" filter="url(#vglow)">
-              <rect x="562" y="392" width="36" height="14" rx="2.5" fill="#14532d"/>
-              <rect x="563" y="393" width="34" height="11" rx="1.5" fill="#22c55e" opacity=".8"/>
-              <rect x="564" y="394" width="6" height="5" rx=".5" fill="#fff" opacity=".45"/>
-              <rect x="572" y="394" width="6" height="5" rx=".5" fill="#fff" opacity=".45"/>
-              <rect x="580" y="394" width="6" height="5" rx=".5" fill="#fff" opacity=".45"/>
-              <circle cx="567" cy="406" r="2.8" fill="#0a0a0a"/>
-              <circle cx="590" cy="406" r="2.8" fill="#0a0a0a"/>
-            </g>
-
-            {/* ── VEHICLES ↓ road x=160 ── */}
-            <g className="da" filter="url(#vglow)">
-              <rect x="154" y="2" width="12" height="22" rx="3" fill="#15803d"/>
-              <rect x="155" y="4" width="10" height="16" rx="1.5" fill="#4ade80" opacity=".55"/>
-              <rect x="156" y="5"  width="3" height="4" rx=".5" fill="#fff" opacity=".7"/>
-              <rect x="156" y="11" width="3" height="4" rx=".5" fill="#fff" opacity=".7"/>
-              <circle cx="156" cy="4"  r="2" fill="#0a0a0a"/>
-              <circle cx="164" cy="4"  r="2" fill="#0a0a0a"/>
-              <circle cx="156" cy="23" r="2" fill="#0a0a0a"/>
-              <circle cx="164" cy="23" r="2" fill="#0a0a0a"/>
-            </g>
-            <g className="db" filter="url(#vglow)">
-              <rect x="153" y="2" width="14" height="36" rx="2.5" fill="#14532d"/>
-              <rect x="154" y="3" width="12" height="33" rx="1.5" fill="#22c55e" opacity=".8"/>
-              <rect x="155" y="4"  width="5" height="6" rx=".5" fill="#fff" opacity=".4"/>
-              <rect x="155" y="13" width="5" height="6" rx=".5" fill="#fff" opacity=".4"/>
-              <rect x="155" y="22" width="5" height="6" rx=".5" fill="#fff" opacity=".4"/>
-              <circle cx="156" cy="3"  r="2.5" fill="#0a0a0a"/>
-              <circle cx="165" cy="3"  r="2.5" fill="#0a0a0a"/>
-              <circle cx="156" cy="37" r="2.5" fill="#0a0a0a"/>
-              <circle cx="165" cy="37" r="2.5" fill="#0a0a0a"/>
-            </g>
-
-            {/* ── VEHICLES ↑ road x=440 ── */}
-            <g className="ua" filter="url(#vglow)">
-              <rect x="434" y="576" width="12" height="22" rx="3" fill="#15803d"/>
-              <rect x="435" y="578" width="10" height="16" rx="1.5" fill="#4ade80" opacity=".55"/>
-              <circle cx="436" cy="578" r="2" fill="#0a0a0a"/>
-              <circle cx="444" cy="578" r="2" fill="#0a0a0a"/>
-              <circle cx="436" cy="597" r="2" fill="#0a0a0a"/>
-              <circle cx="444" cy="597" r="2" fill="#0a0a0a"/>
-            </g>
-            <g className="ub" filter="url(#vglow)">
-              <rect x="433" y="562" width="14" height="36" rx="2.5" fill="#14532d"/>
-              <rect x="434" y="563" width="12" height="33" rx="1.5" fill="#22c55e" opacity=".8"/>
-              <rect x="435" y="564" width="5" height="6" rx=".5" fill="#fff" opacity=".4"/>
-              <rect x="435" y="573" width="5" height="6" rx=".5" fill="#fff" opacity=".4"/>
-              <circle cx="435" cy="563" r="2.5" fill="#0a0a0a"/>
-              <circle cx="445" cy="563" r="2.5" fill="#0a0a0a"/>
-              <circle cx="435" cy="597" r="2.5" fill="#0a0a0a"/>
-              <circle cx="445" cy="597" r="2.5" fill="#0a0a0a"/>
-            </g>
-
-          </svg>
-
-          <div style={s.leftText}>
-            <div style={s.leftTag}>CAUTIO FLEET INTELLIGENCE</div>
-            <div style={s.leftHeading}>
-              Every vehicle,<br/>
-              <span style={{color:'#4ade80'}}>every moment,</span><br/>
-              under your watch.
-            </div>
-            <div style={s.leftSub}>
-              Monitoring 5Cr+ safe kilometers across India — real-time fleet intelligence at your fingertips.
-            </div>
+        {/* Bottom-left text */}
+        <div style={{position:'absolute',bottom:'48px',left:'48px',zIndex:2}} className="c-canvas">
+          <div style={{color:'#22c55e',fontSize:'10px',letterSpacing:'3px',fontWeight:'700',marginBottom:'14px',opacity:.7}}>
+            CAUTIO FLEET INTELLIGENCE
+          </div>
+          <div style={{color:'#fff',fontSize:'34px',fontWeight:'900',lineHeight:'1.28',marginBottom:'14px'}}>
+            Every vehicle,<br/>
+            <span style={{color:'#4ade80'}}>every moment,</span><br/>
+            under your watch.
+          </div>
+          <div style={{color:'rgba(255,255,255,0.35)',fontSize:'13px',lineHeight:'1.7',maxWidth:'380px'}}>
+            Real-time fleet intelligence — monitoring 5Cr+ safe kilometers across India.
           </div>
         </div>
 
-        {/* RIGHT — Login Form */}
-        <div style={s.right} className="c-right">
-          <div style={s.card}>
-            <div style={s.logoRow}>
-              <img src="/cautio_shield.webp" alt="Cautio" style={s.logoImg}
-                onError={e => e.target.style.display='none'}/>
+        {/* Login card — right side, vertically centered */}
+        <div className="c-right" style={{
+          position:'relative', zIndex:10,
+          marginLeft:'auto',
+          width:'520px', minWidth:'520px',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          minHeight:'100vh', padding:'32px',
+          background:'rgba(4,13,6,0.75)',
+          backdropFilter:'blur(12px)',
+          borderLeft:'1px solid rgba(34,197,94,0.12)',
+        }}>
+          <div style={{width:'100%', maxWidth:'440px'}}>
+
+            {/* Logo */}
+            <div style={{display:'flex',alignItems:'center',gap:'14px',marginBottom:'2.5rem'}}>
+              <img
+                src="/cautio_shield.webp" alt="Cautio"
+                style={{width:'52px',height:'52px',objectFit:'contain'}}
+                onError={e=>e.target.style.display='none'}
+              />
               <div>
-                <div style={s.brand}>Cau<span style={{color:'#22c55e'}}>tio</span></div>
-                <div style={s.sub}>FLEET INTELLIGENCE · CRM</div>
+                <div style={{color:'#fff',fontSize:'26px',fontWeight:'800',letterSpacing:'-0.5px'}}>
+                  Cau<span style={{color:'#22c55e'}}>tio</span>
+                </div>
+                <div style={{color:'rgba(34,197,94,0.5)',fontSize:'9px',letterSpacing:'2.5px',marginTop:'2px'}}>
+                  FLEET INTELLIGENCE · CRM
+                </div>
               </div>
             </div>
-            <h1 style={s.title}>Welcome back</h1>
-            <p style={s.desc}>Sign in to your operations dashboard</p>
+
+            <div style={{marginBottom:'2rem'}}>
+              <h1 style={{color:'#fff',fontSize:'28px',fontWeight:'800',marginBottom:'8px',letterSpacing:'-0.3px'}}>
+                Welcome back
+              </h1>
+              <p style={{color:'rgba(255,255,255,0.4)',fontSize:'14px'}}>
+                Sign in to access your operations dashboard
+              </p>
+            </div>
+
             <form onSubmit={handleLogin}>
-              <label style={s.lbl}>EMPLOYEE ID</label>
-              <input style={s.inp} placeholder="EMP001 or your name"
-                value={empId} onChange={e=>setEmpId(e.target.value)} required autoComplete="username"/>
-              <label style={s.lbl}>PASSWORD</label>
-              <input style={s.inp} type="password" placeholder="••••••••"
-                value={password} onChange={e=>setPassword(e.target.value)} required autoComplete="current-password"/>
-              {error && <div style={s.err}>{error}</div>}
-              <button type="submit" style={s.btn} disabled={loading}>
+              <div style={{marginBottom:'1.2rem'}}>
+                <label style={{display:'block',color:'#22c55e',fontSize:'10px',letterSpacing:'1.5px',fontWeight:'700',marginBottom:'8px'}}>
+                  EMPLOYEE ID
+                </label>
+                <input
+                  style={{
+                    display:'block',width:'100%',
+                    background:'rgba(255,255,255,0.05)',
+                    border:'1px solid rgba(34,197,94,0.2)',
+                    borderRadius:'10px',color:'#fff',
+                    padding:'14px 16px',fontSize:'15px',
+                    outline:'none',transition:'border-color 0.2s',
+                  }}
+                  placeholder="EMP001 or your name"
+                  value={empId}
+                  onChange={e=>setEmpId(e.target.value)}
+                  required
+                  autoComplete="username"
+                  onFocus={e=>e.target.style.borderColor='rgba(34,197,94,0.6)'}
+                  onBlur={e=>e.target.style.borderColor='rgba(34,197,94,0.2)'}
+                />
+              </div>
+
+              <div style={{marginBottom:'1.6rem'}}>
+                <label style={{display:'block',color:'#22c55e',fontSize:'10px',letterSpacing:'1.5px',fontWeight:'700',marginBottom:'8px'}}>
+                  PASSWORD
+                </label>
+                <input
+                  style={{
+                    display:'block',width:'100%',
+                    background:'rgba(255,255,255,0.05)',
+                    border:'1px solid rgba(34,197,94,0.2)',
+                    borderRadius:'10px',color:'#fff',
+                    padding:'14px 16px',fontSize:'15px',
+                    outline:'none',transition:'border-color 0.2s',
+                  }}
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={e=>setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                  onFocus={e=>e.target.style.borderColor='rgba(34,197,94,0.6)'}
+                  onBlur={e=>e.target.style.borderColor='rgba(34,197,94,0.2)'}
+                />
+              </div>
+
+              {error && (
+                <div style={{
+                  background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',
+                  borderRadius:'10px',color:'#f87171',fontSize:'13px',
+                  padding:'12px 16px',marginBottom:'16px'
+                }}>
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                style={{
+                  width:'100%',
+                  background: loading ? '#15803d' : '#22c55e',
+                  border:'none',borderRadius:'10px',
+                  color:'#000',fontWeight:'800',fontSize:'16px',
+                  padding:'15px',cursor:loading?'wait':'pointer',
+                  display:'flex',alignItems:'center',justifyContent:'center',gap:'10px',
+                  letterSpacing:'0.3px',
+                  boxShadow:'0 0 24px rgba(34,197,94,0.25)',
+                  transition:'all 0.2s',
+                }}
+              >
                 {loading
-                  ? <><span className="spinner" style={{width:16,height:16,borderWidth:2}}></span>&nbsp;Signing in...</>
+                  ? <><span className="spinner" style={{width:18,height:18,borderWidth:2}}></span> Signing in...</>
                   : 'Sign In →'}
               </button>
             </form>
-            <p style={s.ver}>Cautio CRM v2.0 · Internal Platform</p>
+
+            <p style={{color:'rgba(255,255,255,0.2)',fontSize:'11px',textAlign:'center',marginTop:'2rem'}}>
+              Cautio CRM v2.0 · Internal Operations Platform
+            </p>
+
           </div>
         </div>
 
       </div>
     </>
   )
-}
-
-const s = {
-  page: { minHeight:'100vh', width:'100%', display:'flex', background:'#0a0a0a' },
-  left: { flex:1, position:'relative', overflow:'hidden', display:'flex', flexDirection:'column', justifyContent:'flex-end', padding:'52px', background:'#040d06', borderRight:'1px solid #162a1c', minHeight:'100vh' },
-  leftText:    { position:'relative', zIndex:2 },
-  leftTag:     { color:'#22c55e', fontSize:'10px', letterSpacing:'2.5px', fontWeight:'700', marginBottom:'18px', opacity:.75 },
-  leftHeading: { color:'#fff', fontSize:'32px', fontWeight:'800', lineHeight:'1.32', marginBottom:'14px' },
-  leftSub:     { color:'#4b6857', fontSize:'13px', lineHeight:'1.65', maxWidth:'360px' },
-  right: { flex:'0 0 480px', display:'flex', alignItems:'center', justifyContent:'center', padding:'24px', boxSizing:'border-box', background:'#0a0a0a' },
-  card:    { background:'#111', border:'1px solid #1e1e1e', borderRadius:'16px', padding:'2.5rem 2.2rem', width:'100%', maxWidth:'400px', boxSizing:'border-box' },
-  logoRow: { display:'flex', alignItems:'center', gap:'12px', marginBottom:'2rem' },
-  logoImg: { width:'42px', height:'42px', objectFit:'contain', flexShrink:0 },
-  brand:   { color:'#fff', fontSize:'22px', fontWeight:'700' },
-  sub:     { color:'#4b6857', fontSize:'9px', letterSpacing:'2px', marginTop:'2px' },
-  title:   { color:'#fff', fontSize:'22px', fontWeight:'700', marginBottom:'6px' },
-  desc:    { color:'#6b7280', fontSize:'13px', marginBottom:'1.8rem' },
-  lbl:     { display:'block', color:'#22c55e', fontSize:'10px', letterSpacing:'1.5px', fontWeight:'600', marginBottom:'6px' },
-  inp:     { display:'block', width:'100%', background:'#161616', border:'1px solid #252525', borderRadius:'8px', color:'#fff', padding:'12px 14px', fontSize:'14px', marginBottom:'1.2rem', outline:'none', boxSizing:'border-box' },
-  btn:     { width:'100%', background:'#22c55e', border:'none', borderRadius:'8px', color:'#000', fontWeight:'700', fontSize:'15px', padding:'13px', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:'8px' },
-  err:     { background:'#1a0808', border:'1px solid #3a1515', borderRadius:'8px', color:'#f87171', fontSize:'12px', padding:'10px 14px', marginBottom:'12px' },
-  ver:     { color:'#333', fontSize:'11px', textAlign:'center', marginTop:'1.5rem' },
 }
