@@ -88,26 +88,48 @@ export default function Admin() {
     return () => clearInterval(id)
   }, [activeTab])
 
-  async function handleMarkLeave() {
-    if (!markLeaveModal) return
-    setMarkingLeave(true)
-    await fetch('/api/admin/mark-leave', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        empName: markLeaveModal.name,
-        date: fullDayDate.split('-').reverse().join('/'),
-        fromHour: leaveFromHour,
-        toHour: leaveToHour,
-        reason: leaveReason || 'Admin marked',
-      }),
-    })
-    setMarkingLeave(false)
-    setMarkLeaveModal(null)
-    setLeaveReason('')
-    loadFullDay(fullDayDate)
-    loadData()
+// pages/admin.js mein handleMarkLeave function replace karo:
+async function handleMarkLeave() {
+  if (!markLeaveModal) return
+  setMarkingLeave(true)
+  const dateStr = fullDayDate.split('-').reverse().join('/')
+
+  // Step 1: Mark leave in sheet
+  await fetch('/api/admin/mark-leave', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      empName: markLeaveModal.name,
+      date: dateStr,
+      fromHour: leaveFromHour,
+      toHour: leaveToHour,
+      reason: leaveReason || 'Admin marked',
+    }),
+  })
+
+  // Step 2: Apply redistribution immediately
+  const redistRes = await fetch('/api/admin/apply-leave-redistribution', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      empName: markLeaveModal.name,
+      date: dateStr,
+      fromHour: leaveFromHour,
+      toHour: leaveToHour,
+    }),
+  })
+  const redistData = await redistRes.json()
+
+  setMarkingLeave(false)
+  setMarkLeaveModal(null)
+  setLeaveReason('')
+  loadFullDay(fullDayDate)
+  loadData()
+
+  if (redistData.redistributed > 0) {
+    alert(`✓ Leave marked. ${redistData.redistributed} client slots redistributed across ${redistData.hours} hours.`)
   }
+}
 
   async function handleCloseFollowup() {
     if (!closeFollowupModal) return
