@@ -4,31 +4,10 @@ import Head from 'next/head'
 import Sidebar from '../components/Sidebar'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
-
-// ─────────────────────────────────────────────────────────────────────────
-// CAUTIO Command Center — brand tokens (Design Bible v1)
-// ─────────────────────────────────────────────────────────────────────────
-const C = {
-  bg:         '#000000',
-  card:       '#1E1E1E',
-  border:     '#171717',
-  borderRow:  '#262626',
-  border2:    '#2a2a2a',
-  s2:         '#262626',
-  accent:     '#94EC8E',
-  accentSoft: '#94EC8E14',
-  accentDark: '#215B3B',
-  text:       '#FFFFFF',
-  text2:      '#D8D8D8',
-  muted:      '#9E9E9E',
-  dim:        '#3f3f3f',
-  red:        '#f87171',
-  redBg:      '#3a1515',
-  amber:      '#fbbf24',
-  amberBg:    '#1a1200',
-  blue:       '#60a5fa',
-  purple:     '#a78bfa',
-}
+import { C, Donut, KpiCard, MiniStat, AttendanceDots } from '../components/Widgets'
+import FullDayTab from '../components/tabs/FullDayTab'
+import ProgressTab from '../components/tabs/ProgressTab'
+import FootageTab from '../components/tabs/FootageTab'
 
 function todayISO() {
   const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
@@ -59,9 +38,6 @@ export default function Admin() {
   const [fullDayDate, setFullDayDate] = useState(todayISO())
   const [fullDayLoading, setFullDayLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('overview')
-  const [footageSearchInput, setFootageSearchInput] = useState('')
-  const [footageSearch, setFootageSearch] = useState('')
-  const [dateFilter, setDateFilter] = useState('')
   const [fromDate, setFromDate] = useState(todayISO())
   const [toDate, setToDate] = useState(todayISO())
   const [loading, setLoading] = useState(true)
@@ -73,10 +49,8 @@ export default function Admin() {
   const [closeFollowupModal, setCloseFollowupModal] = useState(null)
   const [closeReason, setCloseReason] = useState('')
   const [closingFollowup, setClosingFollowup] = useState(false)
-  const [expandedEmp, setExpandedEmp] = useState(null)
   const [showLogout, setShowLogout] = useState(false)
   const [clock, setClock] = useState('')
-  const debounceRef = useRef(null)
 
   useEffect(() => {
     function tick() {
@@ -88,12 +62,6 @@ export default function Admin() {
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   }, [])
-
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => setFootageSearch(footageSearchInput), 300)
-    return () => clearTimeout(debounceRef.current)
-  }, [footageSearchInput])
 
   useEffect(() => {
     fetch('/api/auth/me').then(r => r.json()).then(d => {
@@ -125,6 +93,13 @@ export default function Admin() {
     const data = await fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`).then(r => r.json())
     setFullDayData(data)
     setFullDayLoading(false)
+  }, [])
+
+  // Generic, promise-returning day-view fetch (used by ProgressTab to drill
+  // into a single day without disturbing the Full Day View tab's own state).
+  const loadDayView = useCallback(async (dateISO) => {
+    const ddmmyyyy = dateISO.split('-').reverse().join('/')
+    return fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`).then(r => r.json())
   }, [])
 
   useEffect(() => {
@@ -226,36 +201,6 @@ export default function Admin() {
     const [y, m, d] = isoDate.split('-')
     return (raisedAtStr || '').includes(`${d}/${m}/${y}`)
   }
-
-  const filteredPending = useMemo(() => {
-    let list = footage.pending
-    if (dateFilter) list = list.filter(item => matchDateFlexible(item.raisedAt, dateFilter))
-    if (footageSearch.trim()) {
-      const q = footageSearch.trim().toLowerCase()
-      list = list.filter(item =>
-        (item.vehicle  || '').toLowerCase().includes(q) ||
-        (item.issueId  || '').toString().toLowerCase().includes(q) ||
-        (item.client   || '').toLowerCase().includes(q) ||
-        (item.raisedBy || '').toLowerCase().includes(q)
-      )
-    }
-    return list
-  }, [footage.pending, footageSearch, dateFilter])
-
-  const filteredCompleted = useMemo(() => {
-    let list = footage.completed
-    if (dateFilter) list = list.filter(item => matchDateFlexible(item.raisedAt, dateFilter))
-    if (footageSearch.trim()) {
-      const q = footageSearch.trim().toLowerCase()
-      list = list.filter(item =>
-        (item.vehicle  || '').toLowerCase().includes(q) ||
-        (item.issueId  || '').toString().toLowerCase().includes(q) ||
-        (item.client   || '').toLowerCase().includes(q) ||
-        (item.raisedBy || '').toLowerCase().includes(q)
-      )
-    }
-    return list
-  }, [footage.completed, footageSearch, dateFilter])
 
   // ── Derived, real-data widgets for the Overview tab ──────────────────────
   const clientDistribution = useMemo(() => {
@@ -592,202 +537,41 @@ export default function Admin() {
 
           {/* ══════════ FULL DAY VIEW ══════════ */}
           {activeTab === 'fullday' && (
-            <div>
-              <div style={s.filterBar}>
-                <span style={s.filterLbl}>DATE</span>
-                <input type="date" style={s.dateInp} value={fullDayDate} onChange={e => { setFullDayDate(e.target.value); setExpandedEmp(null) }}/>
-                <button style={s.quickBtn} onClick={() => { setFullDayDate(todayISO()); setExpandedEmp(null) }}>Today</button>
-                <span style={{color:C.muted,fontSize:'11px',marginLeft:'auto'}}>Click employee row to expand hours. Use "Mark Leave" to exclude from distribution.</span>
-              </div>
-
-              {fullDayLoading ? (
-                <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
-              ) : !fullDayData ? (
-                <div style={{color:C.muted,textAlign:'center',padding:'3rem'}}>Loading...</div>
-              ) : (
-                <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
-                  {fullDayData.employees.map(emp => {
-                    const isExpanded = expandedEmp === emp.name
-                    const totalMissed = emp.hours.reduce((s,h)=>s+h.missedClients,0)
-                    const totalDone   = emp.hours.reduce((s,h)=>s+h.completedClients,0)
-                    const totalAll    = emp.hours.reduce((s,h)=>s+h.totalClients,0)
-
-                    return (
-                      <div key={emp.name} style={{...s.fdEmpCard, ...(isExpanded?{borderColor:C.accent+'44'}:{})}}>
-                        <div style={s.fdEmpHeader} onClick={()=>setExpandedEmp(isExpanded?null:emp.name)}>
-                          <div style={{...s.empDot, background: emp.loggedIn ? C.accent : emp.hours.some(h=>h.isOnLeave) ? C.amber : C.dim, flexShrink:0}}></div>
-                          <div style={s.empNameCol}>
-                            <div style={{color:C.text,fontSize:'13px',fontWeight:'600'}}>{emp.name}</div>
-                            <div style={{color:C.muted,fontSize:'10px'}}>
-                              {emp.isNight?'Night':'Day'} {emp.shiftStart}:00–{emp.shiftEnd}:00
-                              {emp.loggedIn && ` · Logged in ${emp.startTime}${emp.endTime ? ' → '+emp.endTime : ''}`}
-                              {!emp.loggedIn && <span style={{color:C.red}}> · Not logged in</span>}
-                            </div>
-                          </div>
-                          <div style={{display:'flex',gap:'16px',alignItems:'center',marginLeft:'auto'}}>
-                            <MiniStat label="Assigned" val={totalAll}/>
-                            <MiniStat label="Done" val={totalDone}/>
-                            <MiniStat label="Missed" val={totalMissed} warn={totalMissed>0}/>
-                          </div>
-                          <button
-                            style={{...s.quickBtn, marginLeft:'12px', background:C.amberBg, borderColor:C.amber+'33', color:C.amber}}
-                            onClick={e => { e.stopPropagation(); setMarkLeaveModal(emp); setLeaveFromHour(emp.shiftStart); setLeaveToHour(emp.shiftEnd) }}
-                          >
-                            Mark Leave
-                          </button>
-                          <span style={{color:C.dim,fontSize:'16px',marginLeft:'8px'}}>{isExpanded?'▲':'▼'}</span>
-                        </div>
-
-                        {isExpanded && (
-                          <div style={{borderTop:`1px solid ${C.border}`,marginTop:'10px',paddingTop:'10px'}}>
-                            {emp.hours.length === 0 ? (
-                              <div style={{color:C.muted,fontSize:'12px',padding:'8px'}}>No scheduled hours with clients.</div>
-                            ) : (
-                              <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
-                                {emp.hours.map(h => (
-                                  <div key={h.hour} style={{
-                                    background: h.isOnLeave ? C.amberBg : C.s2,
-                                    borderRadius:'8px', padding:'10px 14px',
-                                    border:`1px solid ${h.isOnLeave?C.amber+'33':C.border2}`,
-                                  }}>
-                                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:'6px'}}>
-                                      <span style={{color:h.isOnLeave?C.amber:C.text,fontSize:'12px',fontWeight:'600'}}>
-                                        {hourLabel(h.hour)} {h.isOnLeave && '· ON LEAVE'}
-                                      </span>
-                                      {!h.isOnLeave && (
-                                        <span style={{color:h.completedClients===h.totalClients&&h.totalClients>0?C.accent:C.amber,fontSize:'11px'}}>
-                                          {h.completedClients}/{h.totalClients} done
-                                        </span>
-                                      )}
-                                    </div>
-                                    {!h.isOnLeave && (
-                                      <div style={{display:'flex',flexWrap:'wrap',gap:'5px'}}>
-                                        {h.clients.length === 0 ? (
-                                          <span style={{color:C.dim,fontSize:'11px'}}>No clients this hour</span>
-                                        ) : h.clients.map((c,i) => (
-                                          <div key={i} style={{
-                                            fontSize:'10px', padding:'3px 9px', borderRadius:'5px', border:'1px solid',
-                                            background: c.filled ? C.accent+'14' : C.red+'14',
-                                            borderColor: c.filled ? C.accent+'33' : C.red+'33',
-                                            color: c.filled ? C.accent : C.red,
-                                          }} title={c.filled ? `Updated at ${c.updatedAt}` : 'Not updated'}>
-                                            {c.filled ? '✓' : '○'} {c.client}
-                                            {c.vehicleCount > 0 && <span style={{opacity:0.6}}> ({c.vehicleCount}v)</span>}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
+            <FullDayTab
+              date={fullDayDate}
+              setDate={(d)=>setFullDayDate(d)}
+              data={fullDayData}
+              loading={fullDayLoading}
+              onMarkLeave={(emp)=>{ setMarkLeaveModal(emp); setLeaveFromHour(emp.shiftStart); setLeaveToHour(emp.shiftEnd) }}
+              footageAll={footage}
+              matchDateFlexible={matchDateFlexible}
+              downloadCSV={downloadCSV}
+            />
           )}
 
           {/* ══════════ EMPLOYEE PROGRESS ══════════ */}
           {activeTab === 'progress' && (
-            <div>
-              <div style={s.filterBar}>
-                <span style={s.filterLbl}>FROM</span>
-                <input type="date" style={s.dateInp} value={fromDate} onChange={e=>setFromDate(e.target.value)}/>
-                <span style={s.filterLbl}>TO</span>
-                <input type="date" style={s.dateInp} value={toDate} onChange={e=>setToDate(e.target.value)}/>
-                <button style={s.quickBtn} onClick={()=>{setFromDate(todayISO());setToDate(todayISO())}}>Today</button>
-                <button style={s.quickBtn} onClick={()=>{
-                  const d=new Date();d.setDate(d.getDate()-6);
-                  setFromDate(d.toISOString().split('T')[0]);setToDate(todayISO())
-                }}>Last 7 days</button>
-                {progress&&<span style={{color:C.muted,fontSize:'11px',marginLeft:'auto'}}>{progress.dates.length} day(s)</span>}
-              </div>
-
-              {!progress ? (
-                <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
-              ) : (
-                <div style={{display:'flex',flexDirection:'column',gap:'6px'}}>
-                  {progress.progress.map(emp => (
-                    <div key={emp.name} style={s.progRow}>
-                      <div style={{...s.empDot,background:emp.isNight?C.purple:C.accent}}></div>
-                      <div style={s.empNameCol}>
-                        <div style={{color:C.text,fontSize:'13px',fontWeight:'600'}}>{emp.name}</div>
-                        <div style={{color:C.muted,fontSize:'10px'}}>{emp.daysPresent}/{emp.totalDaysInRange} days present</div>
-                      </div>
-                      <AttendanceDots attendance={emp.attendance}/>
-                      <MiniStat label="Clients" val={emp.rangeClientsCount}/>
-                      <MiniStat label="Updates" val={emp.rangeUpdatesCount}/>
-                      <MiniStat label="Footage done" val={emp.footageCompletedInRange}/>
-                      <MiniStat label="Footage left" val={emp.footagePending} warn={emp.footagePending>0}/>
-                      <MiniStat label="Days missed" val={emp.daysAbsent} warn={emp.daysAbsent>0}/>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ProgressTab
+              progress={progress}
+              fromDate={fromDate}
+              toDate={toDate}
+              setFromDate={setFromDate}
+              setToDate={setToDate}
+              overviewEmployees={employees}
+              todayISO={todayISO}
+              loadDayView={loadDayView}
+              downloadCSV={downloadCSV}
+            />
           )}
 
           {/* ══════════ FOOTAGE ══════════ */}
           {activeTab === 'footage' && (
-            <div style={{maxWidth:'1000px'}}>
-              <div style={s.filterBar}>
-                <div style={s.footSumCard}><span style={{color:C.amber,fontSize:'20px',fontWeight:'700'}}>{filteredPending.length}</span><span style={{color:C.muted,fontSize:'9px'}}>PENDING</span></div>
-                <div style={s.footSumCard}><span style={{color:C.accent,fontSize:'20px',fontWeight:'700'}}>{filteredCompleted.length}</span><span style={{color:C.muted,fontSize:'9px'}}>COMPLETED</span></div>
-                <input style={{...s.searchInp,flex:1,minWidth:'200px'}} placeholder="🔍 Search vehicle, issue ID, client, employee..." value={footageSearchInput} onChange={e=>setFootageSearchInput(e.target.value)}/>
-                <input type="date" style={s.dateInp} value={dateFilter} onChange={e=>setDateFilter(e.target.value)}/>
-                {dateFilter&&<button style={s.quickBtn} onClick={()=>setDateFilter('')}>✕ Clear</button>}
-                <button onClick={()=>downloadCSV(
-                  [['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Location'],...filteredPending.map(i=>[i.issueId,i.client,i.vehicle,i.raisedAt,i.details,i.raisedBy,i.location])],
-                  `Footage_Pending_${dateFilter||'all'}.csv`
-                )} style={s.quickBtn}>⬇ Pending</button>
-                <button onClick={()=>downloadCSV(
-                  [['Issue ID','Client','Vehicle','Raised At','Details','Raised By','Resolved','Resolved At'],...[...filteredPending,...filteredCompleted].map(i=>[i.issueId,i.client,i.vehicle,i.raisedAt,i.details,i.raisedBy,i.resolved?'Yes':'No',i.resolvedAt])],
-                  `Footage_All_${dateFilter||'all'}.csv`
-                )} style={s.quickBtn}>⬇ All</button>
-              </div>
-
-              {filteredPending.length===0&&filteredCompleted.length===0&&<div style={{color:C.muted,textAlign:'center',padding:'3rem'}}>No footage requests found.</div>}
-
-              {filteredPending.length>0&&<>
-                <div style={s.sectionHd}>PENDING ({filteredPending.length})</div>
-                {filteredPending.map(item=>(
-                  <div key={item.issueId} style={s.footCard}>
-                    <div style={{display:'flex',justifyContent:'space-between',gap:'12px',flexWrap:'wrap'}}>
-                      <div style={{flex:1,minWidth:'200px'}}>
-                        <div style={{color:C.text,fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}><span style={{color:C.blue,marginRight:'6px'}}>▶</span>{item.client} · <span style={{color:C.accent}}>{item.vehicle}</span></div>
-                        <div style={{color:C.muted,fontSize:'11px',lineHeight:'1.6'}}>
-                          <span style={{color:C.text2}}>ID:</span> {item.issueId} &nbsp;·&nbsp;
-                          <span style={{color:C.text2}}>By:</span> {item.raisedBy} &nbsp;·&nbsp;
-                          <span style={{color:C.text2}}>Raised:</span> {item.raisedAt}
-                          {item.location&&<> &nbsp;·&nbsp;<span style={{color:C.text2}}>Loc:</span> {item.location}</>}
-                        </div>
-                        {item.details&&<div style={{color:C.text2,fontSize:'11px',marginTop:'4px',fontStyle:'italic'}}>{item.details}</div>}
-                      </div>
-                      <span className="badge badge-amber">PENDING</span>
-                    </div>
-                  </div>
-                ))}
-              </>}
-
-              {filteredCompleted.length>0&&<>
-                <div style={{...s.sectionHd,marginTop:'20px'}}>COMPLETED ({filteredCompleted.length})</div>
-                {filteredCompleted.map(item=>(
-                  <div key={item.issueId} style={{...s.footCard,opacity:0.6}}>
-                    <div style={{display:'flex',justifyContent:'space-between',gap:'12px',flexWrap:'wrap'}}>
-                      <div style={{flex:1,minWidth:'200px'}}>
-                        <div style={{color:C.text,fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}><span style={{color:C.accent,marginRight:'6px'}}>✓</span>{item.client} · <span style={{color:C.accent}}>{item.vehicle}</span></div>
-                        <div style={{color:C.muted,fontSize:'11px'}}><span style={{color:C.text2}}>ID:</span> {item.issueId} &nbsp;·&nbsp;<span style={{color:C.text2}}>By:</span> {item.raisedBy} &nbsp;·&nbsp;<span style={{color:C.text2}}>Done:</span> {item.resolvedAt}</div>
-                      </div>
-                      <span className="badge badge-green">DONE</span>
-                    </div>
-                  </div>
-                ))}
-              </>}
-            </div>
+            <FootageTab
+              footageAll={footage}
+              downloadCSV={downloadCSV}
+              onCloseFollowup={(item)=>{ setCloseFollowupModal(item); setCloseReason('') }}
+              todayISO={todayISO}
+            />
           )}
 
           {/* ══════════ FOLLOW-UPS ══════════ */}
@@ -932,77 +716,8 @@ export default function Admin() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Presentational helpers
+// Presentational helpers (Overview-tab specific — shared ones live in Widgets.js)
 // ─────────────────────────────────────────────────────────────────────────
-
-function MiniStat({ label, val, warn }) {
-  return (
-    <div style={{textAlign:'center',minWidth:'60px'}}>
-      <div style={{color:warn?C.amber:C.text,fontSize:'14px',fontWeight:'700'}}>{val}</div>
-      <div style={{color:C.muted,fontSize:'8px',letterSpacing:'0.3px'}}>{label}</div>
-    </div>
-  )
-}
-
-function AttendanceDots({ attendance }) {
-  return (
-    <div style={{display:'flex',gap:'3px'}}>
-      {attendance.map((a,i)=>(
-        <div key={i} title={`${a.date}: ${a.status}`} style={{
-          width:'10px',height:'10px',borderRadius:'3px',
-          background:a.status==='active'?C.accent:a.status==='completed'?C.blue:'#3a1515',
-        }}></div>
-      ))}
-    </div>
-  )
-}
-
-function KpiCard({ icon, label, value, sub, subColor, progress }) {
-  return (
-    <div style={s.kpiCard}>
-      <div style={s.kpiIconWrap}><Icon name={icon} size={15} color={C.accent}/></div>
-      <div style={s.kpiLabel}>{label}</div>
-      <div style={s.kpiValue}>{value}</div>
-      {sub && <div style={{fontSize:'10px', color:subColor||C.muted, marginTop:'2px'}}>{sub}</div>}
-      {typeof progress === 'number' && (
-        <div style={{height:'4px', background:C.border2, borderRadius:'3px', overflow:'hidden', marginTop:'8px'}}>
-          <div style={{height:'100%', width:`${progress}%`, background:C.accent, borderRadius:'3px'}}></div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function Donut({ segments, size = 120, thickness = 15, centerLabel, centerSub }) {
-  const total = segments.reduce((a,seg)=>a+seg.value,0) || 1
-  const r = (size - thickness) / 2
-  const circ = 2 * Math.PI * r
-  let acc = 0
-  return (
-    <div style={{ position:'relative', width:size, height:size, flexShrink:0 }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <g transform={`translate(${size/2},${size/2}) rotate(-90)`}>
-          <circle r={r} fill="none" stroke={C.border2} strokeWidth={thickness} />
-          {segments.map((seg,i) => {
-            const len = (seg.value/total) * circ
-            const dashoffset = -acc
-            acc += len
-            return (
-              <circle key={i} r={r} fill="none" stroke={seg.color} strokeWidth={thickness}
-                strokeDasharray={`${len} ${circ-len}`} strokeDashoffset={dashoffset} strokeLinecap="butt" />
-            )
-          })}
-        </g>
-      </svg>
-      {(centerLabel!==undefined) && (
-        <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
-          <div style={{ color:C.text, fontSize: size>100?'20px':'14px', fontWeight:800, lineHeight:1 }}>{centerLabel}</div>
-          {centerSub && <div style={{ color:C.muted, fontSize:'9px', marginTop:'3px' }}>{centerSub}</div>}
-        </div>
-      )}
-    </div>
-  )
-}
 
 function AlertRow({ alert }) {
   const sevColor = { high:C.red, warn:C.amber, info:C.blue, success:C.accent }[alert.sev] || C.muted
