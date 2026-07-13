@@ -10,7 +10,8 @@ export default async function handler(req, res) {
   try {
     const { rowIndex } = req.body
     if (!rowIndex) return res.status(400).json({ error: 'rowIndex required' })
-    await updateRowCells(ISSUE_SHEET_ID, ISSUE_TAB, rowIndex, 14, ['Yes', `${todayStr()} ${nowStr()}`])
+    // Issue Tracker: R=Resolved Y/N, S=Timestamp Issues Resolved (1-indexed col 18)
+    await updateRowCells(ISSUE_SHEET_ID, ISSUE_TAB, rowIndex, 18, ['Yes', `${todayStr()} ${nowStr()}`])
     return res.status(200).json({ success: true })
   } catch (err) {
     console.error(err)
