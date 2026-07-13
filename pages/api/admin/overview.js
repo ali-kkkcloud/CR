@@ -18,7 +18,7 @@ export default async function handler(req, res) {
       readSheet(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`),
       readSheet(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`),
       readSheet(CRM_SHEET_ID,   `${TABS.REDISTRIB}!A:G`),
-      readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:S`),
+      readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`),
     ])
 
     const weekOffEmps = new Set(
@@ -65,15 +65,16 @@ export default async function handler(req, res) {
       .filter(r => r[0] === today)
       .map(r => ({ from: r[2], to: r[3], client: r[4], hour: r[5] }))
 
+    // Issue Tracker: J(9)=Sub-request, R(17)=Resolved Y/N
     const pendingFootage = footageRows.slice(1).filter(r => {
-      const sub = (r[5] || '').toString().toLowerCase()
-      const resolved = (r[13] || '').toString().toLowerCase()
+      const sub = (r[9] || '').toString().toLowerCase()
+      const resolved = (r[17] || '').toString().toLowerCase()
       return sub.includes('customer request for video') && resolved !== 'yes'
     }).length
 
     const doneFootage = footageRows.slice(1).filter(r => {
-      const sub = (r[5] || '').toString().toLowerCase()
-      const resolved = (r[13] || '').toString().toLowerCase()
+      const sub = (r[9] || '').toString().toLowerCase()
+      const resolved = (r[17] || '').toString().toLowerCase()
       return sub.includes('customer request for video') && resolved === 'yes'
     }).length
 
