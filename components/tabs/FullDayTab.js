@@ -95,12 +95,6 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
     downloadCSV(rows, `FullDay_${date}.csv`)
   }
 
-  if (loading) return <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
-  if (!data) return <div style={{color:C.muted,textAlign:'center',padding:'3rem'}}>Loading...</div>
-
-  const activeHourData = selectedEmp?.hours.find(h => h.hour === selectedHour)
-  const st = statusOf(selectedEmp)
-
   const timelineEvents = useMemo(() => {
     if (!selectedEmp || !drawerClient) return []
     const events = []
@@ -113,6 +107,12 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
     })
     return events.sort((a,b)=>a.hour-b.hour)
   }, [selectedEmp, drawerClient])
+
+  if (loading) return <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
+  if (!data) return <div style={{color:C.muted,textAlign:'center',padding:'3rem'}}>Loading...</div>
+
+  const activeHourData = selectedEmp?.hours.find(h => h.hour === selectedHour)
+  const st = statusOf(selectedEmp)
 
   return (
     <div>
