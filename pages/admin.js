@@ -546,6 +546,8 @@ export default function Admin() {
               footageAll={footage}
               matchDateFlexible={matchDateFlexible}
               downloadCSV={downloadCSV}
+              todayISO={todayISO}
+              onGoToTab={setActiveTab}
             />
           )}
 
