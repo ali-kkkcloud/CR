@@ -67,15 +67,17 @@ export default async function handler(req, res) {
     const myUpdates = updateRows.slice(1).filter(r => r[0] === today && r[2] === user.name)
 
     // ── 4. Footage summary ──
-    const footageRows = await readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:S`)
+    // Issue Tracker layout: B=IssueId C=Client D=Vehicle E=RaisedAt H=RaisedBy
+    // J=SubRequest K=Details R=Resolved(Y/N) S=ResolvedAt
+    const footageRows = await readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`)
     const myFootage = footageRows.slice(1).filter(r => {
-      const sub = (r[5] || '').toString().toLowerCase()
-      const by  = (r[10] || '').toString().trim().toLowerCase()
+      const sub = (r[9] || '').toString().toLowerCase()
+      const by  = (r[7] || '').toString().trim().toLowerCase()
       return sub.includes('customer request for video') && by === user.name.toLowerCase()
     })
-    const pendingFootage = myFootage.filter(r => (r[13] || '').toString().toLowerCase() !== 'yes')
+    const pendingFootage = myFootage.filter(r => (r[17] || '').toString().toLowerCase() !== 'yes')
     const footageCompletedToday = myFootage.filter(r => {
-      return (r[13] || '').toString().toLowerCase() === 'yes' && (r[14] || '').includes(today)
+      return (r[17] || '').toString().toLowerCase() === 'yes' && (r[18] || '').includes(today)
     }).length
 
     const report = {
@@ -91,8 +93,8 @@ export default async function handler(req, res) {
       footageCompletedToday,
       footagePending: pendingFootage.length,
       pendingFootageItems: pendingFootage.map(r => ({
-        issueId: r[0] || '', client: r[2] || '', vehicle: r[9] || '',
-        raisedAt: r[3] || '', details: r[6] || '',
+        issueId: r[1] || '', client: r[2] || '', vehicle: r[3] || '',
+        raisedAt: r[4] || '', details: r[10] || '',
       })),
     }
 
