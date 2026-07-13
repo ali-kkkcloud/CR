@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     const [shiftRows, updateRows, footageRows] = await Promise.all([
       readSheet(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`),
       readSheet(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`),
-      readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:S`),
+      readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`),
     ])
 
     const progress = ALL_EMPLOYEES.map(emp => {
@@ -76,14 +76,14 @@ export default async function handler(req, res) {
       const rangeClients = [...new Set(rangeUpdates.map(r => r[3]))]
 
       const myFootage = footageRows.slice(1).filter(r => {
-        const sub = (r[5]  || '').toString().toLowerCase()
-        const by  = (r[10] || '').toString().trim().toLowerCase()
+        const sub = (r[9] || '').toString().toLowerCase()
+        const by  = (r[7] || '').toString().trim().toLowerCase()
         return sub.includes('customer request for video') && by === emp.name.toLowerCase()
       })
-      const footagePending = myFootage.filter(r => (r[13]||'').toString().toLowerCase() !== 'yes').length
+      const footagePending = myFootage.filter(r => (r[17]||'').toString().toLowerCase() !== 'yes').length
       const footageCompletedInRange = myFootage.filter(r => {
-        const resolvedAt = (r[14]||'').toString()
-        if ((r[13]||'').toString().toLowerCase() !== 'yes') return false
+        const resolvedAt = (r[18]||'').toString()
+        if ((r[17]||'').toString().toLowerCase() !== 'yes') return false
         return rangeDates.some(d => resolvedAt.includes(d))
       }).length
 
