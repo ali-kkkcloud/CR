@@ -48,7 +48,6 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
   const [drawerClient, setDrawerClient] = useState(null)
   const [compact, setCompact] = useState(false)
   const [drawer, setDrawer] = useState(null) // { type:'client'|'employee'|'vehicle'|'hour', payload }
-  const [vehicleQuery, setVehicleQuery] = useState('')
 
   // Playback / Replay Day
   const [isPlaying, setIsPlaying] = useState(false)
@@ -181,6 +180,21 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
     ? recentActivities.filter(a => a.hour <= playHour).slice(0,12)
     : recentActivities.slice(0,12)
 
+  // Drives the smart search banner — client match is checked first (this is
+  // the primary use case per the spec's "search RedBus" example); footage/
+  // vehicle search is only offered as a fallback when nothing else matches.
+  const searchClientMatches = useMemo(() => {
+    if (!search.trim()) return []
+    const q = search.trim().toLowerCase()
+    return allClientsToday.filter(c => c.toLowerCase().includes(q))
+  }, [search, allClientsToday])
+
+  const searchHasEmployeeMatch = useMemo(() => {
+    if (!search.trim()) return true
+    const q = search.trim().toLowerCase()
+    return employees.some(e => e.name.toLowerCase().includes(q))
+  }, [search, employees])
+
   function exportReport() {
     const rows = [
       ['Employee','Status','Assigned','Completed','Pending','Alerts','Misalign','Redistributed','Score'],
@@ -216,26 +230,17 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
           <option value="all">All Clients</option>
           {allClientsToday.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <input placeholder="🔍 Search employee or client..." value={search} onChange={e=>setSearch(e.target.value)} style={{...selStyle, flex:1, minWidth:'160px'}} />
+        <input placeholder="🔍 Search employee or client (e.g. RedBus)..." value={search} onChange={e=>setSearch(e.target.value)} style={{...selStyle, flex:1, minWidth:'160px'}} />
         <button style={{...outlineBtnStyle, ...(onlyPending?{background:C.accentDark,borderColor:C.accent,color:C.accent}:{})}} onClick={()=>setOnlyPending(v=>!v)}>Only Pending</button>
         <button style={{...outlineBtnStyle, ...(onlyRedistributed?{background:C.accentDark,borderColor:C.accent,color:C.accent}:{})}} onClick={()=>setOnlyRedistributed(v=>!v)}>Only Redistributed</button>
         <button style={outlineBtnStyle} onClick={exportReport}><Icon name="download" size={12} color={C.text2}/> Export</button>
         {selectedEmp && (
           <button style={leaveBtnStyle} onClick={()=>onMarkLeave(selectedEmp)}><Icon name="leaves" size={12} color={C.amber}/> Mark Leave — {selectedEmp.name}</button>
         )}
-      </div>
-
-      {/* Vehicle search + Replay Day */}
-      <div style={{ display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap', marginBottom:'14px' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'6px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', padding:'6px 10px', flex:1, minWidth:'220px' }}>
-          <Icon name="search" size={13} color={C.muted}/>
-          <input placeholder="Search a vehicle number (from footage requests)..." value={vehicleQuery} onChange={e=>setVehicleQuery(e.target.value)} style={{ background:'transparent', border:'none', outline:'none', color:C.text, fontSize:'12px', flex:1 }} />
-          {vehicleQuery.trim() && <button onClick={()=>setDrawer({type:'vehicle', payload:vehicleQuery.trim()})} style={{...quickBtnStyle, padding:'5px 10px'}}>Search</button>}
-        </div>
         {!playbackOn ? (
           <button style={playBtnStyle} onClick={startPlayback}>▶ Replay Day</button>
         ) : (
-          <div style={{ display:'flex', alignItems:'center', gap:'8px', background:C.card, border:`1px solid ${C.accent}55`, borderRadius:'8px', padding:'6px 12px', flex:1, minWidth:'260px' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'8px', background:C.bg, border:`1px solid ${C.accent}55`, borderRadius:'8px', padding:'6px 12px', width:'100%', marginTop:'4px' }}>
             <button onClick={()=> isPlaying ? stopPlayback() : setIsPlaying(true)} style={{ background:'transparent', border:'none', color:C.accent, cursor:'pointer', fontSize:'14px' }}>{isPlaying?'⏸':'▶'}</button>
             <span style={{ color:C.accent, fontSize:'11px', fontWeight:700, whiteSpace:'nowrap' }}>{hourLabel(playHour)}</span>
             <input type="range" min={minHour} max={maxHour} value={playHour} onChange={e=>{ setIsPlaying(false); setPlayHour(parseInt(e.target.value)) }} style={{ flex:1 }} />
@@ -243,6 +248,27 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
           </div>
         )}
       </div>
+
+      {/* Smart search result banner — client/employee first, footage/vehicle only as a fallback */}
+      {search.trim() && (
+        <div style={{ marginBottom:'14px' }}>
+          {searchClientMatches.length > 0 ? (
+            <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', background:C.accentSoft, border:`1px solid ${C.accent}40`, borderRadius:'10px', padding:'10px 14px' }}>
+              <Icon name="overview" size={14} color={C.accent}/>
+              <span style={{ color:C.text2, fontSize:'11.5px' }}>
+                Client match: <strong style={{color:C.accent}}>{searchClientMatches[0]}</strong>
+                {searchClientMatches.length>1 ? ` (+${searchClientMatches.length-1} more matching)` : ''} — {filtered.length} employee(s) touched it today.
+              </span>
+              <button onClick={()=>setDrawer({type:'client', payload:searchClientMatches[0]})} style={{...quickBtnStyle, background:C.accentDark, borderColor:C.accent, color:C.accent, marginLeft:'auto'}}>Open Client Investigation →</button>
+            </div>
+          ) : !searchHasEmployeeMatch ? (
+            <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'10px 14px' }}>
+              <span style={{ color:C.muted, fontSize:'11.5px' }}>No employee or client matched "{search}" today.</span>
+              <button onClick={()=>setDrawer({type:'vehicle', payload:search.trim()})} style={{...quickBtnStyle, marginLeft:'auto'}}>Search footage requests for this instead →</button>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* KPI strip — clickable */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(110px, 1fr))', gap:'8px', marginBottom:'14px' }}>
