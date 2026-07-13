@@ -3,18 +3,28 @@ import { readSheet, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS } from '../../../lib/shee
 
 const ISSUE_TAB = 'Issues- Realtime'
 
-// NEW column layout (0-indexed) confirmed from sheet screenshot:
+// Column layout (0-indexed) confirmed from the live "Issues- Realtime" sheet
+// header row: A(unused) B=Issue Id C=Clients D=Vehicle Number
+// E=Timestamp Issues Raised F=Year G=Month H=Raised by I=Raised via[Forum]
+// J=Sub-request K=Issue Details L=Incident Type M=Remarks N=(unused)
+// O=Assigned To P=Location Q=Last Online R=Resolved Y/N
+// S=Timestamp Issues Resolved T=Date-Current Status
 const COL = {
+  ISSUE_ID:     1,   // B
   CLIENT:       2,   // C
   VEHICLE:      3,   // D
   RAISED_AT:    4,   // E - Timestamp Issues Raised
-  RAISED_BY:    5,   // F
-  SUB_REQUEST:  7,   // H
-  DETAILS:      8,   // I - Issue Details
-  REMARKS:      10,  // K - Remarks
-  LOCATION:     13,  // N
-  RESOLVED:     15,  // P - Resolved Y/N
-  RESOLVED_AT:  16,  // Q - Timestamp Issues Resolved
+  RAISED_BY:    7,   // H
+  SUB_REQUEST:  9,   // J
+  DETAILS:      10,  // K - Issue Details
+  INCIDENT_TYPE:11,  // L
+  REMARKS:      12,  // M
+  ASSIGNED_TO:  14,  // O
+  LOCATION:     15,  // P
+  LAST_ONLINE:  16,  // Q
+  RESOLVED:     17,  // R - Resolved Y/N
+  RESOLVED_AT:  18,  // S - Timestamp Issues Resolved
+  CURR_STATUS:  19,  // T - Date-Current Status
 }
 
 export default async function handler(req, res) {
@@ -23,7 +33,7 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
-    const rows = await readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:R`)
+    const rows = await readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`)
     if (!rows || rows.length < 2) {
       return res.status(200).json({ pending: [], completed: [], followups: [] })
     }
@@ -40,21 +50,26 @@ export default async function handler(req, res) {
       const resolvedRaw = (row[COL.RESOLVED] || '').toString().trim().toLowerCase()
       const resolved  = resolvedRaw === 'yes' || resolvedRaw === 'true' || resolvedRaw === '1'
 
-      // Use row number as stable ID since no explicit Issue ID col in new layout
+      // Prefer the sheet's real Issue Id (col B); fall back to a synthesized
+      // one only if that cell is blank so nothing crashes on legacy rows.
       const rowNum = idx + 2 // +1 for slice, +1 for header
-      const issueId = `ISS${String(rowNum).padStart(5,'0')}`
+      const issueId = (row[COL.ISSUE_ID] || '').toString().trim() || `ISS${String(rowNum).padStart(5,'0')}`
 
       const item = {
-        rowIndex:   rowNum,
+        rowIndex:     rowNum,
         issueId,
-        client:     row[COL.CLIENT]      || '',
-        vehicle:    row[COL.VEHICLE]     || '',
-        raisedAt:   row[COL.RAISED_AT]   || '',
-        raisedBy:   row[COL.RAISED_BY]   || '',
-        details:    row[COL.DETAILS]     || '',
-        remarks:    row[COL.REMARKS]     || '',
-        location:   row[COL.LOCATION]    || '',
-        resolvedAt: row[COL.RESOLVED_AT] || '',
+        client:       row[COL.CLIENT]        || '',
+        vehicle:      row[COL.VEHICLE]       || '',
+        raisedAt:     row[COL.RAISED_AT]     || '',
+        raisedBy:     row[COL.RAISED_BY]     || '',
+        details:      row[COL.DETAILS]       || '',
+        incidentType: row[COL.INCIDENT_TYPE] || '',
+        remarks:      row[COL.REMARKS]       || '',
+        assignedTo:   row[COL.ASSIGNED_TO]   || '',
+        location:     row[COL.LOCATION]      || '',
+        lastOnline:   row[COL.LAST_ONLINE]   || '',
+        resolvedAt:   row[COL.RESOLVED_AT]   || '',
+        currentStatus:row[COL.CURR_STATUS]   || '',
         resolved,
       }
       byIssueId[issueId] = item
