@@ -80,7 +80,11 @@ export default async function handler(req, res) {
         }
 
         if (isOnLeave) {
-          return { hour, isOnLeave: true, clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
+          const leaveEntry = leaves.find(l => {
+            if (l.fromHour <= l.toHour) return hour >= l.fromHour && hour < l.toHour
+            return hour >= l.fromHour || hour < l.toHour
+          })
+          return { hour, isOnLeave: true, leaveReason: leaveEntry?.reason || '', clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
         }
 
         // Distribution for this hour using locked assignments
@@ -91,10 +95,17 @@ export default async function handler(req, res) {
         const dist = distributeClientsForHour(hour, scheduledNames, vehicleMap, lockedAssignments)
         const assignedClients = dist[emp.name] || []
 
-        // Add redistributed TO this employee
+        // Add redistributed TO this employee (real reason + timestamp from Redistribution_Log)
         const redistToEmp = redistRows.slice(1)
           .filter(r => r[0] === date && r[3] === emp.name && parseInt(r[5]) === hour)
-          .map(r => ({ client: r[4], fromEmployee: r[2], isRedistributed: true }))
+          .map(r => ({
+            client: r[4],
+            vehicleCount: vehicleMap[(r[4]||'').toLowerCase()]?.vehicleCount || 0,
+            fromEmployee: r[2],
+            isRedistributed: true,
+            redistributedAt: r[1] || '',
+            redistReason: r[6] || '',
+          }))
 
         const allClients = [
           ...assignedClients.map(c => ({
