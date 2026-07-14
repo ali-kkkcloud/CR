@@ -423,58 +423,85 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
               </div>
             )}
 
-            {/* Timeline Grid — all employees × hours */}
-            <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'12px', overflowX:'auto' }}>
-              <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>TIMELINE GRID — {filtered.length} employee(s)</div>
-              <table style={{ borderCollapse:'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={{ position:'sticky', left:0, background:C.card, color:C.muted, fontSize:'9px', textAlign:'left', padding:'4px 10px 4px 2px', minWidth:'110px' }}>EMPLOYEE</th>
-                    {Array.from({length:24},(_,h)=>h).map(h => (
-                      <th key={h} onClick={()=>setDrawer({type:'hour', payload:h})} style={{ color: playbackOn && h>playHour ? C.dim : C.muted, fontSize:'8px', fontWeight:600, padding:'4px 2px', cursor:'pointer', minWidth:'18px' }} title={`Hour summary — ${hourLabel(h)}`}>
-                        {hourLabelShort(h)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(e => {
-                    const es = statusOf(e)
-                    return (
-                      <tr key={e.name} onClick={()=>setSelectedEmpName(e.name)} style={{ cursor:'pointer', background: e.name===selectedEmp.name ? C.accentDark+'33' : 'transparent' }}>
-                        <td style={{ position:'sticky', left:0, background: e.name===selectedEmp.name ? '#16321f' : C.card, padding:'3px 10px 3px 2px', display:'flex', alignItems:'center', gap:'6px' }}>
-                          <span style={{ width:6,height:6,borderRadius:'50%',background:es.color,flexShrink:0 }}></span>
-                          <span style={{ color:C.text2, fontSize:'10.5px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'96px' }}>{e.name}</span>
-                        </td>
-                        {Array.from({length:24},(_,h)=>h).map(h => {
-                          const hd = e.hours.find(x=>x.hour===h)
-                          const future = playbackOn && h > playHour
-                          let bg = 'transparent', label='·'
-                          if (hd) {
-                            if (future) { bg = C.s2 }
-                            else if (hd.isOnLeave) { bg = C.purple; label='L' }
-                            else if (hd.totalClients===0) { bg = C.dim }
-                            else if (hd.clients.some(c=>c.isRedistributed)) { bg = C.blue; label='↩' }
-                            else if (hd.completedClients===hd.totalClients) { bg = C.accent; label='✓' }
-                            else { bg = C.red; label='○' }
+            {/* Employee Timeline — one row per employee, hour pills for their actual scheduled hours */}
+            <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'12px' }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'12px' }}>
+                <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700 }}>EMPLOYEE TIMELINE — {filtered.length} employee(s)</div>
+                <div style={{ display:'flex', gap:'14px', flexWrap:'wrap' }}>
+                  {[['✓ Completed',C.accent],['○ Pending',C.red],['L On Leave',C.purple],['↩ Redistributed',C.blue]].map(([l,c])=>(
+                    <div key={l} style={{ display:'flex', alignItems:'center', gap:'5px' }}><span style={{width:8,height:8,borderRadius:'50%',background:c}}></span><span style={{color:C.muted,fontSize:'9px'}}>{l}</span></div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+                {filtered.map(e => {
+                  const es = statusOf(e)
+                  const isSelected = e.name === selectedEmp.name
+                  return (
+                    <div
+                      key={e.name}
+                      onClick={()=>setSelectedEmpName(e.name)}
+                      style={{
+                        display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', cursor:'pointer',
+                        background: isSelected ? '#16321f' : C.s2, border:`1px solid ${isSelected?C.accent+'55':C.border2}`,
+                        borderRadius:'10px', padding:'10px 12px',
+                      }}
+                    >
+                      <span style={{ width:8, height:8, borderRadius:'50%', background:es.color, flexShrink:0 }}></span>
+                      <div style={{ minWidth:'118px' }}>
+                        <div style={{ color:C.text, fontSize:'12px', fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'118px' }}>{e.name}</div>
+                        <div style={{ color:C.muted, fontSize:'9.5px' }}>{es.label}</div>
+                      </div>
+
+                      <div style={{ display:'flex', gap:'5px', overflowX:'auto', flex:1, minWidth:'160px', padding:'2px 0' }}>
+                        {e.hours.length===0 ? (
+                          <span style={{ color:C.dim, fontSize:'10px' }}>No scheduled hours</span>
+                        ) : e.hours.map(h => {
+                          const future = playbackOn && h.hour > playHour
+                          let bg = C.dim, label = '·'
+                          if (!future) {
+                            if (h.isOnLeave) { bg = C.purple; label = 'L' }
+                            else if (h.totalClients === 0) { bg = C.dim; label = '·' }
+                            else if (h.clients.some(c=>c.isRedistributed)) { bg = C.blue; label = '↩' }
+                            else if (h.completedClients === h.totalClients) { bg = C.accent; label = '✓' }
+                            else { bg = C.red; label = '○' }
                           }
                           return (
-                            <td key={h} onClick={(ev)=>{ ev.stopPropagation(); if(!hd||future) return; setSelectedEmpName(e.name); setSelectedHour(h); setDrawerClient(null) }} style={{ padding:'2px' }}>
-                              <div title={hd?hourLabel(h):''} style={{ width:'15px', height:'15px', borderRadius:'3px', background:bg, opacity: future?0.4: hd?0.9:0.25, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'8px', color:'#06120a', fontWeight:700 }}>
-                                {!future && hd && hd.totalClients>0 ? label : ''}
-                              </div>
-                            </td>
+                            <div
+                              key={h.hour}
+                              title={`${hourLabel(h.hour)} — ${h.isOnLeave ? 'On leave' : `${h.completedClients}/${h.totalClients} done`}`}
+                              onClick={(ev)=>{
+                                if (future) return
+                                ev.stopPropagation()
+                                setSelectedEmpName(e.name); setSelectedHour(h.hour); setDrawerClient(null)
+                              }}
+                              style={{
+                                width:'26px', height:'26px', borderRadius:'50%', flexShrink:0, opacity: future?0.3:1,
+                                background: bg+'22', border:`1.5px solid ${bg}`, color:bg,
+                                display:'flex', alignItems:'center', justifyContent:'center', fontSize:'11px', fontWeight:700,
+                                cursor: future?'default':'pointer',
+                              }}
+                            >
+                              {label}
+                            </div>
                           )
                         })}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-              <div style={{ display:'flex', gap:'14px', marginTop:'10px', flexWrap:'wrap' }}>
-                {[['✓ Completed',C.accent],['○ Pending',C.red],['L On Leave',C.purple],['↩ Redistributed',C.blue],['· Not scheduled',C.dim]].map(([l,c])=>(
-                  <div key={l} style={{ display:'flex', alignItems:'center', gap:'5px' }}><span style={{width:9,height:9,borderRadius:'2px',background:c}}></span><span style={{color:C.muted,fontSize:'9.5px'}}>{l}</span></div>
-                ))}
+                      </div>
+
+                      <div style={{ display:'flex', gap:'14px', flexShrink:0 }}>
+                        <MiniStat label="CLIENTS" val={e.totalAssigned} />
+                        <MiniStat label="DONE" val={e.totalCompleted} />
+                        <MiniStat label="PENDING" val={e.totalMissed} warn={e.totalMissed>0} />
+                        <div style={{ textAlign:'center' }}>
+                          <div style={{ color: e.totalAssigned>0 && e.totalCompleted===e.totalAssigned ? C.accent : C.text, fontSize:'13px', fontWeight:800 }}>
+                            {e.totalAssigned>0?Math.round((e.totalCompleted/e.totalAssigned)*100):0}%
+                          </div>
+                          <div style={{ color:C.muted, fontSize:'8px' }}>DONE</div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </div>
