@@ -71,41 +71,51 @@ export function Donut({ segments, size = 120, thickness = 15, centerLabel, cente
   )
 }
 
-// Simple multi-series SVG line chart. series = [{ name, color, data:[nums] }], labels = [strings]
-export function LineChart({ series, labels, height = 150, width = 560 }) {
-  const pad = { l: 30, r: 10, t: 12, b: 20 }
+// Multi-series SVG line chart with filled area, y-axis scale, and end-value
+// callouts. series = [{ name, color, data:[nums] }], labels = [strings]
+export function LineChart({ series, labels, height = 170, width = 560 }) {
+  const pad = { l: 34, r: 36, t: 18, b: 24 }
   const innerW = width - pad.l - pad.r
   const innerH = height - pad.t - pad.b
   const allVals = series.flatMap(s => s.data)
-  const max = Math.max(1, ...allVals)
+  const rawMax = Math.max(1, ...allVals)
+  // Round the axis max up to a "nice" number so gridline labels aren't ugly
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawMax || 1)))
+  const max = Math.max(1, Math.ceil((rawMax*1.15) / magnitude) * magnitude)
   const stepX = labels.length > 1 ? innerW / (labels.length - 1) : 0
 
-  const toPoints = (data) => data.map((v,i) => {
-    const x = pad.l + i*stepX
-    const y = pad.t + innerH - (v/max)*innerH
-    return `${x},${y}`
-  }).join(' ')
+  const xOf = (i) => pad.l + i*stepX
+  const yOf = (v) => pad.t + innerH - (v/max)*innerH
 
-  const gridLines = [0, 0.5, 1]
+  const toPoints = (data) => data.map((v,i) => `${xOf(i)},${yOf(v)}`).join(' ')
+  const toArea = (data) => `${pad.l},${pad.t+innerH} ${toPoints(data)} ${xOf(data.length-1)},${pad.t+innerH}`
+
+  const gridSteps = [0, 0.25, 0.5, 0.75, 1]
 
   return (
     <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
-      {gridLines.map((g,i) => (
-        <line key={i} x1={pad.l} x2={width-pad.r} y1={pad.t+innerH*(1-g)} y2={pad.t+innerH*(1-g)} stroke={C.border} strokeWidth="1" />
+      {gridSteps.map((g,i) => (
+        <g key={i}>
+          <line x1={pad.l} x2={width-pad.r} y1={pad.t+innerH*(1-g)} y2={pad.t+innerH*(1-g)} stroke={C.border} strokeWidth="1" />
+          <text x={pad.l-8} y={pad.t+innerH*(1-g)+3} fontSize="9" fill={C.muted} textAnchor="end">{Math.round(max*g)}</text>
+        </g>
       ))}
       {series.map((s,si) => (
         <g key={si}>
-          <polyline points={toPoints(s.data)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-          {s.data.map((v,i) => {
-            const x = pad.l + i*stepX
-            const y = pad.t + innerH - (v/max)*innerH
-            return <circle key={i} cx={x} cy={y} r="2.5" fill={s.color} />
-          })}
+          <polygon points={toArea(s.data)} fill={s.color} opacity="0.08" />
+          <polyline points={toPoints(s.data)} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+          {s.data.map((v,i) => (
+            <circle key={i} cx={xOf(i)} cy={yOf(v)} r="3.5" fill={C.bg} stroke={s.color} strokeWidth="2" />
+          ))}
+          {/* End-of-line value callout for quick readability */}
+          <text x={xOf(s.data.length-1)+8} y={yOf(s.data[s.data.length-1])+3} fontSize="10" fontWeight="700" fill={s.color} textAnchor="start">
+            {s.data[s.data.length-1]}
+          </text>
         </g>
       ))}
       {labels.map((l,i) => (
         (i===0 || i===labels.length-1 || i===Math.floor(labels.length/2)) &&
-        <text key={i} x={pad.l+i*stepX} y={height-4} fontSize="9" fill={C.muted} textAnchor="middle">{l}</text>
+        <text key={i} x={xOf(i)} y={height-4} fontSize="9.5" fill={C.text2} textAnchor="middle">{l}</text>
       ))}
     </svg>
   )
