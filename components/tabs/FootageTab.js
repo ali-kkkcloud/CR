@@ -27,12 +27,18 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
   const combined = useMemo(() => {
     const p = footageAll.pending.map(i => ({ ...i, status: followupIds.has(i.issueId) ? 'Forwarded' : 'Pending' }))
     const c = footageAll.completed.map(i => ({ ...i, status: 'Completed' }))
-    return [...p, ...c].map(i => {
+    const list = [...p, ...c].map(i => {
       const raised = parseSheetDate(i.raisedAt)
       const resolvedD = i.resolved ? parseSheetDate(i.resolvedAt) : null
       const ageHours = !i.resolved && raised ? (Date.now() - raised.getTime())/3600000 : null
       const resolveHours = i.resolved && raised && resolvedD ? (resolvedD.getTime() - raised.getTime())/3600000 : null
       return { ...i, raisedD: raised, resolvedD, ageHours, resolveHours }
+    })
+    // Most recent first (falls back to resolved time, then keeps original order if neither parses)
+    return list.sort((a,b) => {
+      const at = a.raisedD?.getTime() ?? a.resolvedD?.getTime() ?? 0
+      const bt = b.raisedD?.getTime() ?? b.resolvedD?.getTime() ?? 0
+      return bt - at
     })
   }, [footageAll, followupIds])
 
@@ -48,43 +54,49 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     return combined.filter(i => i.raisedD ? (i.raisedD>=from && i.raisedD<to) : quickRange==='all')
   }, [combined, quickRange])
 
-  const chipFiltered = useMemo(() => {
-    if (statusChip==='all') return rangeFiltered
-    if (statusChip==='overdue') return rangeFiltered.filter(i => i.ageHours!=null && i.ageHours>24)
-    return rangeFiltered.filter(i => i.status.toLowerCase()===statusChip)
-  }, [rangeFiltered, statusChip])
-
-  const searched = useMemo(() => {
-    if (!search.trim()) return chipFiltered
+  // Search scopes ALL analytics below (KPIs, charts, employee performance, etc.)
+  // — not just the table. Status chips (All/Pending/Forwarded/...) only
+  // narrow the table listing itself, so switching a chip doesn't skew the
+  // overview numbers.
+  const searchScoped = useMemo(() => {
+    if (!search.trim()) return rangeFiltered
     const q = search.trim().toLowerCase()
-    return chipFiltered.filter(i =>
+    return rangeFiltered.filter(i =>
       (i.issueId||'').toLowerCase().includes(q) || (i.vehicle||'').toLowerCase().includes(q) ||
       (i.client||'').toLowerCase().includes(q) || (i.raisedBy||'').toLowerCase().includes(q)
     )
-  }, [chipFiltered, search])
+  }, [rangeFiltered, search])
 
-  const paged = searched.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE)
-  const totalPages = Math.max(1, Math.ceil(searched.length / PAGE_SIZE))
+  const tableRows = useMemo(() => {
+    if (statusChip==='all') return searchScoped
+    if (statusChip==='overdue') return searchScoped.filter(i => i.ageHours!=null && i.ageHours>24)
+    return searchScoped.filter(i => i.status.toLowerCase()===statusChip)
+  }, [searchScoped, statusChip])
 
-  // KPIs
+  const paged = tableRows.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE)
+  const totalPages = Math.max(1, Math.ceil(tableRows.length / PAGE_SIZE))
+
+  // KPIs — driven by searchScoped (range + search), so typing a client/employee
+  // name here updates every number on the page, per the requested behaviour.
   const kpis = useMemo(() => {
-    const pendingAll = combined.filter(i=>i.status!=='Completed')
-    const completedAll = combined.filter(i=>i.status==='Completed')
+    const pendingAll = searchScoped.filter(i=>i.status!=='Completed')
+    const completedAll = searchScoped.filter(i=>i.status==='Completed')
     const overdue = pendingAll.filter(i=>i.ageHours!=null && i.ageHours>24)
     const resolveTimes = completedAll.map(i=>i.resolveHours).filter(v=>v!=null)
     const avgResolve = resolveTimes.length ? resolveTimes.reduce((a,b)=>a+b,0)/resolveTimes.length : null
     const oldestPending = pendingAll.reduce((max,i)=> (i.ageHours!=null && i.ageHours>(max||0)) ? i.ageHours : max, null)
     const closedToday = completedAll.filter(i => i.resolvedD && ddmmyyyy(i.resolvedD)===ddmmyyyy(new Date())).length
+    const forwardedCount = searchScoped.filter(i=>i.status==='Forwarded').length
     return {
-      total: combined.length, pending: pendingAll.length, completed: completedAll.length,
-      overdue: overdue.length, avgResolve, oldestPending, forwarded: footageAll.followups.length, closedToday,
+      total: searchScoped.length, pending: pendingAll.length, completed: completedAll.length,
+      overdue: overdue.length, avgResolve, oldestPending, forwarded: forwardedCount, closedToday,
     }
-  }, [combined, footageAll.followups])
+  }, [searchScoped])
 
-  // Employee performance
+  // Employee performance — ALL employees appearing in the current scope (scrollable list)
   const employeePerf = useMemo(() => {
     const map = {}
-    combined.forEach(i => {
+    searchScoped.forEach(i => {
       const by = i.raisedBy || 'Unknown'
       if (!map[by]) map[by] = { name:by, total:0, pending:0, resolved:0, resolveTimes:[] }
       map[by].total++
@@ -92,13 +104,13 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
       else map[by].pending++
     })
     return Object.values(map).map(e => ({ ...e, avgResolve: e.resolveTimes.length ? e.resolveTimes.reduce((a,b)=>a+b,0)/e.resolveTimes.length : null }))
-      .sort((a,b)=>b.total-a.total).slice(0,8)
-  }, [combined])
+      .sort((a,b)=>b.total-a.total)
+  }, [searchScoped])
 
   // Client health
   const clientHealth = useMemo(() => {
     const map = {}
-    combined.forEach(i => {
+    searchScoped.forEach(i => {
       const cl = i.client || 'Unknown'
       if (!map[cl]) map[cl] = { name:cl, total:0, pending:0, resolved:0 }
       map[cl].total++
@@ -106,28 +118,28 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     })
     return Object.values(map).map(c => ({ ...c, pendingPct: c.total?Math.round((c.pending/c.total)*100):0 }))
       .sort((a,b)=>b.total-a.total).slice(0,6)
-  }, [combined])
+  }, [searchScoped])
 
   // Top vehicles
   const topVehicles = useMemo(() => {
     const map = {}
-    combined.forEach(i => { const v=i.vehicle||'Unknown'; map[v]=(map[v]||0)+1 })
+    searchScoped.forEach(i => { const v=i.vehicle||'Unknown'; map[v]=(map[v]||0)+1 })
     return Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([label,value])=>({label,value,color:C.blue}))
-  }, [combined])
+  }, [searchScoped])
 
   // Trend — last 7 days
   const trend = useMemo(() => {
     const days = Array.from({length:7},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()-(6-i)); return d })
     const labels = days.map(d=>d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'}))
-    const raised = days.map(d => combined.filter(i=>i.raisedD && ddmmyyyy(i.raisedD)===ddmmyyyy(d)).length)
-    const resolved = days.map(d => combined.filter(i=>i.resolvedD && ddmmyyyy(i.resolvedD)===ddmmyyyy(d)).length)
+    const raised = days.map(d => searchScoped.filter(i=>i.raisedD && ddmmyyyy(i.raisedD)===ddmmyyyy(d)).length)
+    const resolved = days.map(d => searchScoped.filter(i=>i.resolvedD && ddmmyyyy(i.resolvedD)===ddmmyyyy(d)).length)
     return { labels, raised, resolved }
-  }, [combined])
+  }, [searchScoped])
 
   // Recent activity — last 24h, graceful fallback if timestamps don't parse
   const recentActivity = useMemo(() => {
     const events = []
-    combined.forEach(i => {
+    searchScoped.forEach(i => {
       if (i.raisedD) events.push({ t:i.raisedD, label:`${i.raisedBy||'Someone'} raised request for ${i.vehicle}`, tag:'Raised', color:C.blue, issueId:i.issueId })
       if (i.resolvedD) events.push({ t:i.resolvedD, label:`${i.raisedBy||'Someone'} completed request for ${i.vehicle}`, tag:'Completed', color:C.accent, issueId:i.issueId })
     })
@@ -135,7 +147,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     const withTime = events.filter(e=>e.t).sort((a,b)=>b.t-a.t)
     const last24h = withTime.filter(e => Date.now()-e.t.getTime() < 24*3600000)
     return (last24h.length ? last24h : withTime).slice(0,8)
-  }, [combined, footageAll.followups])
+  }, [searchScoped, footageAll.followups])
 
   const insights = useMemo(() => {
     const out = []
@@ -158,7 +170,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
   function exportFiltered() {
     const rows = [
       ['Issue ID','Client','Vehicle','Raised At','Raised By','Status','Details','Age/Resolve (h)'],
-      ...searched.map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.raisedBy, i.status, i.details, (i.ageHours??i.resolveHours)?.toFixed?.(1)||'']),
+      ...tableRows.map(i => [i.issueId, i.client, i.vehicle, i.raisedAt, i.raisedBy, i.status, i.details, (i.ageHours??i.resolveHours)?.toFixed?.(1)||'']),
     ]
     downloadCSV(rows, `Footage_Requests_${quickRange}.csv`)
   }
@@ -193,8 +205,8 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
           <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>EMPLOYEE PERFORMANCE</div>
           {employeePerf.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No data.</div> : (
-            <div style={{ display:'flex', flexDirection:'column', gap:'7px' }}>
-              <div style={{ display:'flex', color:C.muted, fontSize:'9px', fontWeight:700, padding:'0 2px' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:'7px', maxHeight:'260px', overflowY:'auto' }}>
+              <div style={{ display:'flex', color:C.muted, fontSize:'9px', fontWeight:700, padding:'0 2px', position:'sticky', top:0, background:C.card }}>
                 <span style={{flex:1}}>EMPLOYEE</span><span style={{width:'40px',textAlign:'right'}}>TOT</span><span style={{width:'40px',textAlign:'right'}}>PEND</span><span style={{width:'50px',textAlign:'right'}}>AVG</span>
               </div>
               {employeePerf.map(e => (
@@ -215,7 +227,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
             <span style={{ fontSize:'9.5px', color:C.blue }}>● Raised</span>
             <span style={{ fontSize:'9.5px', color:C.accent }}>● Resolved</span>
           </div>
-          <LineChart series={[{name:'Raised',color:C.blue,data:trend.raised},{name:'Resolved',color:C.accent,data:trend.resolved}]} labels={trend.labels} height={150} />
+          <LineChart series={[{name:'Raised',color:C.blue,data:trend.raised},{name:'Resolved',color:C.accent,data:trend.resolved}]} labels={trend.labels} height={180} />
         </div>
 
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
@@ -292,7 +304,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
               ...chipStyle, ...(statusChip===chip ? { background:C.accentDark, borderColor:C.accent, color:C.accent } : {}),
             }}>{chip==='all'?'All Requests':chip[0].toUpperCase()+chip.slice(1)}</button>
           ))}
-          <span style={{ marginLeft:'auto', color:C.muted, fontSize:'11px' }}>{searched.length} request(s)</span>
+          <span style={{ marginLeft:'auto', color:C.muted, fontSize:'11px' }}>{tableRows.length} request(s) · most recent first</span>
         </div>
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', minWidth:'760px' }}>
@@ -332,7 +344,16 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
         </div>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:'8px', padding:'12px 16px' }}>
           <button disabled={page<=1} onClick={()=>setPage(p=>p-1)} style={{ ...chipStyle, opacity:page<=1?0.4:1 }}>‹ Prev</button>
-          <span style={{ color:C.muted, fontSize:'11px' }}>Page {page} of {totalPages}</span>
+          <span style={{ color:C.muted, fontSize:'11px' }}>Page</span>
+          <input
+            type="number" min={1} max={totalPages} value={page}
+            onChange={e=>{
+              const v = parseInt(e.target.value)
+              if (!isNaN(v)) setPage(Math.min(totalPages, Math.max(1, v)))
+            }}
+            style={{ width:'48px', textAlign:'center', background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'6px', color:C.text, fontSize:'11px', padding:'6px 4px' }}
+          />
+          <span style={{ color:C.muted, fontSize:'11px' }}>of {totalPages}</span>
           <button disabled={page>=totalPages} onClick={()=>setPage(p=>p+1)} style={{ ...chipStyle, opacity:page>=totalPages?0.4:1 }}>Next ›</button>
         </div>
       </div>
