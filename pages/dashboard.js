@@ -1,42 +1,66 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
-import Navbar from '../components/Navbar'
+import EmployeeSidebar from '../components/EmployeeSidebar'
+import BreakOverlay from '../components/BreakOverlay'
+import Icon from '../components/Icons'
+import { C } from '../components/Widgets'
+import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
+import MyDayTab from '../components/tabs/MyDayTab'
+import MyClientsTab from '../components/tabs/MyClientsTab'
+import EmpFootageTab from '../components/tabs/EmpFootageTab'
+import EmpFollowupTab from '../components/tabs/EmpFollowupTab'
 
-const STATUS_OPTIONS  = ['', 'Updated', 'No New Misalignment', 'All Vehicles are Offline', 'No Misalignment']
-const FATIGUE_OPTIONS = ['No', 'Yes']
+function hourLabel(h) {
+  const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
+  const suf  = (n) => n >= 12 ? 'PM' : 'AM'
+  return `${to12(h)}:00 ${suf(h)} – ${to12((h+1)%24)}:00 ${suf((h+1)%24)}`
+}
+function fmtShift(startHour, endHour) {
+  if (startHour==null || endHour==null) return '—'
+  const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
+  const suf  = (n) => n >= 12 ? 'PM' : 'AM'
+  return `${String(to12(startHour)).padStart(2,'0')}:00 ${suf(startHour)} - ${String(to12(endHour)).padStart(2,'0')}:00 ${suf(endHour)}`
+}
 
 export default function Dashboard() {
   const router = useRouter()
-  const [user,         setUser]         = useState(null)
-  const [shiftStatus,  setShiftStatus]  = useState('loading')
-  const [startTime,    setStartTime]    = useState('')
-  const [currentHour,  setCurrentHour]  = useState(new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours())
-  const [clients,      setClients]      = useState([])
-  const [filled,       setFilled]       = useState({})
-  const [footage,      setFootage]      = useState({ pending: [], completed: [], followups: [] })
-  const [footageSearchInput, setFootageSearchInput] = useState('')
-  const [footageSearch, setFootageSearch] = useState('')
-  const [dateFilter,   setDateFilter]   = useState('')
-  const [myDay,        setMyDay]        = useState(null)
-  const [activeTab,    setActiveTab]    = useState('clients')
-  const [saving,       setSaving]       = useState({})
-  const [showReport,   setShowReport]   = useState(false)
-  const [report,       setReport]       = useState(null)
-  // End shift + footage forward flow
-  const [endShiftStep, setEndShiftStep] = useState(null) // null | 'footage' | 'done'
-  const [forwardSelections, setForwardSelections] = useState({}) // issueId -> empName
+  const [user, setUser] = useState(null)
+  const [shiftStatus, setShiftStatus] = useState('loading')
+  const [startTime, setStartTime] = useState('')
+  const [currentHour, setCurrentHour] = useState(new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours())
+  const [clients, setClients] = useState([])
+  const [filled, setFilled] = useState({})
+  const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
+  const [myDay, setMyDay] = useState(null)
+  const [activeTab, setActiveTab] = useState('dashboard')
+  const [saving, setSaving] = useState({})
+  const [showReport, setShowReport] = useState(false)
+  const [report, setReport] = useState(null)
+  const [endShiftStep, setEndShiftStep] = useState(null)
+  const [forwardSelections, setForwardSelections] = useState({})
   const [forwardOptions, setForwardOptions] = useState({ active: [], others: [] })
   const [forwarding, setForwarding] = useState(false)
-  const hourRef    = useRef(currentHour)
-  const autoRef    = useRef(null)
-  const debounceRef = useRef(null)
+  const [clock, setClock] = useState('')
+
+  const [summary, setSummary] = useState(null)
+  const [summaryLoading, setSummaryLoading] = useState(true)
+  const [summaryRange, setSummaryRange] = useState('month')
+
+  const [breakStatus, setBreakStatus] = useState({ onBreak:false, startTime:null, history:[], totalMinutesToday:0 })
+  const [breakActionLoading, setBreakActionLoading] = useState(false)
+
+  const hourRef = useRef(currentHour)
+  const autoRef = useRef(null)
 
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => setFootageSearch(footageSearchInput), 300)
-    return () => clearTimeout(debounceRef.current)
-  }, [footageSearchInput])
+    function tick() {
+      setClock(new Date().toLocaleString('en-IN', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', hour12:true }))
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [])
 
   useEffect(() => {
     async function init() {
@@ -77,21 +101,39 @@ export default function Dashboard() {
     setMyDay(data)
   }, [])
 
+  const loadSummary = useCallback(async (range) => {
+    setSummaryLoading(true)
+    const res  = await fetch(`/api/dashboard/summary?range=${range}`)
+    const data = await res.json()
+    setSummary(data)
+    setSummaryLoading(false)
+  }, [])
+
+  const loadBreakStatus = useCallback(async () => {
+    const res  = await fetch('/api/break/status')
+    const data = await res.json()
+    setBreakStatus(data)
+  }, [])
+
   useEffect(() => {
     if (shiftStatus !== 'active') return
     loadClients()
     loadFootage()
+    loadMyDay()
+    loadSummary(summaryRange)
+    loadBreakStatus()
     autoRef.current = setInterval(() => {
       const h = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours()
-      if (h !== hourRef.current) { loadClients(); if (activeTab === 'myday') loadMyDay() }
+      if (h !== hourRef.current) { loadClients(); loadMyDay() }
       loadFootage()
-    }, 60000)
+      loadBreakStatus()
+    }, 30000)
     return () => clearInterval(autoRef.current)
-  }, [shiftStatus, activeTab])
+  }, [shiftStatus])
 
   useEffect(() => {
-    if (activeTab === 'myday' && shiftStatus === 'active') loadMyDay()
-  }, [activeTab, shiftStatus])
+    if (shiftStatus === 'active') loadSummary(summaryRange)
+  }, [summaryRange])
 
   async function handleStartShift() {
     const res  = await fetch('/api/shift/start', { method: 'POST' })
@@ -99,24 +141,12 @@ export default function Dashboard() {
     if (data.success) {
       setShiftStatus('active')
       setStartTime(data.startTime)
-      loadClients()
-      loadFootage()
     }
   }
 
-  // End shift flow — check pending footage first
   async function handleEndShiftClick() {
     if (!confirm('Are you sure you want to end your shift?')) return
-    // Check if any footage pending
-    const pendingToday = footage.pending.filter(f => {
-      const raisedDate = (f.raisedAt || '').split(' ')[0]
-      const todayParts = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}))
-      const todayStr = `${String(todayParts.getDate()).padStart(2,'0')}/${String(todayParts.getMonth()+1).padStart(2,'0')}/${todayParts.getFullYear()}`
-      return raisedDate === todayStr || footage.pending.length > 0
-    })
-
     if (footage.pending.length > 0) {
-      // Load forward options
       const res = await fetch('/api/footage/followup-options')
       const data = await res.json()
       setForwardOptions(data)
@@ -140,13 +170,11 @@ export default function Dashboard() {
 
   async function handleForwardAndEnd() {
     setForwarding(true)
-    // Forward each selected footage item
     for (const item of footage.pending) {
       const forwardTo = forwardSelections[item.issueId]
       if (forwardTo) {
         await fetch('/api/footage/forward', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ issueId: item.issueId, client: item.client, vehicle: item.vehicle, forwardedTo: forwardTo }),
         })
       }
@@ -167,10 +195,24 @@ export default function Dashboard() {
       body: JSON.stringify({ client, slot: currentHour, ...updated }),
     })
     const data = await res.json()
-    if (data.updatedAt) {
-      setFilled(p => ({ ...p, [client]: { ...p[client], updatedAt: data.updatedAt } }))
-    }
+    if (data.updatedAt) setFilled(p => ({ ...p, [client]: { ...p[client], updatedAt: data.updatedAt } }))
     setSaving(p => { const n = {...p}; delete n[key]; return n })
+  }
+
+  async function startBreak() {
+    setBreakActionLoading(true)
+    const res = await fetch('/api/break/start', { method:'POST' })
+    const data = await res.json()
+    setBreakActionLoading(false)
+    if (data.success) loadBreakStatus()
+  }
+
+  async function resumeFromBreak() {
+    setBreakActionLoading(true)
+    const res = await fetch('/api/break/end', { method:'POST' })
+    const data = await res.json()
+    setBreakActionLoading(false)
+    if (data.success) loadBreakStatus()
   }
 
   function downloadReport() {
@@ -188,443 +230,217 @@ export default function Dashboard() {
     const blob = new Blob([csv], { type: 'text/csv' })
     const url  = URL.createObjectURL(blob)
     const a    = document.createElement('a')
-    a.href = url
-    a.download = `CRM_Report_${report.employee}_${report.date}.csv`
-    a.click()
+    a.href = url; a.download = `CRM_Report_${report.employee}_${report.date}.csv`; a.click()
   }
-
-  const hourLabel = (h) => {
-    const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
-    const suf  = (n) => n >= 12 ? 'PM' : 'AM'
-    return `${to12(h)}:00 ${suf(h)} – ${to12((h+1)%24)}:00 ${suf((h+1)%24)}`
-  }
-
-  function matchDateFlexible(raisedAtStr, isoDate) {
-    if (!isoDate) return true
-    const [y, m, d] = isoDate.split('-')
-    return (raisedAtStr || '').includes(`${d}/${m}/${y}`)
-  }
-
-  const filteredPending = useMemo(() => {
-    let list = footage.pending
-    if (dateFilter) list = list.filter(item => matchDateFlexible(item.raisedAt, dateFilter))
-    if (footageSearch.trim()) {
-      const q = footageSearch.trim().toLowerCase()
-      list = list.filter(item =>
-        (item.vehicle || '').toLowerCase().includes(q) ||
-        (item.issueId || '').toString().toLowerCase().includes(q) ||
-        (item.client  || '').toLowerCase().includes(q)
-      )
-    }
-    return list
-  }, [footage.pending, footageSearch, dateFilter])
-
-  const filteredCompleted = useMemo(() => {
-    let list = footage.completed
-    if (dateFilter) list = list.filter(item => matchDateFlexible(item.raisedAt, dateFilter))
-    if (footageSearch.trim()) {
-      const q = footageSearch.trim().toLowerCase()
-      list = list.filter(item =>
-        (item.vehicle || '').toLowerCase().includes(q) ||
-        (item.issueId || '').toString().toLowerCase().includes(q) ||
-        (item.client  || '').toLowerCase().includes(q)
-      )
-    }
-    return list
-  }, [footage.completed, footageSearch, dateFilter])
 
   if (shiftStatus === 'loading') return (
-    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh'}}>
+    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}>
       <div className="spinner"></div>
     </div>
+  )
+
+  // ── NOT STARTED ──
+  if (shiftStatus === 'not_started') return (
+    <>
+      <Head><title>Cautio CRM — Dashboard</title></Head>
+      <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'16px',padding:'3rem 2rem',maxWidth:'420px',width:'100%',textAlign:'center'}}>
+          <img src="/cautio_shield.webp" alt="Cautio" style={{width:'56px',height:'56px',objectFit:'contain',margin:'0 auto 1.5rem',display:'block'}} onError={e=>e.target.style.display='none'}/>
+          <h2 style={{color:C.text,fontSize:'22px',fontWeight:'700',marginBottom:'8px'}}>
+            Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, {user?.name} 👋
+          </h2>
+          <p style={{color:C.muted,fontSize:'14px',marginBottom:'2rem'}}>Click Start Shift to begin. Clients will auto-load based on current time.</p>
+          <div style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'8px',padding:'10px 16px',marginBottom:'1.5rem',fontSize:'13px'}}>
+            <span style={{color:C.accent,fontWeight:'600'}}>Current slot:</span> <span style={{color:C.text,marginLeft:'8px'}}>{hourLabel(currentHour)}</span>
+          </div>
+          <button onClick={handleStartShift} style={{width:'100%',background:C.accent,border:'none',borderRadius:'10px',color:'#06120a',fontWeight:'700',fontSize:'16px',padding:'14px',cursor:'pointer'}}>▶ Start Shift</button>
+        </div>
+      </div>
+    </>
   )
 
   // ── END SHIFT FOOTAGE FORWARD SCREEN ──
   if (endShiftStep === 'footage') return (
     <>
       <Head><title>Cautio CRM — End Shift</title></Head>
-      <div style={{minHeight:'100vh',background:'#0a0a0a',display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
-        <div style={{background:'#111',border:'1px solid #222',borderRadius:'16px',padding:'2rem',maxWidth:'600px',width:'100%'}}>
-          <div style={{color:'#f59e0b',fontSize:'20px',fontWeight:'700',marginBottom:'8px'}}>⚠ Pending Footage Requests</div>
-          <div style={{color:'#6b7280',fontSize:'13px',marginBottom:'24px'}}>
+      <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'16px',padding:'2rem',maxWidth:'600px',width:'100%'}}>
+          <div style={{color:C.amber,fontSize:'20px',fontWeight:'700',marginBottom:'8px'}}>⚠ Pending Footage Requests</div>
+          <div style={{color:C.muted,fontSize:'13px',marginBottom:'24px'}}>
             You have {footage.pending.length} pending footage request(s). Forward them to another employee before ending shift, or skip forwarding.
           </div>
-
           {footage.pending.map(item => (
-            <div key={item.issueId} style={{background:'#161616',border:'1px solid #2a2a2a',borderRadius:'10px',padding:'14px',marginBottom:'10px'}}>
-              <div style={{color:'#fff',fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}>
-                <span style={{color:'#60a5fa',marginRight:'6px'}}>▶</span>
-                {item.client} · {item.vehicle}
+            <div key={item.issueId} style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'10px',padding:'14px',marginBottom:'10px'}}>
+              <div style={{color:C.text,fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}>
+                <span style={{color:C.blue,marginRight:'6px'}}>▶</span>{item.client} · {item.vehicle}
               </div>
-              <div style={{color:'#6b7280',fontSize:'11px',marginBottom:'10px'}}>ID: {item.issueId} &nbsp;·&nbsp; Raised: {item.raisedAt}</div>
-              <div>
-                <label style={{color:'#22c55e',fontSize:'10px',letterSpacing:'1px',fontWeight:'600',display:'block',marginBottom:'5px'}}>FORWARD TO</label>
-                <select
-                  style={{width:'100%',background:'#0a0a0a',border:'1px solid #2a2a2a',borderRadius:'8px',color:'#fff',padding:'8px 10px',fontSize:'13px'}}
-                  value={forwardSelections[item.issueId] || ''}
-                  onChange={e => setForwardSelections(p => ({...p, [item.issueId]: e.target.value}))}
-                >
-                  <option value="">— Skip (don't forward) —</option>
-                  {forwardOptions.active.length > 0 && (
-                    <optgroup label="Currently Active">
-                      {forwardOptions.active.map(e => <option key={e.name} value={e.name}>{e.name} (active)</option>)}
-                    </optgroup>
-                  )}
-                  {forwardOptions.others.length > 0 && (
-                    <optgroup label="Other Employees">
-                      {forwardOptions.others.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}
-                    </optgroup>
-                  )}
-                </select>
-              </div>
+              <div style={{color:C.muted,fontSize:'11px',marginBottom:'10px'}}>ID: {item.issueId} &nbsp;·&nbsp; Raised: {item.raisedAt}</div>
+              <label style={{color:C.accent,fontSize:'10px',letterSpacing:'1px',fontWeight:'600',display:'block',marginBottom:'5px'}}>FORWARD TO</label>
+              <select
+                style={{width:'100%',background:C.bg,border:`1px solid ${C.border2}`,borderRadius:'8px',color:C.text,padding:'8px 10px',fontSize:'13px'}}
+                value={forwardSelections[item.issueId] || ''}
+                onChange={e => setForwardSelections(p => ({...p, [item.issueId]: e.target.value}))}
+              >
+                <option value="">— Skip (don't forward) —</option>
+                {forwardOptions.active.length > 0 && (
+                  <optgroup label="Currently Active">{forwardOptions.active.map(e => <option key={e.name} value={e.name}>{e.name} (active)</option>)}</optgroup>
+                )}
+                {forwardOptions.others.length > 0 && (
+                  <optgroup label="Other Employees">{forwardOptions.others.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}</optgroup>
+                )}
+              </select>
             </div>
           ))}
-
           <div style={{display:'flex',gap:'10px',marginTop:'20px'}}>
-            <button onClick={() => setEndShiftStep(null)} style={{flex:1,background:'#161616',border:'1px solid #2a2a2a',borderRadius:'8px',color:'#6b7280',fontSize:'13px',padding:'12px',cursor:'pointer'}}>
-              Cancel
-            </button>
-            <button onClick={handleForwardAndEnd} disabled={forwarding} style={{flex:2,background:'#22c55e',border:'none',borderRadius:'8px',color:'#000',fontSize:'13px',fontWeight:'700',padding:'12px',cursor:'pointer'}}>
-              {forwarding ? 'Forwarding...' : 'Forward & End Shift'}
-            </button>
-            <button onClick={doEndShift} style={{flex:1,background:'#ef4444',border:'none',borderRadius:'8px',color:'#fff',fontSize:'13px',fontWeight:'700',padding:'12px',cursor:'pointer'}}>
-              End Without Forwarding
-            </button>
+            <button onClick={() => setEndShiftStep(null)} style={{flex:1,background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'8px',color:C.muted,fontSize:'13px',padding:'12px',cursor:'pointer'}}>Cancel</button>
+            <button onClick={handleForwardAndEnd} disabled={forwarding} style={{flex:2,background:C.accent,border:'none',borderRadius:'8px',color:'#06120a',fontSize:'13px',fontWeight:'700',padding:'12px',cursor:'pointer'}}>{forwarding ? 'Forwarding...' : 'Forward & End Shift'}</button>
+            <button onClick={doEndShift} style={{flex:1,background:C.red,border:'none',borderRadius:'8px',color:'#fff',fontSize:'13px',fontWeight:'700',padding:'12px',cursor:'pointer'}}>End Without Forwarding</button>
           </div>
         </div>
       </div>
     </>
   )
 
+  // ── SHIFT ENDED REPORT ──
+  if (shiftStatus === 'ended' && showReport && report) return (
+    <>
+      <Head><title>Cautio CRM — Shift Report</title></Head>
+      <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'16px',padding:'2.5rem',maxWidth:'520px',width:'100%'}}>
+          <img src="/cautio_shield.webp" alt="Cautio" style={{width:'40px',height:'40px',objectFit:'contain',display:'block',margin:'0 auto 8px'}} onError={e=>e.target.style.display='none'}/>
+          <h2 style={{color:C.text,textAlign:'center',marginBottom:'4px'}}>Shift Complete</h2>
+          <p style={{color:C.muted,textAlign:'center',fontSize:'13px',marginBottom:'2rem'}}>{report.date} · {report.shiftStart} → {report.shiftEnd} · {report.duration}</p>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',marginBottom:'10px'}}>
+            <RepStat val={report.clientsHandled} label="CLIENTS" color={C.accent}/>
+            <RepStat val={report.totalUpdates} label="UPDATES" color={C.accent}/>
+            <RepStat val={report.misalignCount} label="MISALIGNS" color={C.amber}/>
+            <RepStat val={report.alertTotal} label="ALERTS" color={C.red}/>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',marginBottom:'20px'}}>
+            <RepStat val={report.fatigueCount} label="FATIGUE" color={C.purple}/>
+            <RepStat val={report.footageCompletedToday} label="FOOTAGE DONE" color={C.accent}/>
+            <RepStat val={report.footagePending} label="FOOTAGE PENDING" color={C.amber}/>
+            <RepStat val={report.redistributed} label="REDISTRIBUTED" color={C.text}/>
+          </div>
+          {report.redistributed > 0 && (
+            <div style={{background:C.s2,borderRadius:'8px',padding:'10px 14px',fontSize:'11.5px',color:C.text2,marginBottom:'16px'}}>
+              ↩ {report.redistributed} clients redistributed to: {[...new Set(report.redistributedTo)].join(', ')}
+            </div>
+          )}
+          <button onClick={downloadReport} style={{width:'100%',background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'8px',color:C.text2,fontSize:'13px',padding:'12px',cursor:'pointer',marginBottom:'10px'}}>⬇ Download CSV Report</button>
+          <button onClick={()=>{fetch('/api/auth/logout',{method:'POST'});router.push('/login')}} style={{width:'100%',background:'transparent',border:`1px solid ${C.border2}`,borderRadius:'8px',color:C.muted,fontSize:'13px',padding:'12px',cursor:'pointer'}}>Logout</button>
+        </div>
+      </div>
+    </>
+  )
+
+  // ── BREAK OVERLAY ──
+  if (breakStatus.onBreak) return (
+    <>
+      <Head><title>Cautio CRM — On Break</title></Head>
+      <BreakOverlay
+        startTime={breakStatus.startTime}
+        history={breakStatus.history}
+        totalMinutesToday={breakStatus.totalMinutesToday}
+        onResume={resumeFromBreak}
+        resuming={breakActionLoading}
+      />
+    </>
+  )
+
+  // ── MAIN APP ──
+  const tabTitle = {
+    dashboard: 'Dashboard', myday: 'My Day', clients: 'My Clients', footage: 'Footage Requests',
+    followup: 'Follow-ups', performance: 'My Performance', notifications: 'Notifications',
+    help: 'Help & Support', settings: 'Settings',
+  }[activeTab]
+
   return (
     <>
-      <Head><title>Cautio CRM — Dashboard</title></Head>
-      <div style={{minHeight:'100vh', background:'#0a0a0a'}}>
-        <Navbar user={user} shiftStatus={shiftStatus} onEndShift={handleEndShiftClick} />
-        <div style={s.body}>
+      <Head><title>Cautio CRM — {tabTitle}</title></Head>
+      <div style={{minHeight:'100vh', background:C.bg, display:'flex'}}>
+        <EmployeeSidebar
+          activeTab={activeTab} setActiveTab={setActiveTab} user={user}
+          counts={{ footage: footage.pending.length, followup: footage.followups.length }}
+          shiftTime={fmtShift(summary?.shiftStart, summary?.shiftEnd)}
+          loginTime={startTime}
+        />
 
-          {shiftStatus === 'not_started' && (
-            <div style={s.startWrap}>
-              <div style={s.startCard}>
-                <img src="/cautio_shield.webp" alt="Cautio" style={{width:'56px',height:'56px',objectFit:'contain',margin:'0 auto 1.5rem',display:'block'}} onError={e=>e.target.style.display='none'}/>
-                <h2 style={{color:'#fff',fontSize:'22px',fontWeight:'700',marginBottom:'8px',textAlign:'center'}}>
-                  Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, {user?.name}
-                </h2>
-                <p style={{color:'#6b7280',fontSize:'14px',marginBottom:'2rem',textAlign:'center'}}>
-                  Click Start Shift to begin. Clients will auto-load based on current time.
-                </p>
-                <div style={s.currentHourBanner}>
-                  <span style={{color:'#22c55e',fontWeight:'600'}}>Current slot:</span>
-                  <span style={{color:'#fff',marginLeft:'8px'}}>{hourLabel(currentHour)}</span>
-                </div>
-                <button onClick={handleStartShift} style={s.bigStartBtn}>▶ Start Shift</button>
+        <div style={{flex:1, minWidth:0}}>
+          {/* Topbar */}
+          <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', padding:'20px 24px 14px', flexWrap:'wrap', gap:'12px' }}>
+            <div>
+              <div style={{ color:C.text, fontSize:'22px', fontWeight:800 }}>
+                Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}, {user?.name} 👋
               </div>
+              <div style={{ color:C.muted, fontSize:'12px', marginTop:'4px' }}>Stay focused and keep up the great work.</div>
             </div>
-          )}
-
-          {shiftStatus === 'active' && (
-            <>
-              <div style={s.headerRow}>
-                <div>
-                  <div style={s.greeting}>
-                    {user?.name}
-                    <span style={s.startedAt}>Started at {startTime}</span>
-                  </div>
-                  <div style={s.slotLabel}>
-                    <span className="live-dot" style={{width:7,height:7,marginRight:6}}></span>
-                    Current Slot: <strong style={{color:'#fff',marginLeft:4}}>{hourLabel(currentHour)}</strong>
-                    <span style={{color:'#374151',margin:'0 8px'}}>·</span>
-                    <span style={{color:'#6b7280'}}>{clients.length} clients</span>
-                  </div>
-                </div>
-              </div>
-
-              <div style={s.tabs}>
-                <button style={activeTab==='clients' ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab('clients')}>
-                  Clients<span style={s.tabCount}>{clients.length}</span>
-                </button>
-                <button style={activeTab==='myday' ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab('myday')}>
-                  My Day
-                </button>
-                <button style={activeTab==='footage' ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab('footage')}>
-                  Footage Requests
-                  {footage.pending.length > 0 && <span style={{...s.tabCount,background:'#ef444422',color:'#f87171',border:'1px solid #ef444433'}}>{footage.pending.length}</span>}
-                </button>
-                <button style={activeTab==='followup' ? {...s.tab,...s.tabActive} : s.tab} onClick={() => setActiveTab('followup')}>
-                  Follow-ups
-                  {footage.followups.length > 0 && <span style={{...s.tabCount,background:'#f59e0b22',color:'#fbbf24',border:'1px solid #f59e0b33'}}>{footage.followups.length}</span>}
-                </button>
-              </div>
-
-              {/* ── CLIENTS TAB ── */}
-              {activeTab === 'clients' && (
-                <div style={s.tableWrap}>
-                  {clients.length === 0 ? (
-                    <div style={s.emptyMsg}>No clients assigned for this slot.</div>
-                  ) : (
-                    <>
-                      <div style={s.tHead}>
-                        <div style={{...s.th,flex:1.6}}>CLIENT</div>
-                        <div style={{...s.th,flex:0.5,textAlign:'center'}}>VEH</div>
-                        <div style={{...s.th,flex:1.2}}>STATUS</div>
-                        <div style={{...s.th,flex:1.4}}>MISALIGN VEHICLES</div>
-                        <div style={{...s.th,flex:0.7}}>ALERTS</div>
-                        <div style={{...s.th,flex:1.1}}>FATIGUE</div>
-                        <div style={{...s.th,flex:1.1}}>LAST UPDATED</div>
-                        <div style={{...s.th,flex:0.5,textAlign:'center'}}>SAVE</div>
-                      </div>
-                      {clients.map(({ client, vehicleCount, isRedistributed, fromEmployee }) => {
-                        const f   = filled[client] || {}
-                        const key = (field) => `${client}_${field}`
-                        const fatigueIsYes = (f.fatigue || 'No') === 'Yes'
-                        const hasData = !!(f.status || '').trim()
-                        return (
-                          <div key={client} style={{...s.tRow,...(isRedistributed?s.redistributedRow:{})}}>
-                            <div style={{...s.td,flex:1.6}}>
-                              <div style={s.clientName}>{client}</div>
-                              {isRedistributed && <div style={s.redistTag}>↩ from {fromEmployee}</div>}
-                            </div>
-                            <div style={{...s.td,flex:0.5,justifyContent:'center'}}>
-                              <span style={s.vehBadge}>{vehicleCount||0}</span>
-                            </div>
-                            <div style={{...s.td,flex:1.2}}>
-                              <select style={s.sel} value={f.status||''} onChange={e=>saveUpdate(client,'status',e.target.value)}>
-                                {STATUS_OPTIONS.map(o=><option key={o} value={o}>{o||'— select —'}</option>)}
-                              </select>
-                            </div>
-                            <div style={{...s.td,flex:1.4}}>
-                              <input style={s.inp} placeholder="VH1234, VH5678" value={f.misalignVehicles||''} onChange={e=>saveUpdate(client,'misalignVehicles',e.target.value)}/>
-                            </div>
-                            <div style={{...s.td,flex:0.7}}>
-                              <input style={{...s.inp,textAlign:'center'}} type="number" min="0" placeholder="0" value={f.alertCount||''} onChange={e=>saveUpdate(client,'alertCount',e.target.value)}/>
-                            </div>
-                            <div style={{...s.td,flex:1.1,gap:'4px'}}>
-                              <select style={{...s.sel,flex:fatigueIsYes?'0 0 55px':'1'}} value={f.fatigue||'No'} onChange={e=>saveUpdate(client,'fatigue',e.target.value)}>
-                                {FATIGUE_OPTIONS.map(o=><option key={o}>{o}</option>)}
-                              </select>
-                              {fatigueIsYes && (
-                                <input style={{...s.inp,flex:1,textAlign:'center'}} type="number" min="0" placeholder="Count" value={f.fatigueCount||''} onChange={e=>saveUpdate(client,'fatigueCount',e.target.value)}/>
-                              )}
-                            </div>
-                            <div style={{...s.td,flex:1.1}}>
-                              {hasData ? (
-                                <span style={{color:'#4ade80',fontSize:'10px'}}>Updated at {f.updatedAt || '—'}</span>
-                              ) : (
-                                <span style={{color:'#f87171',fontSize:'10px',fontWeight:'600'}}>Still not updated</span>
-                              )}
-                            </div>
-                            <div style={{...s.td,flex:0.5,justifyContent:'center'}}>
-                              {saving[key('status')]||saving[key('alertCount')]||saving[key('fatigueCount')]
-                                ?<span className="spinner" style={{width:14,height:14,borderWidth:2}}></span>
-                                :<span style={{color:'#22c55e',fontSize:'16px'}}>✓</span>}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* ── MY DAY TAB ── */}
-              {activeTab === 'myday' && (
-                <div style={{maxWidth:'900px'}}>
-                  {!myDay ? (
-                    <div style={{display:'flex',justifyContent:'center',padding:'3rem'}}><div className="spinner"></div></div>
-                  ) : (
-                    <>
-                      <div style={s.dayStatsRow}>
-                        <div style={s.dayStat}><span style={{color:'#fff',fontSize:'20px',fontWeight:'700'}}>{myDay.totalClients}</span><span style={{color:'#6b7280',fontSize:'10px'}}>TOTAL TODAY</span></div>
-                        <div style={s.dayStat}><span style={{color:'#22c55e',fontSize:'20px',fontWeight:'700'}}>{myDay.totalCompleted}</span><span style={{color:'#6b7280',fontSize:'10px'}}>COMPLETED</span></div>
-                        <div style={s.dayStat}><span style={{color:'#f87171',fontSize:'20px',fontWeight:'700'}}>{myDay.totalMissed}</span><span style={{color:'#6b7280',fontSize:'10px'}}>MISSED</span></div>
-                      </div>
-                      {myDay.timeline.length === 0 ? (
-                        <div style={s.emptyMsg}>No activity yet today.</div>
-                      ) : (
-                        myDay.timeline.map(slot => (
-                          <div key={slot.hour} style={s.timelineSlot}>
-                            <div style={s.timelineSlotHead}>
-                              <span style={{color:'#fff',fontSize:'13px',fontWeight:'700'}}>{hourLabel(slot.hour)}</span>
-                              <span style={{color:slot.completedClients===slot.totalClients?'#22c55e':'#f59e0b',fontSize:'11px'}}>
-                                {slot.completedClients}/{slot.totalClients} done
-                              </span>
-                            </div>
-                            <div style={s.timelineClients}>
-                              {slot.clients.map((c,i) => (
-                                <div key={i} style={{...s.timelineClientChip,...(c.filled?s.chipDone:s.chipPending)}}>
-                                  {c.filled?'✓':c.isRedistributed?'↩':'○'} {c.client}
-                                  {c.updatedAt && c.filled && <span style={{opacity:0.7,fontSize:'9px',marginLeft:'4px'}}>· {c.updatedAt}</span>}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))
-                      )}
-                      {myDay.redistributedAway?.length > 0 && (
-                        <div style={s.redistAwayBox}>
-                          ↪ You passed {myDay.redistributedAway.length} client(s) to other employees today.
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* ── FOOTAGE TAB ── */}
-              {activeTab === 'footage' && (
-                <div style={s.footageWrap}>
-                  <div style={s.footSummary}>
-                    <div style={s.footStat}><span style={{color:'#f59e0b',fontSize:'22px',fontWeight:'700'}}>{filteredPending.length}</span><span style={{color:'#6b7280',fontSize:'10px'}}>PENDING</span></div>
-                    <div style={s.footStat}><span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{filteredCompleted.length}</span><span style={{color:'#6b7280',fontSize:'10px'}}>COMPLETED</span></div>
-                    <div style={{flex:1,minWidth:'200px'}}><input style={s.searchInp} placeholder="🔍 Search vehicle no. or issue ID..." value={footageSearchInput} onChange={e=>setFootageSearchInput(e.target.value)}/></div>
-                    <input type="date" style={s.dateInp} value={dateFilter} onChange={e=>setDateFilter(e.target.value)}/>
-                    {dateFilter && <button style={s.clearBtn} onClick={()=>setDateFilter('')}>✕</button>}
-                  </div>
-                  {filteredPending.length===0&&filteredCompleted.length===0 && <div style={s.emptyMsg}>No footage requests found.</div>}
-                  {filteredPending.map(item=>(
-                    <div key={item.issueId} style={s.footCard}>
-                      <div style={s.footTop}>
-                        <div>
-                          <div style={s.footClient}><span style={{color:'#60a5fa',marginRight:'6px'}}>▶</span>{item.client} · {item.vehicle}</div>
-                          <div style={s.footMeta}>ID: {item.issueId} &nbsp;·&nbsp; Raised: {item.raisedAt} {item.location&&`· ${item.location}`}</div>
-                          {item.details&&<div style={s.footDetails}>{item.details}</div>}
-                        </div>
-                        <span className="badge badge-amber">PENDING</span>
-                      </div>
-                    </div>
-                  ))}
-                  {filteredCompleted.length>0&&<>
-                    <div style={{color:'#374151',fontSize:'10px',letterSpacing:'1px',margin:'16px 0 8px',fontWeight:'600'}}>COMPLETED</div>
-                    {filteredCompleted.map(item=>(
-                      <div key={item.issueId} style={{...s.footCard,opacity:0.6}}>
-                        <div style={s.footTop}>
-                          <div>
-                            <div style={s.footClient}><span style={{color:'#22c55e',marginRight:'6px'}}>✓</span>{item.client} · {item.vehicle}</div>
-                            <div style={s.footMeta}>Completed: {item.resolvedAt} · ID: {item.issueId}</div>
-                          </div>
-                          <span className="badge badge-green">DONE</span>
-                        </div>
-                      </div>
-                    ))}
-                  </>}
-                </div>
-              )}
-
-              {/* ── FOLLOW-UP TAB ── */}
-              {activeTab === 'followup' && (
-                <div style={{maxWidth:'800px'}}>
-                  {footage.followups.length === 0 ? (
-                    <div style={s.emptyMsg}>No follow-up footage requests assigned to you.</div>
-                  ) : (
-                    footage.followups.map(item => (
-                      <div key={item.issueId} style={{...s.footCard,borderColor:'#f59e0b33'}}>
-                        <div style={s.footTop}>
-                          <div>
-                            <div style={s.footClient}><span style={{color:'#fbbf24',marginRight:'6px'}}>↩</span>{item.client} · {item.vehicle}</div>
-                            <div style={s.footMeta}>
-                              ID: {item.issueId} &nbsp;·&nbsp;
-                              Forwarded by: <strong style={{color:'#fff'}}>{item.originalEmployee}</strong> &nbsp;·&nbsp;
-                              At: {item.forwardedAt}
-                            </div>
-                            {item.details&&<div style={s.footDetails}>{item.details}</div>}
-                          </div>
-                          <span className="badge badge-amber">FOLLOW-UP</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── SHIFT ENDED REPORT ── */}
-          {shiftStatus === 'ended' && showReport && report && (
-            <div style={s.reportWrap}>
-              <div style={s.reportCard}>
-                <img src="/cautio_shield.webp" alt="Cautio" style={{width:'40px',height:'40px',objectFit:'contain',display:'block',margin:'0 auto 8px'}} onError={e=>e.target.style.display='none'}/>
-                <h2 style={{color:'#fff',textAlign:'center',marginBottom:'4px'}}>Shift Complete</h2>
-                <p style={{color:'#6b7280',textAlign:'center',fontSize:'13px',marginBottom:'2rem'}}>
-                  {report.date} · {report.shiftStart} → {report.shiftEnd} · {report.duration}
-                </p>
-                <div style={s.reportGrid}>
-                  <div style={s.repStat}><span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{report.clientsHandled}</span><span style={{color:'#6b7280',fontSize:'10px'}}>CLIENTS</span></div>
-                  <div style={s.repStat}><span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{report.totalUpdates}</span><span style={{color:'#6b7280',fontSize:'10px'}}>UPDATES</span></div>
-                  <div style={s.repStat}><span style={{color:'#f59e0b',fontSize:'22px',fontWeight:'700'}}>{report.misalignCount}</span><span style={{color:'#6b7280',fontSize:'10px'}}>MISALIGNS</span></div>
-                  <div style={s.repStat}><span style={{color:'#f87171',fontSize:'22px',fontWeight:'700'}}>{report.alertTotal}</span><span style={{color:'#6b7280',fontSize:'10px'}}>ALERTS</span></div>
-                </div>
-                <div style={s.reportGrid}>
-                  <div style={s.repStat}><span style={{color:'#a78bfa',fontSize:'22px',fontWeight:'700'}}>{report.fatigueCount}</span><span style={{color:'#6b7280',fontSize:'10px'}}>FATIGUE</span></div>
-                  <div style={s.repStat}><span style={{color:'#22c55e',fontSize:'22px',fontWeight:'700'}}>{report.footageCompletedToday}</span><span style={{color:'#6b7280',fontSize:'10px'}}>FOOTAGE DONE</span></div>
-                  <div style={s.repStat}><span style={{color:'#f59e0b',fontSize:'22px',fontWeight:'700'}}>{report.footagePending}</span><span style={{color:'#6b7280',fontSize:'10px'}}>FOOTAGE PENDING</span></div>
-                  <div style={s.repStat}><span style={{color:'#fff',fontSize:'22px',fontWeight:'700'}}>{report.redistributed}</span><span style={{color:'#6b7280',fontSize:'10px'}}>REDISTRIBUTED</span></div>
-                </div>
-                {report.redistributed > 0 && (
-                  <div style={s.redistInfo}>↩ {report.redistributed} clients redistributed to: {[...new Set(report.redistributedTo)].join(', ')}</div>
+            <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
+              <TopPill icon="calendar" text={new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})} />
+              <TopPill icon="clock" text={`Shift: ${fmtShift(summary?.shiftStart, summary?.shiftEnd)}`} />
+              <TopPill icon="check-circle" text={`In: ${startTime}`} color={summary?.attendanceStatus==='Late'?C.amber:C.accent} />
+              <button onClick={()=>setActiveTab('notifications')} style={{ position:'relative', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', width:'36px', height:'36px', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' }}>
+                <Icon name="bell" size={16} color={C.text2}/>
+                {(footage.pending.length+footage.followups.length)>0 && (
+                  <span style={{ position:'absolute', top:'-4px', right:'-4px', background:C.red, color:'#fff', fontSize:'9px', fontWeight:700, borderRadius:'10px', minWidth:'16px', height:'16px', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    {footage.pending.length+footage.followups.length}
+                  </span>
                 )}
-                <button onClick={downloadReport} style={s.downloadBtn}>⬇ Download CSV Report</button>
-                <button onClick={()=>{fetch('/api/auth/logout',{method:'POST'});router.push('/login')}} style={s.logoutFinalBtn}>Logout</button>
-              </div>
+              </button>
+              <button onClick={startBreak} disabled={breakActionLoading} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.red, border:'none', borderRadius:'10px', color:'#fff', fontSize:'13px', fontWeight:800, padding:'9px 18px', cursor:'pointer' }}>
+                <Icon name="clock" size={15} color="#fff"/> BREAK
+              </button>
+              <button onClick={handleEndShiftClick} style={{ background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'10px', color:C.muted, fontSize:'12px', fontWeight:600, padding:'9px 14px', cursor:'pointer' }}>End Shift</button>
             </div>
-          )}
+          </div>
 
+          <div style={{ padding:'0 24px 32px' }}>
+            {activeTab === 'dashboard' && (
+              <EmpDashboardTab summary={summary} range={summaryRange} setRange={setSummaryRange} loading={summaryLoading} onGoToTab={setActiveTab} breakStatus={breakStatus} />
+            )}
+            {activeTab === 'myday' && (
+              <MyDayTab
+                currentHour={currentHour} currentClients={clients} filled={filled} myDay={myDay}
+                saveUpdate={saveUpdate} saving={saving}
+                footagePending={footage.pending.length} followupsPending={footage.followups.length}
+                onGoToTab={setActiveTab}
+              />
+            )}
+            {activeTab === 'clients' && (
+              <MyClientsTab clients={clients} filled={filled} saveUpdate={saveUpdate} saving={saving} currentHour={currentHour} />
+            )}
+            {activeTab === 'footage' && <EmpFootageTab footage={footage} />}
+            {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
+
+            {['performance','notifications','help','settings'].includes(activeTab) && (
+              <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', maxWidth:'520px', margin:'40px auto', textAlign:'center', padding:'40px 24px' }}>
+                <div style={{ width:'44px', height:'44px', borderRadius:'12px', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
+                  <Icon name={activeTab==='performance'?'analytics':activeTab==='notifications'?'alerts':activeTab==='help'?'sparkles':'settings'} size={20} color={C.accent}/>
+                </div>
+                <div style={{ color:C.text, fontSize:'15px', fontWeight:700, marginBottom:'6px' }}>{tabTitle} — coming soon</div>
+                <div style={{ color:C.muted, fontSize:'12px', lineHeight:1.6 }}>This module isn't wired up to live data yet.</div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </>
   )
 }
 
-const s = {
-  body:         { padding:'20px', maxWidth:'1400px', margin:'0 auto' },
-  startWrap:    { display:'flex', alignItems:'center', justifyContent:'center', minHeight:'80vh' },
-  startCard:    { background:'#111', border:'1px solid #222', borderRadius:'16px', padding:'3rem 2rem', maxWidth:'420px', width:'100%', textAlign:'center' },
-  currentHourBanner: { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', padding:'10px 16px', marginBottom:'1.5rem', fontSize:'13px' },
-  bigStartBtn:  { width:'100%', background:'#22c55e', border:'none', borderRadius:'10px', color:'#000', fontWeight:'700', fontSize:'16px', padding:'14px', cursor:'pointer' },
-  headerRow:    { display:'flex', alignItems:'flex-start', marginBottom:'16px' },
-  greeting:     { color:'#fff', fontSize:'18px', fontWeight:'700', display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap' },
-  startedAt:    { color:'#6b7280', fontSize:'12px', fontWeight:'400' },
-  slotLabel:    { color:'#6b7280', fontSize:'13px', marginTop:'4px', display:'flex', alignItems:'center', flexWrap:'wrap' },
-  tabs:         { display:'flex', gap:'4px', borderBottom:'1px solid #222', marginBottom:'16px', overflowX:'auto' },
-  tab:          { background:'transparent', border:'none', borderBottom:'2px solid transparent', color:'#6b7280', padding:'8px 16px', fontSize:'13px', fontWeight:'500', cursor:'pointer', marginBottom:'-1px', display:'flex', alignItems:'center', gap:'6px', whiteSpace:'nowrap' },
-  tabActive:    { color:'#22c55e', borderBottomColor:'#22c55e', fontWeight:'600' },
-  tabCount:     { background:'#22c55e22', border:'1px solid #22c55e33', borderRadius:'10px', padding:'1px 7px', fontSize:'10px', color:'#22c55e', fontWeight:'700' },
-  tableWrap:    { background:'#111', border:'1px solid #222', borderRadius:'12px', overflow:'hidden', overflowX:'auto' },
-  tHead:        { display:'flex', gap:'6px', padding:'10px 16px', background:'#161616', borderBottom:'1px solid #222', minWidth:'940px' },
-  th:           { color:'#6b7280', fontSize:'9px', letterSpacing:'1px', fontWeight:'600', flex:1 },
-  tRow:         { display:'flex', gap:'6px', padding:'10px 16px', borderBottom:'1px solid #1a1a1a', alignItems:'center', minWidth:'940px' },
-  redistributedRow: { borderLeft:'3px solid #f59e0b', background:'#1a1400' },
-  td:           { flex:1, display:'flex', alignItems:'center' },
-  clientName:   { color:'#fff', fontSize:'12px', fontWeight:'600' },
-  redistTag:    { color:'#f59e0b', fontSize:'10px', marginTop:'2px' },
-  vehBadge:     { background:'#16161688', border:'1px solid #2a2a2a', borderRadius:'6px', padding:'2px 8px', color:'#9ca3af', fontSize:'11px', fontWeight:'600' },
-  sel:          { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'6px', color:'#22c55e', fontSize:'11px', padding:'5px 6px' },
-  inp:          { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'6px', color:'#fff', fontSize:'11px', padding:'5px 8px' },
-  searchInp:    { width:'100%', background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'10px 14px', boxSizing:'border-box' },
-  dateInp:      { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#fff', fontSize:'13px', padding:'9px 10px' },
-  clearBtn:     { background:'#161616', border:'1px solid #2a2a2a', borderRadius:'8px', color:'#6b7280', fontSize:'11px', padding:'9px 12px', cursor:'pointer' },
-  emptyMsg:     { color:'#6b7280', textAlign:'center', padding:'3rem', fontSize:'14px' },
-  footageWrap:  { maxWidth:'1000px' },
-  footSummary:  { display:'flex', gap:'10px', marginBottom:'16px', flexWrap:'wrap', alignItems:'center' },
-  footStat:     { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 20px', display:'flex', flexDirection:'column', alignItems:'center', gap:'2px', minWidth:'90px' },
-  footCard:     { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'14px', marginBottom:'8px' },
-  footTop:      { display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:'12px' },
-  footClient:   { color:'#fff', fontSize:'13px', fontWeight:'600', marginBottom:'4px' },
-  footMeta:     { color:'#6b7280', fontSize:'11px' },
-  footDetails:  { color:'#9ca3af', fontSize:'11px', marginTop:'4px', fontStyle:'italic' },
-  reportWrap:   { display:'flex', alignItems:'center', justifyContent:'center', minHeight:'80vh' },
-  reportCard:   { background:'#111', border:'1px solid #222', borderRadius:'16px', padding:'2.5rem 2rem', maxWidth:'520px', width:'100%' },
-  reportGrid:   { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'8px', marginBottom:'12px' },
-  repStat:      { background:'#161616', borderRadius:'10px', padding:'10px', display:'flex', flexDirection:'column', alignItems:'center', gap:'4px' },
-  redistInfo:   { background:'#1a1200', border:'1px solid #f59e0b33', borderRadius:'8px', padding:'10px 14px', color:'#fbbf24', fontSize:'12px', margin:'1rem 0' },
-  downloadBtn:  { width:'100%', background:'#22c55e', border:'none', borderRadius:'8px', color:'#000', fontWeight:'700', fontSize:'14px', padding:'12px', cursor:'pointer', marginBottom:'8px', marginTop:'1rem' },
-  logoutFinalBtn: { width:'100%', background:'transparent', border:'1px solid #222', borderRadius:'8px', color:'#6b7280', fontSize:'14px', padding:'10px', cursor:'pointer' },
-  dayStatsRow:  { display:'flex', gap:'10px', marginBottom:'16px' },
-  dayStat:      { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 24px', display:'flex', flexDirection:'column', alignItems:'center', gap:'4px' },
-  timelineSlot: { background:'#111', border:'1px solid #222', borderRadius:'10px', padding:'12px 14px', marginBottom:'8px' },
-  timelineSlotHead: { display:'flex', justifyContent:'space-between', marginBottom:'8px' },
-  timelineClients: { display:'flex', flexWrap:'wrap', gap:'6px' },
-  timelineClientChip: { fontSize:'11px', padding:'4px 10px', borderRadius:'6px', border:'1px solid' },
-  chipDone:    { background:'#22c55e14', borderColor:'#22c55e33', color:'#4ade80' },
-  chipPending: { background:'#f59e0b14', borderColor:'#f59e0b33', color:'#fbbf24' },
-  redistAwayBox: { background:'#1a1200', border:'1px solid #f59e0b33', borderRadius:'8px', padding:'10px 14px', color:'#fbbf24', fontSize:'12px', marginTop:'10px' },
+function TopPill({ icon, text, color }) {
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:'6px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', padding:'7px 12px', color: color||C.text2, fontSize:'12px', whiteSpace:'nowrap' }}>
+      <Icon name={icon} size={13} color={color||C.muted}/> {text}
+    </div>
+  )
+}
+
+function RepStat({ val, label, color }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', background:C.s2, borderRadius:'8px', padding:'10px' }}>
+      <span style={{ color, fontSize:'20px', fontWeight:700 }}>{val}</span>
+      <span style={{ color:C.muted, fontSize:'9px', marginTop:'2px' }}>{label}</span>
+    </div>
+  )
 }
