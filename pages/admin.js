@@ -41,6 +41,10 @@ export default function Admin() {
   const [fromDate, setFromDate] = useState(todayISO())
   const [toDate, setToDate] = useState(todayISO())
   const [loading, setLoading] = useState(true)
+  const [breaks, setBreaks] = useState(null)
+  const [breakRange, setBreakRange] = useState('today')
+  const [breakFrom, setBreakFrom] = useState(todayISO())
+  const [breakTo, setBreakTo] = useState(todayISO())
   const [markLeaveModal, setMarkLeaveModal] = useState(null)
   const [leaveFromHour, setLeaveFromHour] = useState(8)
   const [leaveToHour, setLeaveToHour] = useState(17)
@@ -80,6 +84,18 @@ export default function Admin() {
     if (ov.employees) setOverview(ov)
     setFootage({ pending: ft.pending || [], completed: ft.completed || [], followups: ft.followups || [] })
   }, [])
+
+  const loadBreaks = useCallback(async (range, from, to) => {
+    const qs = range === 'today' ? '' : `?from=${from}&to=${to}`
+    const data = await fetch(`/api/admin/breaks${qs}`).then(r => r.json())
+    if (data.employees) setBreaks(data)
+  }, [])
+
+  useEffect(() => {
+    if (breakRange === 'today') loadBreaks('today')
+    else if (breakRange === 'all') loadBreaks('all', '2000-01-01', todayISO())
+    else loadBreaks('custom', breakFrom, breakTo)
+  }, [breakRange, breakFrom, breakTo])
 
   const loadProgress = useCallback(async (from, to) => {
     const data = await fetch(`/api/admin/employee-progress?from=${from}&to=${to}`).then(r => r.json())
@@ -527,6 +543,53 @@ export default function Admin() {
                           <div style={{color:C.muted, fontSize:'10px'}}>{a.action}</div>
                           {a.time && <div style={{color:C.dim, fontSize:'9.5px', marginTop:'2px'}}>{a.time}</div>}
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Break analytics */}
+              <div style={{...s.card, marginTop:'14px'}}>
+                <div style={{...s.cardHeadRow, flexWrap:'wrap', gap:'10px'}}>
+                  <div style={s.cardHead}>
+                    <Icon name="clock" size={13} color={C.accent}/> BREAK ANALYTICS
+                    {breaks?.onBreakNow>0 && <span style={{background:C.red+'22', color:C.red, borderRadius:'20px', padding:'2px 8px', fontSize:'9.5px', fontWeight:700, marginLeft:'8px'}}>{breaks.onBreakNow} on break now</span>}
+                  </div>
+                  <div style={{ display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap' }}>
+                    {['today','all','custom'].map(r => (
+                      <button key={r} onClick={()=>setBreakRange(r)} style={{
+                        background: breakRange===r?C.accentDark:C.s2, border:`1px solid ${breakRange===r?C.accent:C.border2}`,
+                        borderRadius:'7px', color: breakRange===r?C.accent:C.text2, fontSize:'10.5px', fontWeight:600, padding:'6px 11px', cursor:'pointer',
+                      }}>{r==='today'?'Today':r==='all'?'All Time':'Custom'}</button>
+                    ))}
+                    {breakRange==='custom' && (
+                      <>
+                        <input type="date" value={breakFrom} onChange={e=>setBreakFrom(e.target.value)} style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'7px',color:C.text,fontSize:'11px',padding:'6px 8px'}} />
+                        <span style={{color:C.muted,fontSize:'11px'}}>to</span>
+                        <input type="date" value={breakTo} onChange={e=>setBreakTo(e.target.value)} style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'7px',color:C.text,fontSize:'11px',padding:'6px 8px'}} />
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {!breaks ? (
+                  <div style={{display:'flex',justifyContent:'center',padding:'2rem'}}><div className="spinner"></div></div>
+                ) : breaks.employees.length===0 ? (
+                  <div style={{color:C.muted, fontSize:'11px', padding:'12px 0'}}>No breaks recorded in this range.</div>
+                ) : (
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(230px, 1fr))', gap:'10px', marginTop:'6px' }}>
+                    {breaks.employees.map(e => (
+                      <div key={e.name} style={{ background:C.s2, border:`1px solid ${e.currentlyOnBreak?C.red+'55':C.border2}`, borderRadius:'10px', padding:'12px' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+                          <span style={{ color:C.text, fontSize:'12px', fontWeight:600 }}>{e.name}</span>
+                          {e.currentlyOnBreak && <span style={{ color:C.red, fontSize:'9px', fontWeight:700, display:'flex', alignItems:'center', gap:'4px' }}><span className="live-dot" style={{width:5,height:5,background:C.red}}></span>ON BREAK</span>}
+                        </div>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+                          <span style={{ color:C.accent, fontSize:'18px', fontWeight:800 }}>{Math.floor(e.totalMinutes/60)}h {e.totalMinutes%60}m</span>
+                          <span style={{ color:C.muted, fontSize:'10px' }}>{e.sessions} session{e.sessions!==1?'s':''}</span>
+                        </div>
+                        {e.currentlyOnBreak && <div style={{ color:C.muted, fontSize:'9.5px', marginTop:'3px' }}>Since {e.activeSince}</div>}
                       </div>
                     ))}
                   </div>
