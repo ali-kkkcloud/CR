@@ -12,14 +12,26 @@ export default function BreakOverlay({ startTime, history, totalMinutesToday, on
 
   useEffect(() => {
     if (!startTime) return
+    function parseToToday(timeStr) {
+      const t = (timeStr || '').toString().trim()
+      let m = t.match(/(\d+):(\d+):(\d+)\s*(am|pm)/i)
+      if (m) {
+        let [, h, mi, se, ampm] = m
+        h = parseInt(h); mi = parseInt(mi); se = parseInt(se)
+        if (ampm.toLowerCase() === 'pm' && h !== 12) h += 12
+        if (ampm.toLowerCase() === 'am' && h === 12) h = 0
+        const d = new Date(); d.setHours(h, mi, se, 0); return d
+      }
+      m = t.match(/^(\d{1,2}):(\d{2}):(\d{2})$/)
+      if (m) {
+        const [, h, mi, se] = m
+        const d = new Date(); d.setHours(parseInt(h), parseInt(mi), parseInt(se), 0); return d
+      }
+      return null
+    }
     function tick() {
-      const m = startTime.match(/(\d+):(\d+):(\d+)\s*(am|pm)/i)
-      if (!m) return
-      let [, h, mi, se, ampm] = m
-      h = parseInt(h); mi = parseInt(mi); se = parseInt(se)
-      if (ampm.toLowerCase()==='pm' && h!==12) h+=12
-      if (ampm.toLowerCase()==='am' && h===12) h=0
-      const start = new Date(); start.setHours(h, mi, se, 0)
+      const start = parseToToday(startTime)
+      if (!start) return
       const diff = Math.max(0, Math.floor((Date.now()-start.getTime())/1000))
       setElapsed(diff)
     }
