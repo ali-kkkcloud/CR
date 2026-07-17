@@ -3,6 +3,7 @@ import { useRouter } from 'next/router'
 import Head from 'next/head'
 import EmployeeSidebar from '../components/EmployeeSidebar'
 import BreakOverlay from '../components/BreakOverlay'
+import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C } from '../components/Widgets'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
@@ -42,6 +43,7 @@ export default function Dashboard() {
   const [forwardOptions, setForwardOptions] = useState({ active: [], others: [] })
   const [forwarding, setForwarding] = useState(false)
   const [clock, setClock] = useState('')
+  const [showLogout, setShowLogout] = useState(false)
 
   const [summary, setSummary] = useState(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
@@ -201,18 +203,44 @@ export default function Dashboard() {
 
   async function startBreak() {
     setBreakActionLoading(true)
-    const res = await fetch('/api/break/start', { method:'POST' })
-    const data = await res.json()
-    setBreakActionLoading(false)
-    if (data.success) loadBreakStatus()
+    try {
+      const res  = await fetch('/api/break/start', { method:'POST' })
+      const data = await res.json()
+      if (data.success) {
+        await loadBreakStatus()
+      } else {
+        alert(data.error || 'Could not start break. Please try again.')
+      }
+    } catch (err) {
+      console.error('Start break failed:', err)
+      alert('Could not start break — check your connection and try again.')
+    } finally {
+      setBreakActionLoading(false)
+    }
   }
 
   async function resumeFromBreak() {
     setBreakActionLoading(true)
-    const res = await fetch('/api/break/end', { method:'POST' })
-    const data = await res.json()
-    setBreakActionLoading(false)
-    if (data.success) loadBreakStatus()
+    try {
+      const res  = await fetch('/api/break/end', { method:'POST' })
+      const data = await res.json()
+      if (data.success) {
+        await loadBreakStatus()
+      } else {
+        alert(data.error || 'Could not resume — please try again.')
+      }
+    } catch (err) {
+      console.error('Resume from break failed:', err)
+      alert('Could not resume — check your connection and try again.')
+    } finally {
+      setBreakActionLoading(false)
+    }
+  }
+
+  async function handleLogoutConfirm() {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    setShowLogout(false)
+    router.push('/login')
   }
 
   function downloadReport() {
@@ -391,6 +419,9 @@ export default function Dashboard() {
                 <Icon name="clock" size={15} color="#fff"/> BREAK
               </button>
               <button onClick={handleEndShiftClick} style={{ background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'10px', color:C.muted, fontSize:'12px', fontWeight:600, padding:'9px 14px', cursor:'pointer' }}>End Shift</button>
+              <button onClick={()=>setShowLogout(true)} title="Logout" style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', width:'36px', height:'36px', display:'flex', alignItems:'center', justifyContent:'center', color:C.muted, cursor:'pointer' }}>
+                <Icon name="arrow-right" size={15} color={C.muted} />
+              </button>
             </div>
           </div>
 
@@ -424,6 +455,7 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+      <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
     </>
   )
 }
