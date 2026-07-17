@@ -23,8 +23,8 @@ export default async function handler(req, res) {
     if (rowIndex === -1) return res.status(404).json({ error: 'No active break found' })
 
     const minutes = calcDurationMinutes(today, startTime, today, now)
-    // Cols D=EndTime E=DurationMinutes F=Status (1-indexed start col 4)
-    await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, rowIndex, 4, [now, minutes, 'Completed'])
+    // Cols E=EndTime F=DurationMinutes G=Status (1-indexed start col 5 = 'E')
+    await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, rowIndex, 5, [now, minutes, 'Completed'])
 
     return res.status(200).json({ success: true, endTime: now, minutes })
   } catch (err) {
