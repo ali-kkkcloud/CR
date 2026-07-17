@@ -419,8 +419,13 @@ export default function Dashboard() {
                 <Icon name="clock" size={15} color="#fff"/> BREAK
               </button>
               <button onClick={handleEndShiftClick} style={{ background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'10px', color:C.muted, fontSize:'12px', fontWeight:600, padding:'9px 14px', cursor:'pointer' }}>End Shift</button>
-              <button onClick={()=>setShowLogout(true)} title="Logout" style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', width:'36px', height:'36px', display:'flex', alignItems:'center', justifyContent:'center', color:C.muted, cursor:'pointer' }}>
-                <Icon name="arrow-right" size={15} color={C.muted} />
+              <button onClick={()=>setShowLogout(true)} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'5px 10px 5px 5px', cursor:'pointer' }}>
+                <div style={{ width:'28px', height:'28px', borderRadius:'50%', background:C.accent, color:'#06120a', fontSize:'11px', fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{(user?.name||'U').slice(0,2).toUpperCase()}</div>
+                <div style={{ textAlign:'left' }}>
+                  <div style={{ color:C.text, fontSize:'12px', fontWeight:600, lineHeight:1.3 }}>{user?.name||'Employee'}</div>
+                  <div style={{ color:C.muted, fontSize:'10px', lineHeight:1.3 }}>EMP-{user?.empId||'—'}</div>
+                </div>
+                <Icon name="chevron-down" size={13} color={C.muted}/>
               </button>
             </div>
           </div>
