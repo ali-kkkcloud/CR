@@ -45,6 +45,7 @@ export default function Admin() {
   const [breakRange, setBreakRange] = useState('today')
   const [breakFrom, setBreakFrom] = useState(todayISO())
   const [breakTo, setBreakTo] = useState(todayISO())
+  const [expandedBreakEmp, setExpandedBreakEmp] = useState(null)
   const [markLeaveModal, setMarkLeaveModal] = useState(null)
   const [leaveFromHour, setLeaveFromHour] = useState(8)
   const [leaveToHour, setLeaveToHour] = useState(17)
@@ -578,20 +579,41 @@ export default function Admin() {
                 ) : breaks.employees.length===0 ? (
                   <div style={{color:C.muted, fontSize:'11px', padding:'12px 0'}}>No breaks recorded in this range.</div>
                 ) : (
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(230px, 1fr))', gap:'10px', marginTop:'6px' }}>
-                    {breaks.employees.map(e => (
-                      <div key={e.name} style={{ background:C.s2, border:`1px solid ${e.currentlyOnBreak?C.red+'55':C.border2}`, borderRadius:'10px', padding:'12px' }}>
-                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
-                          <span style={{ color:C.text, fontSize:'12px', fontWeight:600 }}>{e.name}</span>
-                          {e.currentlyOnBreak && <span style={{ color:C.red, fontSize:'9px', fontWeight:700, display:'flex', alignItems:'center', gap:'4px' }}><span className="live-dot" style={{width:5,height:5,background:C.red}}></span>ON BREAK</span>}
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))', gap:'10px', marginTop:'6px', alignItems:'start' }}>
+                    {breaks.employees.map(e => {
+                      const isOpen = expandedBreakEmp === e.name
+                      const mySessions = breaks.sessions.filter(s => s.name === e.name)
+                      return (
+                        <div key={e.name} style={{ background:C.s2, border:`1px solid ${e.currentlyOnBreak?C.red+'55':C.border2}`, borderRadius:'10px', padding:'12px' }}>
+                          <div onClick={()=>setExpandedBreakEmp(isOpen?null:e.name)} style={{ cursor:'pointer' }}>
+                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+                              <span style={{ color:C.text, fontSize:'12px', fontWeight:600 }}>{e.name}</span>
+                              {e.currentlyOnBreak && <span style={{ color:C.red, fontSize:'9px', fontWeight:700, display:'flex', alignItems:'center', gap:'4px' }}><span className="live-dot" style={{width:5,height:5,background:C.red}}></span>ON BREAK</span>}
+                            </div>
+                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+                              <span style={{ color:C.accent, fontSize:'18px', fontWeight:800 }}>{Math.floor(e.totalMinutes/60)}h {e.totalMinutes%60}m</span>
+                              <span style={{ color:C.muted, fontSize:'10px', display:'flex', alignItems:'center', gap:'4px' }}>{e.sessions} session{e.sessions!==1?'s':''} <Icon name="chevron-down" size={10} color={C.muted}/></span>
+                            </div>
+                            {e.currentlyOnBreak && <div style={{ color:C.muted, fontSize:'9.5px', marginTop:'3px' }}>Since {e.activeSince}</div>}
+                          </div>
+                          {isOpen && (
+                            <div style={{ borderTop:`1px solid ${C.border2}`, marginTop:'10px', paddingTop:'10px', display:'flex', flexDirection:'column', gap:'6px' }}>
+                              {mySessions.map((sess,i) => (
+                                <div key={i} style={{ background:C.bg, borderRadius:'7px', padding:'7px 9px' }}>
+                                  <div style={{ display:'flex', justifyContent:'space-between' }}>
+                                    <span style={{ color:C.text2, fontSize:'10px' }}>{sess.date}</span>
+                                    <span style={{ color: sess.status==='Active'?C.red:C.accent, fontSize:'10px', fontWeight:700 }}>{sess.minutes}m</span>
+                                  </div>
+                                  <div style={{ color:C.muted, fontSize:'10px', marginTop:'2px' }}>
+                                    {sess.startTime} → {sess.endTime || (sess.status==='Active'?'ongoing':'—')}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
-                          <span style={{ color:C.accent, fontSize:'18px', fontWeight:800 }}>{Math.floor(e.totalMinutes/60)}h {e.totalMinutes%60}m</span>
-                          <span style={{ color:C.muted, fontSize:'10px' }}>{e.sessions} session{e.sessions!==1?'s':''}</span>
-                        </div>
-                        {e.currentlyOnBreak && <div style={{ color:C.muted, fontSize:'9.5px', marginTop:'3px' }}>Since {e.activeSince}</div>}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -856,7 +878,7 @@ const s = {
   cardHeadRow: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'12px' },
   cardHead: { color:C.accent, fontSize:'10.5px', letterSpacing:'1px', fontWeight:'700', display:'flex', alignItems:'center', gap:'6px' },
   previewTag: { background:C.border2, color:C.muted, fontSize:'8.5px', fontWeight:700, letterSpacing:'0.5px', borderRadius:'4px', padding:'2px 6px' },
-  mapArea: { position:'relative', height:'250px', background:'#0a0a0a', borderRadius:'8px', border:`1px solid ${C.border}`, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', overflow:'hidden' },
+  mapArea: { position:'relative', height:'250px', background:C.bg, borderRadius:'8px', border:`1px solid ${C.border}`, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', overflow:'hidden' },
   mapOverlayNote: { position:'absolute', bottom:0, left:0, right:0, background:'linear-gradient(0deg, rgba(0,0,0,0.9), transparent)', color:C.muted, fontSize:'10.5px', padding:'22px 14px 10px', textAlign:'center', lineHeight:1.5 },
   aiRecBox: { display:'flex', alignItems:'center', gap:'10px', background:C.accentSoft, border:`1px solid ${C.accent}33`, borderRadius:'8px', padding:'10px 12px' },
 
