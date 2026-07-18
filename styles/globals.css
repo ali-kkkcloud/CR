@@ -1,5 +1,5 @@
 :root {
-  /* CAUTIO Command Center brand tokens (Design Bible v1) */
+  /* CAUTIO Command Center brand tokens — LOCKED, do not change */
   --bg:       #000000;
   --surface:  #1E1E1E;
   --s2:       #262626;
@@ -9,12 +9,11 @@
   --green:    #94EC8E;
   --green-d:  #215B3B;
   --glow:     #94EC8E1f;
-  --text:     #ffffff;
+  --text:     #FFFFFF;
   --text2:    #D8D8D8;
   --muted:    #9E9E9E;
-  --muted2:   #6b7280;
-  --red:      #ef4444;
-  --amber:    #f59e0b;
+  --amber:    #FFC107;
+  --red:      #FF4D4D;
   --blue:     #3b82f6;
   --purple:   #a78bfa;
 }
@@ -56,8 +55,8 @@ select option { background: var(--s2); }
 
 .badge { display: inline-block; border-radius: 4px; padding: 2px 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
 .badge-green  { background: #94EC8E22; color: #94EC8E; border: 1px solid #94EC8E33; }
-.badge-red    { background: #ef444422; color: #f87171; border: 1px solid #ef444433; }
-.badge-amber  { background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b33; }
+.badge-red    { background: #FF4D4D22; color: #FF4D4D; border: 1px solid #FF4D4D33; }
+.badge-amber  { background: #FFC10722; color: #FFC107; border: 1px solid #FFC10733; }
 .badge-blue   { background: #3b82f622; color: #60a5fa; border: 1px solid #3b82f633; }
 
 .spinner {
