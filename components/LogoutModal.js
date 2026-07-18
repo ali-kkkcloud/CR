@@ -1,3 +1,5 @@
+import { C } from './Widgets'
+
 export default function LogoutModal({ show, onConfirm, onCancel }) {
   if (!show) return null
   return (
@@ -22,19 +24,19 @@ const s = {
     zIndex: 1000, backdropFilter: 'blur(2px)',
   },
   modal: {
-    background: '#111', border: '1px solid #222', borderRadius: '16px',
+    background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px',
     padding: '2rem', width: '320px', textAlign: 'center',
   },
-  icon: { fontSize: '32px', color: '#ef4444', marginBottom: '12px' },
-  title: { color: '#fff', fontSize: '18px', fontWeight: '700', marginBottom: '8px' },
-  desc: { color: '#6b7280', fontSize: '13px', marginBottom: '24px', lineHeight: '1.5' },
+  icon: { fontSize: '32px', color: C.red, marginBottom: '12px' },
+  title: { color: C.text, fontSize: '18px', fontWeight: '700', marginBottom: '8px' },
+  desc: { color: C.muted, fontSize: '13px', marginBottom: '24px', lineHeight: '1.5' },
   btnRow: { display: 'flex', gap: '10px' },
   noBtn: {
-    flex: 1, background: '#161616', border: '1px solid #2a2a2a', borderRadius: '8px',
-    color: '#fff', fontSize: '13px', fontWeight: '600', padding: '11px', cursor: 'pointer',
+    flex: 1, background: C.s2, border: `1px solid ${C.border2}`, borderRadius: '8px',
+    color: C.text, fontSize: '13px', fontWeight: '600', padding: '11px', cursor: 'pointer',
   },
   yesBtn: {
-    flex: 1, background: '#ef4444', border: 'none', borderRadius: '8px',
+    flex: 1, background: C.red, border: 'none', borderRadius: '8px',
     color: '#fff', fontSize: '13px', fontWeight: '600', padding: '11px', cursor: 'pointer',
   },
 }
