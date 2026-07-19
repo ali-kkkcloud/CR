@@ -74,6 +74,8 @@ export default async function handler(req, res) {
       const rangeSet = new Set(rangeDates)
       const rangeUpdates = updateRows.slice(1).filter(r => rangeSet.has(r[0]) && r[2] === emp.name)
       const rangeClients = [...new Set(rangeUpdates.map(r => r[3]))]
+      const rangeCompletedUpdates = rangeUpdates.filter(r => (r[5]||'').toString().trim())
+      const rangePendingUpdates   = rangeUpdates.length - rangeCompletedUpdates.length
 
       const myFootage = footageRows.slice(1).filter(r => {
         const sub = (r[9] || '').toString().toLowerCase()
@@ -97,7 +99,9 @@ export default async function handler(req, res) {
         daysAbsent,
         totalDaysInRange: rangeDates.length,
         rangeClientsCount: rangeClients.length,
-        rangeUpdatesCount: rangeUpdates.length,
+        rangeAssignedCount: rangeUpdates.length,
+        rangeUpdatesCount: rangeCompletedUpdates.length,
+        rangePendingCount: rangePendingUpdates,
         rangeMisaligns: rangeUpdates.filter(r => r[6] && r[6] !== '—' && r[6] !== '').length,
         rangeAlerts: rangeUpdates.reduce((s,r)=>s+(parseInt(r[7])||0),0),
         footagePending,
