@@ -16,8 +16,21 @@ function hourRangeLabel(h) {
   return `${to12(h)}:00 ${suf(h)} - ${to12((h+1)%24)}:00 ${suf((h+1)%24)}`
 }
 
+// Converts a myDay.timeline[hour].clients[] entry into the shape the
+// UpdateClientModal expects (same field names as /api/clients/current's
+// `filled` map) — used when editing a past/future hour, not just current.
+function clientRowToFilled(c) {
+  return {
+    status: c.status || '', misalignVehicles: c.misalignVehicles || '',
+    alertCount: c.alertCount || '', fatigue: c.fatigue || 'No',
+    fatigueCount: c.fatigueCount || '', updatedAt: c.updatedAt || '',
+  }
+}
+
 export default function MyDayTab({ currentHour, currentClients, filled, myDay, saveUpdate, saving, footagePending, followupsPending, onGoToTab }) {
-  const [editClient, setEditClient] = useState(null)
+  const [editTarget, setEditTarget] = useState(null) // { client, hour }
+  const [viewedHour, setViewedHour] = useState(null) // null = not viewing a specific past/future hour
+  const [hourOverrides, setHourOverrides] = useState({}) // { [hour]: { [client]: {...} } } — local instant feedback for non-current-hour edits
 
   const nextHourData = myDay?.timeline.find(t => t.hour === (currentHour+1)%24)
 
@@ -103,10 +116,10 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
         </div>
       </div>
 
-      {/* Today's timeline */}
+      {/* Today's timeline — click any hour (past or future) to view its clients */}
       {myDay && (
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', marginBottom:'14px' }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'14px' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'14px', flexWrap:'wrap', gap:'8px' }}>
             <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700 }}>TODAY'S TIMELINE</div>
             <div style={{ display:'flex', gap:'14px' }}>
               <LegendDot color={C.accent} label="Completed" />
@@ -118,17 +131,22 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
             {myDay.timeline.map((t,i) => {
               const isCurrent = t.hour === currentHour
               const isPast = !isCurrent && t.hour < currentHour
+              const isSelected = viewedHour === t.hour
               const done = t.totalClients>0 && t.completedClients===t.totalClients
               return (
                 <div key={t.hour} style={{ display:'flex', alignItems:'center', flexShrink:0 }}>
-                  <div style={{ display:'flex', flexDirection:'column', alignItems:'center', minWidth:'64px' }}>
+                  <button
+                    onClick={()=>setViewedHour(isSelected ? null : t.hour)}
+                    style={{ background:'transparent', border:'none', cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', minWidth:'64px', padding:'4px 0' }}
+                  >
                     <div style={{
                       width: isCurrent?'18px':'14px', height: isCurrent?'18px':'14px', borderRadius:'50%',
                       background: isPast&&done ? C.accent : isCurrent ? 'transparent' : C.dim,
-                      border: isCurrent ? `2.5px solid ${C.accent}` : 'none',
+                      border: isCurrent ? `2.5px solid ${C.accent}` : isSelected ? `2px solid ${C.accent}` : 'none',
+                      boxShadow: isSelected ? `0 0 0 3px ${C.accent}33` : 'none',
                     }}></div>
-                    <div style={{ color: isCurrent?C.accent:C.muted, fontSize:'9.5px', marginTop:'6px', fontWeight: isCurrent?700:400 }}>{hourLabel(t.hour).split(' ')[0]}</div>
-                  </div>
+                    <div style={{ color: isCurrent?C.accent:isSelected?C.text:C.muted, fontSize:'9.5px', marginTop:'6px', fontWeight: (isCurrent||isSelected)?700:400 }}>{hourLabel(t.hour).split(' ')[0]}</div>
+                  </button>
                   {i < myDay.timeline.length-1 && <div style={{ width:'26px', height:'2px', background: isPast?C.accent:C.border2 }}></div>}
                 </div>
               )
@@ -136,6 +154,53 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
           </div>
         </div>
       )}
+
+      {/* Hour Detail — shown when a non-current hour is picked from the timeline above */}
+      {viewedHour !== null && myDay && (() => {
+        const hourData = myDay.timeline.find(t => t.hour === viewedHour)
+        const isFuture = viewedHour > currentHour
+        const overrides = hourOverrides[viewedHour] || {}
+        return (
+          <div style={{ background:C.card, border:`1px solid ${C.accent}44`, borderRadius:'14px', padding:'16px', marginBottom:'14px' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px' }}>
+              <div style={{ color:C.accent, fontSize:'12px', fontWeight:700 }}>{hourRangeLabel(viewedHour)}{viewedHour===currentHour?' (Current Hour)':isFuture?' (Upcoming)':''}</div>
+              <button onClick={()=>setViewedHour(null)} style={{ background:'transparent', border:'none', color:C.muted, fontSize:'16px', cursor:'pointer' }}>×</button>
+            </div>
+            {!hourData || hourData.clients.length===0 ? (
+              <div style={{ color:C.muted, fontSize:'12px' }}>No clients scheduled this hour.</div>
+            ) : isFuture ? (
+              <div>
+                <div style={{ color:C.muted, fontSize:'11px', marginBottom:'10px' }}>This hour hasn't started yet — clients will be updatable once it begins.</div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))', gap:'8px' }}>
+                  {hourData.clients.map(c => (
+                    <div key={c.client} style={{ background:C.s2, borderRadius:'8px', padding:'10px', opacity:0.6 }}>
+                      <div style={{ color:C.text, fontSize:'11.5px', fontWeight:600 }}>{c.client}</div>
+                      <div style={{ color:C.muted, fontSize:'9.5px' }}>{c.vehicleCount||0} Vehicles</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(180px, 1fr))', gap:'8px' }}>
+                {hourData.clients.map(c => {
+                  const ov = overrides[c.client]
+                  const done = ov ? !!(ov.status||'').trim() : c.filled
+                  return (
+                    <div key={c.client} style={{ background: done?C.accentDark+'22':C.s2, border:`1px solid ${done?C.accent+'55':C.border2}`, borderRadius:'8px', padding:'10px' }}>
+                      <div style={{ color:C.text, fontSize:'11.5px', fontWeight:600 }}>{c.client}</div>
+                      <div style={{ color:C.muted, fontSize:'9.5px', marginBottom:'8px' }}>{c.vehicleCount||0} Vehicles{done && c.updatedAt ? ` · ${c.updatedAt}` : ''}</div>
+                      <button onClick={()=>setEditTarget({client:c.client, hour:viewedHour})} style={{
+                        width:'100%', background: done?'transparent':C.accent, border: done?`1px solid ${C.accent}55`:'none',
+                        borderRadius:'6px', color: done?C.accent:'#06120a', fontSize:'10.5px', fontWeight:700, padding:'6px', cursor:'pointer',
+                      }}>{done?'✓ Updated — Edit':'Update Now'}</button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* My clients today */}
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', marginBottom:'14px' }}>
@@ -162,7 +227,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
                     </div>
                   </div>
                   {c.isRedistributed && <div style={{ color:C.purple, fontSize:'9.5px', marginBottom:'6px' }}>↩ from {c.fromEmployee}</div>}
-                  <button onClick={()=>setEditClient(c.client)} style={{
+                  <button onClick={()=>setEditTarget({client:c.client, hour:currentHour})} style={{
                     width:'100%', background: done?'transparent':C.accent, border: done?`1px solid ${C.accent}55`:'none',
                     borderRadius:'7px', color: done?C.accent:'#06120a', fontSize:'11px', fontWeight:700, padding:'7px', cursor:'pointer',
                   }}>{done?'✓ Updated — Edit':'Update Now'}</button>
@@ -187,7 +252,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
                 <span style={{ background:C.redBg, color:C.red, fontSize:'9.5px', fontWeight:700, borderRadius:'5px', padding:'2px 7px' }}>PENDING</span>
               </div>
               <div style={{ display:'flex', gap:'8px' }}>
-                <button onClick={()=>setEditClient(currentTaskClient.client)} style={{ flex:1, background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12px', fontWeight:700, padding:'10px', cursor:'pointer' }}>Update Now</button>
+                <button onClick={()=>setEditTarget({client:currentTaskClient.client, hour:currentHour})} style={{ flex:1, background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12px', fontWeight:700, padding:'10px', cursor:'pointer' }}>Update Now</button>
               </div>
             </>
           )}
@@ -243,7 +308,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
         <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'12px' }}>QUICK ACTIONS</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'10px' }}>
           {[
-            { icon:'progress', label:'Update Client', sub:'Update Now', onClick:()=> currentTaskClient && setEditClient(currentTaskClient.client) },
+            { icon:'progress', label:'Update Client', sub:'Update Now', onClick:()=> currentTaskClient && setEditTarget({client:currentTaskClient.client, hour:currentHour}) },
             { icon:'users', label:'My Clients', sub:'View All', onClick:()=>onGoToTab('clients') },
             { icon:'footage', label:'Footage Requests', sub:'View Requests', onClick:()=>onGoToTab('footage') },
             { icon:'followups', label:'Follow-ups', sub:'View All', onClick:()=>onGoToTab('followup') },
@@ -257,14 +322,28 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
         </div>
       </div>
 
-      {/* Update-client modal */}
-      {editClient && (
+      {/* Update-client modal — works for the current hour or any hour picked from the timeline */}
+      {editTarget && (
         <UpdateClientModal
-          client={editClient}
-          data={filled[editClient]||{}}
+          client={editTarget.client}
+          data={
+            editTarget.hour === currentHour
+              ? (filled[editTarget.client] || {})
+              : { ...(myDay?.timeline.find(t=>t.hour===editTarget.hour)?.clients.find(c=>c.client===editTarget.client) ? clientRowToFilled(myDay.timeline.find(t=>t.hour===editTarget.hour).clients.find(c=>c.client===editTarget.client)) : {}), ...(hourOverrides[editTarget.hour]?.[editTarget.client] || {}) }
+          }
           saving={saving}
-          onSave={saveUpdate}
-          onClose={()=>setEditClient(null)}
+          onSave={(client, field, value) => {
+            if (editTarget.hour === currentHour) {
+              saveUpdate(client, field, value)
+            } else {
+              saveUpdate(client, field, value, editTarget.hour)
+              setHourOverrides(prev => ({
+                ...prev,
+                [editTarget.hour]: { ...(prev[editTarget.hour]||{}), [client]: { ...(prev[editTarget.hour]?.[client]||{}), [field]: value } },
+              }))
+            }
+          }}
+          onClose={()=>setEditTarget(null)}
         />
       )}
     </div>
