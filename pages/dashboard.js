@@ -48,12 +48,15 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [summaryRange, setSummaryRange] = useState('month')
+  const summaryRangeRef = useRef('month')
+  useEffect(() => { summaryRangeRef.current = summaryRange }, [summaryRange])
 
   const [breakStatus, setBreakStatus] = useState({ onBreak:false, startTime:null, history:[], totalMinutesToday:0 })
   const [breakActionLoading, setBreakActionLoading] = useState(false)
 
   const hourRef = useRef(currentHour)
   const autoRef = useRef(null)
+  const summaryRefreshRef = useRef(null)
 
   useEffect(() => {
     function tick() {
@@ -129,6 +132,7 @@ export default function Dashboard() {
       if (h !== hourRef.current) { loadClients(); loadMyDay() }
       loadFootage()
       loadBreakStatus()
+      loadSummary(summaryRangeRef.current)
     }, 30000)
     return () => clearInterval(autoRef.current)
   }, [shiftStatus])
@@ -185,20 +189,36 @@ export default function Dashboard() {
     await doEndShift()
   }
 
-  async function saveUpdate(client, field, value) {
+  async function saveUpdate(client, field, value, hourOverride) {
     const key = `${client}_${field}`
+    const targetHour = hourOverride ?? currentHour
+    const isCurrentHourEdit = targetHour === currentHour
     setSaving(p => ({...p, [key]: true}))
-    const current = filled[client] || {}
-    const updated = { ...current, [field]: value }
-    if (field === 'fatigue' && value === 'No') updated.fatigueCount = ''
-    setFilled(p => ({ ...p, [client]: updated }))
+    let updated
+    if (isCurrentHourEdit) {
+      const current = filled[client] || {}
+      updated = { ...current, [field]: value }
+      if (field === 'fatigue' && value === 'No') updated.fatigueCount = ''
+      setFilled(p => ({ ...p, [client]: updated }))
+    } else {
+      updated = { [field]: value }
+    }
     const res = await fetch('/api/crm/update', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client, slot: currentHour, ...updated }),
+      body: JSON.stringify({ client, slot: targetHour, ...updated }),
     })
     const data = await res.json()
-    if (data.updatedAt) setFilled(p => ({ ...p, [client]: { ...p[client], updatedAt: data.updatedAt } }))
+    if (isCurrentHourEdit && data.updatedAt) setFilled(p => ({ ...p, [client]: { ...p[client], updatedAt: data.updatedAt } }))
     setSaving(p => { const n = {...p}; delete n[key]; return n })
+    // "status" is what actually marks a client as done — refresh the
+    // dashboard summary shortly after so My Targets / trend don't sit stale
+    // until the next 30s poll. Debounced since other fields (alerts, etc.)
+    // can fire several saves in quick succession.
+    if (field === 'status' && data.success) {
+      clearTimeout(summaryRefreshRef.current)
+      summaryRefreshRef.current = setTimeout(() => { loadSummary(summaryRangeRef.current); loadMyDay() }, 1200)
+    }
+    return data
   }
 
   async function startBreak() {
