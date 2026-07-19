@@ -8,10 +8,10 @@ function fmtMinutes(mins) {
 }
 
 const CAL_COLORS = {
-  good: C.accent, average: C.amber, poor: C.red, leave: C.purple, weekoff: C.dim, upcoming: '#2a2a2a',
+  worked: C.accent, leave: C.purple, weekoff: C.dim, upcoming: '#2a2a2a',
 }
 const CAL_LABELS = {
-  good: 'Good (100%+)', average: 'Average (70-99%)', poor: 'Poor (<70%)', leave: 'Leave', weekoff: 'Week Off',
+  worked: 'Worked', leave: 'Leave', weekoff: 'Week Off', upcoming: 'Upcoming',
 }
 
 export default function EmpDashboardTab({ summary, range, setRange, loading, onGoToTab, breakStatus }) {
@@ -21,6 +21,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
     performanceScore, performanceTier, clientsAssigned, vehiclesCovered,
     updatesCompleted, updatesMissed, footageTaken, footagePending,
     followupsClosed, followupsPending, trend, calendar, topClients, recentActivity,
+    today = {},
   } = summary
 
   const completionPct = (updatesCompleted+updatesMissed)>0 ? Math.round((updatesCompleted/(updatesCompleted+updatesMissed))*100) : 100
@@ -61,7 +62,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
 
         <MiniStatusCard icon="check-circle" label="Attendance" value={summary.attendanceStatus||'—'} sub={summary.loginTime||''} color={summary.attendanceStatus==='Late'?C.amber:C.accent} />
         <MiniStatusCard icon="overview" label="Shift Status" value={breakStatus?.onBreak?'On Break':'Active'} sub={breakStatus?.onBreak?'':`${fmtMinutes(summary.workingMinutes||0)} worked`} color={breakStatus?.onBreak?C.amber:C.accent} />
-        <MiniStatusCard icon="clock" label="Break Status" value={breakStatus?.onBreak?'On Break':'Available'} sub={`${fmtMinutes(breakStatus?.totalMinutesToday||0)} today`} color={breakStatus?.onBreak?C.red:C.accent} />
+        <MiniStatusCard icon="clock" label="Break Time Today" value={fmtMinutes(breakStatus?.totalMinutesToday||0)} sub={breakStatus?.onBreak?'Currently on break':`${breakStatus?.history?.length||0} session(s)`} color={breakStatus?.onBreak?C.red:C.text} />
       </div>
 
       {/* Trend + calendar + notifications */}
@@ -119,19 +120,19 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
         </div>
       </div>
 
-      {/* My Targets */}
+      {/* My Targets — always TODAY's numbers, independent of the trend range above */}
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', marginBottom:'14px' }}>
-        <div style={{ color:C.accent, fontSize:'11px', fontWeight:700, marginBottom:'4px' }}>MY TARGETS</div>
-        <div style={{ color:C.muted, fontSize:'10px', marginBottom:'12px' }}>Based on what's assigned to you this period vs. what's completed</div>
+        <div style={{ color:C.accent, fontSize:'11px', fontWeight:700, marginBottom:'4px' }}>MY TARGETS — TODAY</div>
+        <div style={{ color:C.muted, fontSize:'10px', marginBottom:'12px' }}>What's assigned to you today vs. what's completed so far</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:'10px' }}>
           {[
-            { label:'Clients Assigned', done: clientsAssigned, target: clientsAssigned },
-            { label:'Vehicles Covered', done: vehiclesCovered, target: vehiclesCovered },
-            { label:'CRM Updates', done: updatesCompleted, target: updatesCompleted+updatesMissed },
-            { label:'Footage Completed', done: footageTaken, target: footageTaken+footagePending },
-            { label:'Follow-ups Closed', done: followupsClosed, target: followupsClosed+followupsPending },
+            { label:'Clients Assigned', done: today.clientsCompleted, target: today.clientsAssigned },
+            { label:'Vehicles Covered', done: today.vehiclesCompleted, target: today.vehiclesAssigned },
+            { label:'CRM Updates', done: today.updatesCompleted, target: today.updatesAssigned },
+            { label:'Footage Completed', done: today.footageCompleted, target: today.footageAssigned },
+            { label:'Follow-ups Closed', done: today.followupsCompleted, target: today.followupsAssigned },
           ].map(t => {
-            const pct = t.target>0 ? Math.round((t.done/t.target)*100) : 100
+            const pct = t.target>0 ? Math.round((t.done/t.target)*100) : (t.done>0 ? 100 : 0)
             return (
               <div key={t.label} style={{ background:C.s2, borderRadius:'10px', padding:'12px' }}>
                 <div style={{ color:C.text2, fontSize:'10.5px', marginBottom:'6px' }}>{t.label}</div>
