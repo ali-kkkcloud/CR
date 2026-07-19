@@ -48,6 +48,7 @@ export default async function handler(req, res) {
           misalignVehicles: r[6] || '',
           alertCount: r[7] || '',
           fatigue: r[8] || '',
+          fatigueCount: r[9] || '',
         }
       })
 
@@ -132,6 +133,10 @@ export default async function handler(req, res) {
         filled:    !c.redistributedAway && !!(hourData[c.client]?.filled),
         status:    hourData[c.client]?.status || '',
         updatedAt: hourData[c.client]?.updatedAt || '',
+        misalignVehicles: hourData[c.client]?.misalignVehicles || '',
+        alertCount: hourData[c.client]?.alertCount || '',
+        fatigue: hourData[c.client]?.fatigue || '',
+        fatigueCount: hourData[c.client]?.fatigueCount || '',
       }))
 
       const realClients = clientsWithStatus.filter(c => !c.redistributedAway)
