@@ -74,8 +74,8 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
 
   function exportPerformance() {
     const rows = [
-      ['Employee','Days Present','Days Absent','Updates','Clients Touched','Misaligns','Alerts','Footage Pending','Footage Completed','Score'],
-      ...list.map(e => [e.name, e.daysPresent, e.daysAbsent, e.rangeUpdatesCount, e.rangeClientsCount, e.rangeMisaligns, e.rangeAlerts, e.footagePending, e.footageCompletedInRange, computeScore(e)]),
+      ['Employee','Days Present','Days Absent','Updates Done','Pending','Clients Touched','Misaligns','Alerts','Footage Pending','Footage Completed','Score'],
+      ...list.map(e => [e.name, e.daysPresent, e.daysAbsent, e.rangeUpdatesCount, e.rangePendingCount, e.rangeClientsCount, e.rangeMisaligns, e.rangeAlerts, e.footagePending, e.footageCompletedInRange, computeScore(e)]),
     ]
     downloadCSV(rows, `Employee_Performance_${fromDate}_to_${toDate}.csv`)
   }
@@ -159,7 +159,8 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
 
             <div style={{ display:'flex', gap:'20px', flexWrap:'wrap', marginBottom:'16px', paddingBottom:'14px', borderBottom:`1px solid ${C.border}` }}>
               <MiniStat label="CLIENTS TOUCHED" val={selected.rangeClientsCount} />
-              <MiniStat label="UPDATES" val={selected.rangeUpdatesCount} />
+              <MiniStat label="UPDATES DONE" val={selected.rangeUpdatesCount} />
+              <MiniStat label="PENDING" val={selected.rangePendingCount} warn={selected.rangePendingCount>0} />
               <MiniStat label="MISALIGNS" val={selected.rangeMisaligns} warn={selected.rangeMisaligns>0} />
               <MiniStat label="ALERTS" val={selected.rangeAlerts} warn={selected.rangeAlerts>0} />
               <MiniStat label="FOOTAGE PENDING" val={selected.footagePending} warn={selected.footagePending>0} />
