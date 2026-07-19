@@ -16,8 +16,16 @@ function ddmmyyyy(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
 }
 
+// Returns a Date object representing "now" as IST wall-clock time (so
+// getDate()/getMonth()/getHours() etc. reflect IST, not the server's own
+// timezone — Vercel's serverless functions run in UTC, which silently
+// shifted date boundaries versus todayStr()'s explicit Asia/Kolkata calc).
+function nowISTDate() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+}
+
 function rangeDates(range) {
-  const today = new Date()
+  const today = nowISTDate()
   let days
   if (range === 'today') days = 1
   else if (range === 'week') days = 7
@@ -142,8 +150,14 @@ export default async function handler(req, res) {
       leavesByDate[r[2]].push(r)
     })
 
-    // ── Monthly calendar (always current calendar month, independent of `range`) ──
-    const now = new Date()
+    // ── Monthly calendar — Week Off / Leave / Worked / Upcoming ONLY.
+    // No performance grading here (that lives in Updates Trend / Performance
+    // Score) — this calendar is purely an attendance-style view. Week Off is
+    // inferred as "no clients were assigned that day" (only knowable for
+    // past dates — there's no recurring weekly-off schedule stored per
+    // employee, so future Week Offs can't be predicted, only future Leaves
+    // that an admin has already marked in advance).
+    const now = nowISTDate()
     const calMonthDates = []
     for (let d=1; d<=31; d++) {
       const dt = new Date(now.getFullYear(), now.getMonth(), d)
@@ -158,13 +172,10 @@ export default async function handler(req, res) {
       const total = dayRows.length
       const completed = dayRows.filter(r => (r[5]||'').toString().trim()).length
       let status
-      if (isFuture) status = 'upcoming'
-      else if (onLeave) status = 'leave'
+      if (onLeave) status = 'leave'               // leave can be marked in advance, so check before "future"
+      else if (isFuture) status = 'upcoming'
       else if (total === 0) status = 'weekoff'
-      else {
-        const pct = (completed/total)*100
-        status = pct >= 100 ? 'good' : pct >= 70 ? 'average' : 'poor'
-      }
+      else status = 'worked'
       return { date: ds, day: dt.getDate(), status, completed, total }
     })
 
@@ -215,6 +226,33 @@ export default async function handler(req, res) {
     )))
     const tier = performanceScore>=95?'Elite':performanceScore>=85?'Excellent':performanceScore>=70?'Good':performanceScore>=50?'Needs Improvement':'Critical'
 
+    // ── TODAY's real assigned-vs-completed, independent of `range` ──
+    // (My Targets is meant to be a daily target, per the spec — it must not
+    // change when the person switches the Weekly/Monthly/Yearly trend filter.)
+    const myUpdatesToday = updateRows.slice(1).filter(r => r[2]===user.name && r[0]===today)
+    const todayCompleted = myUpdatesToday.filter(r => (r[5]||'').toString().trim())
+    const todayClientSet = new Set(myUpdatesToday.map(r => r[3]))
+    const todayCompletedClientSet = new Set(todayCompleted.map(r => r[3]))
+    let todayVehicles = 0, todayVehiclesDone = 0
+    todayClientSet.forEach(c => { todayVehicles += vehicleMap[(c||'').toLowerCase()]?.vehicleCount || 0 })
+    todayCompletedClientSet.forEach(c => { todayVehiclesDone += vehicleMap[(c||'').toLowerCase()]?.vehicleCount || 0 })
+    const todayFootage = footageRows.slice(1).filter(r => {
+      const sub = (r[COL.SUB_REQUEST] || '').toString().toLowerCase()
+      const by  = (r[COL.RAISED_BY]   || '').toString().trim().toLowerCase()
+      return sub.includes('customer request for video') && by === user.name.toLowerCase() && (r[COL.RAISED_AT]||'').includes(today)
+    })
+    const todayFootageDone = todayFootage.filter(footageResolved).length
+    const todayFollowups = myFollowups.filter(r => r[0] === today)
+    const todayFollowupsClosed = todayFollowups.filter(r => (r[7]||'').toString().toLowerCase().startsWith('closed')).length
+
+    const todayTargets = {
+      clientsAssigned: todayClientSet.size, clientsCompleted: todayCompletedClientSet.size,
+      vehiclesAssigned: todayVehicles, vehiclesCompleted: todayVehiclesDone,
+      updatesAssigned: myUpdatesToday.length, updatesCompleted: todayCompleted.length,
+      footageAssigned: todayFootage.length, footageCompleted: todayFootageDone,
+      followupsAssigned: todayFollowups.length, followupsCompleted: todayFollowupsClosed,
+    }
+
     return res.status(200).json({
       range,
       performanceScore, performanceTier: tier,
@@ -229,6 +267,7 @@ export default async function handler(req, res) {
       calendar,
       topClients,
       recentActivity,
+      today: todayTargets,
     })
   } catch (err) {
     console.error('Dashboard summary error:', err)
