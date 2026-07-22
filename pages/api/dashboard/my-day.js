@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate
+  readSheet, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import { ALL_EMPLOYEES, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT } from '../../../lib/schedule'
 
@@ -12,24 +12,30 @@ export default async function handler(req, res) {
   try {
     const date = (req.query.date || todayStr()).toString()
 
-    const [updateRows, redistRows, vehicleMap, leaveMap] = await Promise.all([
+    const [updateRows, redistRows, vehicleMap, leaveMap, overridesMap] = await Promise.all([
       readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
       readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`),
       fetchClientVehicleCounts(),
       getLeaveMapForDate(date),
+      getShiftOverridesForDate(date),
     ])
 
     // Find this employee's scheduled hours
     const emp = ALL_EMPLOYEES.find(e => e.name === user.name)
     if (!emp) return res.status(200).json({ date, timeline: [], totalClients:0, totalCompleted:0, totalMissed:0 })
 
+    // Today's effective window — Early Start / OT overrides take priority
+    // over the static ALL_EMPLOYEES schedule when present.
+    const myOverride = overridesMap[user.name]
+    const effectiveEmp = myOverride ? { ...emp, start: myOverride.start, end: myOverride.end } : emp
+
     // Build all hours this employee is scheduled for
     const scheduledHours = []
     for (let h = 0; h < 24; h++) {
-      if (emp.isNight) {
-        if (h >= emp.start || h < emp.end) scheduledHours.push(h)
+      if (effectiveEmp.isNight) {
+        if (h >= effectiveEmp.start || h < effectiveEmp.end) scheduledHours.push(h)
       } else {
-        if (h >= emp.start && h < emp.end) scheduledHours.push(h)
+        if (h >= effectiveEmp.start && h < effectiveEmp.end) scheduledHours.push(h)
       }
     }
 
@@ -90,7 +96,7 @@ export default async function handler(req, res) {
       }
 
       // Get scheduled employees for this hour (with leave map)
-      const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap)
+      const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
       const scheduledNames = scheduledEmps.map(e => e.name)
 
       // Get locked assignments for this hour from CRM_Updates
