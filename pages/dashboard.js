@@ -6,6 +6,7 @@ import BreakOverlay from '../components/BreakOverlay'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C } from '../components/Widgets'
+import { computeEarlyStart } from '../lib/schedule'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
 import MyDayTab from '../components/tabs/MyDayTab'
 import MyClientsTab from '../components/tabs/MyClientsTab'
@@ -53,6 +54,11 @@ export default function Dashboard() {
 
   const [breakStatus, setBreakStatus] = useState({ onBreak:false, startTime:null, history:[], totalMinutesToday:0 })
   const [breakActionLoading, setBreakActionLoading] = useState(false)
+
+  const [earlyStartPreview, setEarlyStartPreview] = useState(null) // { start, end, hoursShifted } | null
+  const [startingShift, setStartingShift] = useState(false)
+  const [showOTConfirm, setShowOTConfirm] = useState(false)
+  const [otLoading, setOtLoading] = useState(false)
 
   const hourRef = useRef(currentHour)
   const autoRef = useRef(null)
@@ -121,7 +127,7 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => {
-    if (shiftStatus !== 'active') return
+    if (!user) return
     loadClients()
     loadFootage()
     loadMyDay()
@@ -135,18 +141,64 @@ export default function Dashboard() {
       loadSummary(summaryRangeRef.current)
     }, 30000)
     return () => clearInterval(autoRef.current)
-  }, [shiftStatus])
+  }, [user])
 
   useEffect(() => {
-    if (shiftStatus === 'active') loadSummary(summaryRange)
+    if (user) loadSummary(summaryRange)
   }, [summaryRange])
 
-  async function handleStartShift() {
-    const res  = await fetch('/api/shift/start', { method: 'POST' })
-    const data = await res.json()
-    if (data.success) {
-      setShiftStatus('active')
-      setStartTime(data.startTime)
+  function handleStartShiftClick() {
+    if (startingShift) return
+    const empSchedule = summary && summary.scheduledStart != null
+      ? { start: summary.scheduledStart, end: summary.scheduledEnd, isNight: summary.isNight }
+      : null
+    if (empSchedule) {
+      const preview = computeEarlyStart(empSchedule, new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })))
+      if (preview) { setEarlyStartPreview(preview); return }
+    }
+    doStartShift(false)
+  }
+
+  async function doStartShift(confirmEarly) {
+    setStartingShift(true)
+    try {
+      const res  = await fetch('/api/shift/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmEarlyStart: confirmEarly }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setShiftStatus('active')
+        setStartTime(data.startTime)
+        setEarlyStartPreview(null)
+        loadClients(); loadMyDay(); loadSummary(summaryRangeRef.current)
+      } else {
+        alert(data.error || 'Could not start shift. Please try again.')
+      }
+    } catch (err) {
+      console.error('Start shift failed:', err)
+      alert('Could not start shift — check your connection and try again.')
+    } finally {
+      setStartingShift(false)
+    }
+  }
+
+  async function confirmOT() {
+    setOtLoading(true)
+    try {
+      const res  = await fetch('/api/shift/ot', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        setShowOTConfirm(false)
+        loadSummary(summaryRangeRef.current); loadMyDay()
+      } else {
+        alert(data.error || 'Could not apply overtime.')
+      }
+    } catch (err) {
+      console.error('OT failed:', err)
+      alert('Could not apply overtime — check your connection and try again.')
+    } finally {
+      setOtLoading(false)
     }
   }
 
@@ -281,30 +333,10 @@ export default function Dashboard() {
     a.href = url; a.download = `CRM_Report_${report.employee}_${report.date}.csv`; a.click()
   }
 
-  if (shiftStatus === 'loading') return (
+  if (!user) return (
     <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}>
       <div className="spinner"></div>
     </div>
-  )
-
-  // ── NOT STARTED ──
-  if (shiftStatus === 'not_started') return (
-    <>
-      <Head><title>Cautio CRM — Dashboard</title></Head>
-      <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
-        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'16px',padding:'3rem 2rem',maxWidth:'420px',width:'100%',textAlign:'center'}}>
-          <img src="/cautio_shield.webp" alt="Cautio" style={{width:'56px',height:'56px',objectFit:'contain',margin:'0 auto 1.5rem',display:'block'}} onError={e=>e.target.style.display='none'}/>
-          <h2 style={{color:C.text,fontSize:'22px',fontWeight:'700',marginBottom:'8px'}}>
-            Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, {user?.name} 👋
-          </h2>
-          <p style={{color:C.muted,fontSize:'14px',marginBottom:'2rem'}}>Click Start Shift to begin. Clients will auto-load based on current time.</p>
-          <div style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'8px',padding:'10px 16px',marginBottom:'1.5rem',fontSize:'13px'}}>
-            <span style={{color:C.accent,fontWeight:'600'}}>Current slot:</span> <span style={{color:C.text,marginLeft:'8px'}}>{hourLabel(currentHour)}</span>
-          </div>
-          <button onClick={handleStartShift} style={{width:'100%',background:C.accent,border:'none',borderRadius:'10px',color:'#06120a',fontWeight:'700',fontSize:'16px',padding:'14px',cursor:'pointer'}}>▶ Start Shift</button>
-        </div>
-      </div>
-    </>
   )
 
   // ── END SHIFT FOOTAGE FORWARD SCREEN ──
@@ -403,6 +435,8 @@ export default function Dashboard() {
     help: 'Help & Support', settings: 'Settings',
   }[activeTab]
 
+  const isActive = shiftStatus === 'active'
+
   return (
     <>
       <Head><title>Cautio CRM — {tabTitle}</title></Head>
@@ -412,9 +446,25 @@ export default function Dashboard() {
           counts={{ footage: footage.pending.length, followup: footage.followups.length }}
           shiftTime={fmtShift(summary?.shiftStart, summary?.shiftEnd)}
           loginTime={startTime}
+          onlineStatus={isActive ? 'Online' : 'Offline'}
         />
 
         <div style={{flex:1, minWidth:0}}>
+          {/* Not-active banner */}
+          {!isActive && (
+            <div style={{ display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', background:C.amberBg||'#1a1200', borderBottom:`1px solid ${C.amber}33`, padding:'12px 24px' }}>
+              <Icon name="clock" size={16} color={C.amber} />
+              <span style={{ color:C.amber, fontSize:'12.5px', fontWeight:600, flex:1 }}>
+                {shiftStatus==='ended' ? "Your shift has ended for today — you're viewing everything in read-only mode." : "Your shift hasn't started yet — you're viewing today's assignments in read-only mode."}
+              </span>
+              {shiftStatus==='not_started' && (
+                <button onClick={handleStartShiftClick} disabled={startingShift} style={{ background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'8px 16px', cursor:'pointer' }}>
+                  {startingShift ? 'Starting...' : '▶ Start Shift'}
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Topbar */}
           <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', padding:'20px 24px 14px', flexWrap:'wrap', gap:'12px' }}>
             <div>
@@ -426,7 +476,7 @@ export default function Dashboard() {
             <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
               <TopPill icon="calendar" text={new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})} />
               <TopPill icon="clock" text={`Shift: ${fmtShift(summary?.shiftStart, summary?.shiftEnd)}`} />
-              <TopPill icon="check-circle" text={`In: ${startTime}`} color={summary?.attendanceStatus==='Late'?C.amber:C.accent} />
+              {isActive && <TopPill icon="check-circle" text={`In: ${startTime}`} color={summary?.attendanceStatus==='Late'?C.amber:C.accent} />}
               <button onClick={()=>setActiveTab('notifications')} style={{ position:'relative', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', width:'36px', height:'36px', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' }}>
                 <Icon name="bell" size={16} color={C.text2}/>
                 {(footage.pending.length+footage.followups.length)>0 && (
@@ -435,10 +485,22 @@ export default function Dashboard() {
                   </span>
                 )}
               </button>
-              <button onClick={startBreak} disabled={breakActionLoading} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.red, border:'none', borderRadius:'10px', color:'#fff', fontSize:'13px', fontWeight:800, padding:'9px 18px', cursor:'pointer' }}>
-                <Icon name="clock" size={15} color="#fff"/> BREAK
-              </button>
-              <button onClick={handleEndShiftClick} style={{ background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'10px', color:C.muted, fontSize:'12px', fontWeight:600, padding:'9px 14px', cursor:'pointer' }}>End Shift</button>
+              {isActive && (
+                <>
+                  <button onClick={startBreak} disabled={breakActionLoading} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.red, border:'none', borderRadius:'10px', color:'#fff', fontSize:'13px', fontWeight:800, padding:'9px 18px', cursor:'pointer' }}>
+                    <Icon name="clock" size={15} color="#fff"/> BREAK
+                  </button>
+                  <button
+                    onClick={()=>setShowOTConfirm(true)}
+                    disabled={summary?.usedOT}
+                    title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
+                    style={{ display:'flex', alignItems:'center', gap:'6px', background: summary?.usedOT?C.s2:C.accentDark, border:`1px solid ${summary?.usedOT?C.border2:C.accent}55`, borderRadius:'10px', color: summary?.usedOT?C.muted:C.accent, fontSize:'12.5px', fontWeight:700, padding:'9px 14px', cursor: summary?.usedOT?'not-allowed':'pointer', opacity: summary?.usedOT?0.6:1 }}
+                  >
+                    <Icon name="clock" size={14} color={summary?.usedOT?C.muted:C.accent}/> OT
+                  </button>
+                  <button onClick={handleEndShiftClick} style={{ background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'10px', color:C.muted, fontSize:'12px', fontWeight:600, padding:'9px 14px', cursor:'pointer' }}>End Shift</button>
+                </>
+              )}
               <button onClick={()=>setShowLogout(true)} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'5px 10px 5px 5px', cursor:'pointer' }}>
                 <div style={{ width:'28px', height:'28px', borderRadius:'50%', background:C.accent, color:'#06120a', fontSize:'11px', fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{(user?.name||'U').slice(0,2).toUpperCase()}</div>
                 <div style={{ textAlign:'left' }}>
@@ -459,11 +521,11 @@ export default function Dashboard() {
                 currentHour={currentHour} currentClients={clients} filled={filled} myDay={myDay}
                 saveUpdate={saveUpdate} saving={saving}
                 footagePending={footage.pending.length} followupsPending={footage.followups.length}
-                onGoToTab={setActiveTab}
+                onGoToTab={setActiveTab} canEdit={isActive}
               />
             )}
             {activeTab === 'clients' && (
-              <MyClientsTab clients={clients} filled={filled} saveUpdate={saveUpdate} saving={saving} currentHour={currentHour} />
+              <MyClientsTab clients={clients} filled={filled} saveUpdate={saveUpdate} saving={saving} currentHour={currentHour} canEdit={isActive} />
             )}
             {activeTab === 'footage' && <EmpFootageTab footage={footage} />}
             {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
@@ -481,6 +543,48 @@ export default function Dashboard() {
         </div>
       </div>
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
+
+      {/* Early Start confirmation */}
+      {earlyStartPreview && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={()=>setEarlyStartPreview(null)}>
+          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'1.75rem', width:'380px', maxWidth:'90vw', textAlign:'center' }} onClick={e=>e.stopPropagation()}>
+            <div style={{ width:'52px', height:'52px', borderRadius:'50%', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
+              <Icon name="clock" size={22} color={C.accent} />
+            </div>
+            <div style={{ color:C.text, fontSize:'16px', fontWeight:700, marginBottom:'8px' }}>Start shift early?</div>
+            <div style={{ color:C.muted, fontSize:'12.5px', lineHeight:1.6, marginBottom:'16px' }}>
+              You're early — your shift will be updated to<br/>
+              <strong style={{ color:C.accent, fontSize:'14px' }}>{fmtShift(earlyStartPreview.start, earlyStartPreview.end)}</strong>
+              <br/>instead of {fmtShift(summary?.scheduledStart, summary?.scheduledEnd)}.
+            </div>
+            <div style={{ display:'flex', gap:'10px' }}>
+              <button onClick={()=>{ setEarlyStartPreview(null); doStartShift(false) }} style={{ flex:1, background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'12.5px', fontWeight:600, padding:'11px', cursor:'pointer' }}>Keep Normal Time</button>
+              <button onClick={()=>doStartShift(true)} disabled={startingShift} style={{ flex:1, background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'11px', cursor:'pointer' }}>{startingShift?'Starting...':'Confirm'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OT confirmation */}
+      {showOTConfirm && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={()=>setShowOTConfirm(false)}>
+          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'1.75rem', width:'380px', maxWidth:'90vw', textAlign:'center' }} onClick={e=>e.stopPropagation()}>
+            <div style={{ width:'52px', height:'52px', borderRadius:'50%', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
+              <Icon name="clock" size={22} color={C.accent} />
+            </div>
+            <div style={{ color:C.text, fontSize:'16px', fontWeight:700, marginBottom:'8px' }}>Extend shift by 3 hours?</div>
+            <div style={{ color:C.muted, fontSize:'12.5px', lineHeight:1.6, marginBottom:'16px' }}>
+              Your shift end will move from <strong style={{color:C.text2}}>{summary?.shiftEnd!=null ? fmtShift(summary.shiftStart, summary.shiftEnd).split(' - ')[1] : '—'}</strong> to{' '}
+              <strong style={{ color:C.accent }}>{summary?.shiftEnd!=null ? fmtShift(summary.shiftStart, (summary.shiftEnd+3)%24).split(' - ')[1] : '—'}</strong>.
+              <br/>This can only be used once per day.
+            </div>
+            <div style={{ display:'flex', gap:'10px' }}>
+              <button onClick={()=>setShowOTConfirm(false)} style={{ flex:1, background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'12.5px', fontWeight:600, padding:'11px', cursor:'pointer' }}>Cancel</button>
+              <button onClick={confirmOT} disabled={otLoading} style={{ flex:1, background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'11px', cursor:'pointer' }}>{otLoading?'Applying...':'Confirm OT'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
