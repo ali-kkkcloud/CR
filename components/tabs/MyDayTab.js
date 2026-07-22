@@ -27,7 +27,7 @@ function clientRowToFilled(c) {
   }
 }
 
-export default function MyDayTab({ currentHour, currentClients, filled, myDay, saveUpdate, saving, footagePending, followupsPending, onGoToTab }) {
+export default function MyDayTab({ currentHour, currentClients, filled, myDay, saveUpdate, saving, footagePending, followupsPending, onGoToTab, canEdit = true }) {
   const [editTarget, setEditTarget] = useState(null) // { client, hour }
   const [viewedHour, setViewedHour] = useState(null) // null = not viewing a specific past/future hour
   const [hourOverrides, setHourOverrides] = useState({}) // { [hour]: { [client]: {...} } } — local instant feedback for non-current-hour edits
@@ -189,10 +189,10 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
                     <div key={c.client} style={{ background: done?C.accentDark+'22':C.s2, border:`1px solid ${done?C.accent+'55':C.border2}`, borderRadius:'8px', padding:'10px' }}>
                       <div style={{ color:C.text, fontSize:'11.5px', fontWeight:600 }}>{c.client}</div>
                       <div style={{ color:C.muted, fontSize:'9.5px', marginBottom:'8px' }}>{c.vehicleCount||0} Vehicles{done && c.updatedAt ? ` · ${c.updatedAt}` : ''}</div>
-                      <button onClick={()=>setEditTarget({client:c.client, hour:viewedHour})} style={{
-                        width:'100%', background: done?'transparent':C.accent, border: done?`1px solid ${C.accent}55`:'none',
-                        borderRadius:'6px', color: done?C.accent:'#06120a', fontSize:'10.5px', fontWeight:700, padding:'6px', cursor:'pointer',
-                      }}>{done?'✓ Updated — Edit':'Update Now'}</button>
+                      <button disabled={!canEdit} onClick={()=>canEdit && setEditTarget({client:c.client, hour:viewedHour})} style={{
+                        width:'100%', background: !canEdit?C.s2:done?'transparent':C.accent, border: done?`1px solid ${C.accent}55`:'none',
+                        borderRadius:'6px', color: !canEdit?C.muted:done?C.accent:'#06120a', fontSize:'10.5px', fontWeight:700, padding:'6px', cursor: canEdit?'pointer':'not-allowed',
+                      }}>{!canEdit ? (done?'Updated':'View Only') : done?'✓ Updated — Edit':'Update Now'}</button>
                     </div>
                   )
                 })}
@@ -227,10 +227,10 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
                     </div>
                   </div>
                   {c.isRedistributed && <div style={{ color:C.purple, fontSize:'9.5px', marginBottom:'6px' }}>↩ from {c.fromEmployee}</div>}
-                  <button onClick={()=>setEditTarget({client:c.client, hour:currentHour})} style={{
-                    width:'100%', background: done?'transparent':C.accent, border: done?`1px solid ${C.accent}55`:'none',
-                    borderRadius:'7px', color: done?C.accent:'#06120a', fontSize:'11px', fontWeight:700, padding:'7px', cursor:'pointer',
-                  }}>{done?'✓ Updated — Edit':'Update Now'}</button>
+                  <button disabled={!canEdit} onClick={()=>canEdit && setEditTarget({client:c.client, hour:currentHour})} style={{
+                    width:'100%', background: !canEdit?C.s2:done?'transparent':C.accent, border: done?`1px solid ${C.accent}55`:'none',
+                    borderRadius:'7px', color: !canEdit?C.muted:done?C.accent:'#06120a', fontSize:'11px', fontWeight:700, padding:'7px', cursor: canEdit?'pointer':'not-allowed',
+                  }}>{!canEdit ? (done?'Updated':'View Only') : done?'✓ Updated — Edit':'Update Now'}</button>
                 </div>
               )
             })}
@@ -252,7 +252,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
                 <span style={{ background:C.redBg, color:C.red, fontSize:'9.5px', fontWeight:700, borderRadius:'5px', padding:'2px 7px' }}>PENDING</span>
               </div>
               <div style={{ display:'flex', gap:'8px' }}>
-                <button onClick={()=>setEditTarget({client:currentTaskClient.client, hour:currentHour})} style={{ flex:1, background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12px', fontWeight:700, padding:'10px', cursor:'pointer' }}>Update Now</button>
+                <button disabled={!canEdit} onClick={()=>canEdit && setEditTarget({client:currentTaskClient.client, hour:currentHour})} style={{ flex:1, background: canEdit?C.accent:C.s2, border:'none', borderRadius:'8px', color: canEdit?'#06120a':C.muted, fontSize:'12px', fontWeight:700, padding:'10px', cursor: canEdit?'pointer':'not-allowed' }}>{canEdit?'Update Now':'View Only'}</button>
               </div>
             </>
           )}
@@ -308,7 +308,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
         <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'12px' }}>QUICK ACTIONS</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'10px' }}>
           {[
-            { icon:'progress', label:'Update Client', sub:'Update Now', onClick:()=> currentTaskClient && setEditTarget({client:currentTaskClient.client, hour:currentHour}) },
+            { icon:'progress', label:'Update Client', sub: canEdit?'Update Now':'View Only', onClick:()=> canEdit && currentTaskClient && setEditTarget({client:currentTaskClient.client, hour:currentHour}) },
             { icon:'users', label:'My Clients', sub:'View All', onClick:()=>onGoToTab('clients') },
             { icon:'footage', label:'Footage Requests', sub:'View Requests', onClick:()=>onGoToTab('footage') },
             { icon:'followups', label:'Follow-ups', sub:'View All', onClick:()=>onGoToTab('followup') },
