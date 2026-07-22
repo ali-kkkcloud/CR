@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, appendRow, appendRows, updateRowCells,
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration,
-  fetchClientVehicleCounts, getLeaveMapForDate
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution } from '../../../lib/schedule'
 
@@ -41,7 +41,8 @@ export default async function handler(req, res) {
       .map(r => r[3])
 
     const leaveMap = await getLeaveMapForDate(today)
-    const remainingScheduled = getScheduledEmployeesAtHour(currentHour, leaveMap)
+    const overridesMap = await getShiftOverridesForDate(today)
+    const remainingScheduled = getScheduledEmployeesAtHour(currentHour, leaveMap, overridesMap)
       .map(e => e.name)
       .filter(n => n !== user.name)
     const vehicleMap = await fetchClientVehicleCounts()
