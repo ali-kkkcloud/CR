@@ -3,9 +3,14 @@ import { C } from '../Widgets'
 const STATUS_OPTIONS  = ['', 'Updated', 'No New Misalignment', 'All Vehicles are Offline', 'No Misalignment']
 const FATIGUE_OPTIONS = ['No', 'Yes']
 
-export default function MyClientsTab({ clients, filled, saveUpdate, saving, currentHour }) {
+export default function MyClientsTab({ clients, filled, saveUpdate, saving, currentHour, canEdit = true }) {
   return (
     <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', overflow:'hidden' }}>
+      {!canEdit && (
+        <div style={{ background:C.amberBg, borderBottom:`1px solid ${C.amber}33`, padding:'10px 16px', color:C.amber, fontSize:'11.5px', fontWeight:600 }}>
+          View only — start your shift to make updates.
+        </div>
+      )}
       {clients.length === 0 ? (
         <div style={{ color:C.muted, textAlign:'center', padding:'3rem' }}>No clients assigned for this slot.</div>
       ) : (
@@ -35,22 +40,22 @@ export default function MyClientsTab({ clients, filled, saveUpdate, saving, curr
                   <span style={{ background:C.s2, color:C.text2, borderRadius:'6px', padding:'2px 8px', fontSize:'11px', fontWeight:600 }}>{vehicleCount||0}</span>
                 </div>
                 <div style={{...td.cell,flex:1.2}}>
-                  <select style={sel} value={f.status||''} onChange={e=>saveUpdate(client,'status',e.target.value)}>
+                  <select disabled={!canEdit} style={{...sel, ...(!canEdit?disabledStyle:{})}} value={f.status||''} onChange={e=>saveUpdate(client,'status',e.target.value)}>
                     {STATUS_OPTIONS.map(o=><option key={o} value={o}>{o||'— select —'}</option>)}
                   </select>
                 </div>
                 <div style={{...td.cell,flex:1.4}}>
-                  <input style={inp} placeholder="VH1234, VH5678" value={f.misalignVehicles||''} onChange={e=>saveUpdate(client,'misalignVehicles',e.target.value)}/>
+                  <input disabled={!canEdit} style={{...inp, ...(!canEdit?disabledStyle:{})}} placeholder="VH1234, VH5678" value={f.misalignVehicles||''} onChange={e=>saveUpdate(client,'misalignVehicles',e.target.value)}/>
                 </div>
                 <div style={{...td.cell,flex:0.7}}>
-                  <input style={{...inp,textAlign:'center'}} type="number" min="0" placeholder="0" value={f.alertCount||''} onChange={e=>saveUpdate(client,'alertCount',e.target.value)}/>
+                  <input disabled={!canEdit} style={{...inp,textAlign:'center', ...(!canEdit?disabledStyle:{})}} type="number" min="0" placeholder="0" value={f.alertCount||''} onChange={e=>saveUpdate(client,'alertCount',e.target.value)}/>
                 </div>
                 <div style={{...td.cell,flex:1.1,gap:'4px'}}>
-                  <select style={{...sel,flex:fatigueIsYes?'0 0 55px':'1'}} value={f.fatigue||'No'} onChange={e=>saveUpdate(client,'fatigue',e.target.value)}>
+                  <select disabled={!canEdit} style={{...sel,flex:fatigueIsYes?'0 0 55px':'1', ...(!canEdit?disabledStyle:{})}} value={f.fatigue||'No'} onChange={e=>saveUpdate(client,'fatigue',e.target.value)}>
                     {FATIGUE_OPTIONS.map(o=><option key={o}>{o}</option>)}
                   </select>
                   {fatigueIsYes && (
-                    <input style={{...inp,flex:1,textAlign:'center'}} type="number" min="0" placeholder="Count" value={f.fatigueCount||''} onChange={e=>saveUpdate(client,'fatigueCount',e.target.value)}/>
+                    <input disabled={!canEdit} style={{...inp,flex:1,textAlign:'center', ...(!canEdit?disabledStyle:{})}} type="number" min="0" placeholder="Count" value={f.fatigueCount||''} onChange={e=>saveUpdate(client,'fatigueCount',e.target.value)}/>
                   )}
                 </div>
                 <div style={{...td.cell,flex:1.1}}>
@@ -63,7 +68,7 @@ export default function MyClientsTab({ clients, filled, saveUpdate, saving, curr
                 <div style={{...td.cell,flex:0.5,justifyContent:'center'}}>
                   {saving[key('status')]||saving[key('alertCount')]||saving[key('fatigueCount')]
                     ?<span className="spinner" style={{width:14,height:14,borderWidth:2}}></span>
-                    :<span style={{color:C.accent,fontSize:'16px'}}>✓</span>}
+                    :<span style={{color:canEdit?C.accent:C.dim,fontSize:'16px'}}>✓</span>}
                 </div>
               </div>
             )
@@ -84,3 +89,4 @@ const td = {
 }
 const sel = { width:'100%', background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'7px', color:C.text, fontSize:'11.5px', padding:'7px 8px' }
 const inp = { width:'100%', background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'7px', color:C.text, fontSize:'11.5px', padding:'7px 8px', boxSizing:'border-box' }
+const disabledStyle = { opacity:0.5, cursor:'not-allowed' }
