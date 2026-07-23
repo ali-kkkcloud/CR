@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
-  fetchClientVehicleCounts, parseISTDateTime,
+  fetchClientVehicleCounts, parseISTDateTime, getShiftOverridesForDate,
 } from '../../../lib/sheets'
 import { ALL_EMPLOYEES } from '../../../lib/schedule'
 
@@ -53,6 +53,8 @@ export default async function handler(req, res) {
     const dateStrSet = new Set(dateStrs)
 
     const emp = ALL_EMPLOYEES.find(e => e.name === user.name)
+    const todayOverride = await getShiftOverridesForDate(today)
+    const myOverride = todayOverride[user.name]
 
     const [updateRows, footageRows, followupRows, redistRows, shiftRows, leaveRows, vehicleMap] = await Promise.all([
       readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
@@ -263,7 +265,11 @@ export default async function handler(req, res) {
       followupsClosed, followupsPending,
       trend: { labels: trendLabelsFinal, completed: trendCompleted, missed: trendMissed },
       attendanceStatus, loginTime, workingMinutes,
-      shiftStart: emp?.start, shiftEnd: emp?.end, isNight: emp?.isNight || false,
+      shiftStart: myOverride?.start ?? emp?.start,
+      shiftEnd:   myOverride?.end   ?? emp?.end,
+      scheduledStart: emp?.start, scheduledEnd: emp?.end,
+      usedEarlyStart: !!myOverride?.usedEarlyStart, usedOT: !!myOverride?.usedOT,
+      isNight: emp?.isNight || false,
       calendar,
       topClients,
       recentActivity,
