@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
+import { readSheet, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, getShiftOverridesForDate } from '../../../lib/sheets'
 import { ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -13,12 +13,13 @@ export default async function handler(req, res) {
     const today       = todayStr()
     const currentHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours()
 
-    const [credRows, shiftRows, updateRows, redistRows, footageRows] = await Promise.all([
+    const [credRows, shiftRows, updateRows, redistRows, footageRows, overridesMap] = await Promise.all([
       readSheet(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`),
       readSheet(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`),
       readSheet(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`),
       readSheet(CRM_SHEET_ID,   `${TABS.REDISTRIB}!A:G`),
       readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`),
+      getShiftOverridesForDate(today),
     ])
 
     const weekOffEmps = new Set(
@@ -31,7 +32,9 @@ export default async function handler(req, res) {
 
     const empStatus = ALL_EMPLOYEES.map(emp => {
       const shiftLog   = todayShifts.find(r => r[1] === emp.name)
-      const isActive   = isScheduledAtHour(emp, currentHour)
+      const override   = overridesMap[emp.name]
+      const effective  = override ? { ...emp, start: override.start, end: override.end } : emp
+      const isActive   = isScheduledAtHour(effective, currentHour)
       const isWeekOff  = weekOffEmps.has(emp.name)
       const hasStarted = !!shiftLog?.[3]
       const hasEnded   = shiftLog?.[6] === 'Ended'
