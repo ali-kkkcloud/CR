@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate
+  readSheet, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import {
   ALL_EMPLOYEES, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT
@@ -14,12 +14,13 @@ export default async function handler(req, res) {
   try {
     const date = (req.query.date || todayStr()).toString()
 
-    const [updateRows, shiftRows, leaveMap, redistRows, vehicleMap] = await Promise.all([
+    const [updateRows, shiftRows, leaveMap, redistRows, vehicleMap, overridesMap] = await Promise.all([
       readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
       readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`),
       getLeaveMapForDate(date),
       readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`),
       fetchClientVehicleCounts(),
+      getShiftOverridesForDate(date),
     ])
 
     // Index updates by emp+hour
@@ -58,13 +59,15 @@ export default async function handler(req, res) {
     const empData = ALL_EMPLOYEES.map(emp => {
       const shiftLog = loginMap[emp.name] || null
       const leaves   = leaveMap[emp.name] || []
+      const empOverride = overridesMap[emp.name]
+      const effectiveEmp = empOverride ? { ...emp, start: empOverride.start, end: empOverride.end } : emp
 
-      // All scheduled hours for this employee
+      // All scheduled hours for this employee (Early Start / OT aware)
       const scheduledHours = []
       for (let h = 0; h < 24; h++) {
         let inShift = false
-        if (emp.isNight) inShift = h >= emp.start || h < emp.end
-        else             inShift = h >= emp.start && h < emp.end
+        if (effectiveEmp.isNight) inShift = h >= effectiveEmp.start || h < effectiveEmp.end
+        else                      inShift = h >= effectiveEmp.start && h < effectiveEmp.end
         if (inShift) scheduledHours.push(h)
       }
 
@@ -88,7 +91,7 @@ export default async function handler(req, res) {
         }
 
         // Distribution for this hour using locked assignments
-        const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap)
+        const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
         const scheduledNames = scheduledEmps.map(e => e.name)
         const lockedAssignments = lockedByHour[hour] || {}
 
@@ -140,6 +143,10 @@ export default async function handler(req, res) {
         name:      emp.name,
         shiftStart: emp.start,
         shiftEnd:   emp.end,
+        effectiveStart: effectiveEmp.start,
+        effectiveEnd:   effectiveEmp.end,
+        usedEarlyStart: !!empOverride?.usedEarlyStart,
+        usedOT:         !!empOverride?.usedOT,
         isNight:    emp.isNight,
         loggedIn:   !!shiftLog,
         startTime:  shiftLog?.startTime || '',
