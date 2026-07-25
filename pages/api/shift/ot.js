@@ -40,6 +40,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, newStart: ot.start, newEnd: ot.end })
   } catch (err) {
     console.error('OT error:', err)
-    return res.status(500).json({ error: 'Server error' })
+    return res.status(500).json({ error: `OT failed: ${err.message || 'unknown error'}. If this keeps happening, make sure the 'Shift_Overrides' tab exists in the sheet with the exact columns Date, EmpId, Name, NewStart, NewEnd, UsedEarlyStart, UsedOT, UpdatedAt.` })
   }
 }
