@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, appendRow, appendRows, updateRowCells,
-  CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration,
+  CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution } from '../../../lib/schedule'
@@ -30,6 +30,21 @@ export default async function handler(req, res) {
     const duration = startTimeStr ? calcDuration(today, startTimeStr, today, now) : '—'
     if (shiftRowIndex > 0) {
       await updateRowCells(CRM_SHEET_ID, TABS.SHIFT_LOG, shiftRowIndex, 5, [now, duration, 'Ended'])
+    }
+
+    // ── 1b. Auto-close any lingering Active break (including orphaned ones
+    // from a previous day that were never resumed) — a shift ending should
+    // never leave a break "ongoing" forever. ──
+    const breakRows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`)
+    for (let i = breakRows.length - 1; i >= 1; i--) {
+      const r = breakRows[i]
+      if ((r[0] || '').toString().trim() === user.empId.toString().trim() && r[6] === 'Active') {
+        const isFromToday = r[2] === today
+        const minutes = isFromToday ? calcDurationMinutes(r[2], r[3], today, now) : 0
+        const endTimeToWrite = isFromToday ? now : r[3] // orphaned from a prior day — can't know real end, just close it out
+        await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 4, [endTimeToWrite, minutes, 'Completed'])
+        break // an employee should only ever have one Active break at a time
+      }
     }
 
     // ── 2. Redistribute only THIS HOUR's unfilled clients ──
