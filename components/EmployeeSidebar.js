@@ -20,7 +20,7 @@ export default function EmployeeSidebar({ activeTab, setActiveTab, counts = {}, 
         <div style={s.brandRow}>
           <img src="/cautio_shield.webp" alt="Cautio" style={s.logo} onError={e => (e.target.style.display = 'none')} />
           <div>
-            <div style={s.brandTxt}>cautio</div>
+            <div style={s.brandTxt}>Cautio</div>
             <div style={s.tagline}>Command Center</div>
           </div>
         </div>
@@ -68,8 +68,8 @@ export default function EmployeeSidebar({ activeTab, setActiveTab, counts = {}, 
 const s = {
   wrap: { width: '250px', minWidth: '250px', height: '100vh', position: 'sticky', top: 0, background: C.bg, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '20px 14px', overflowY: 'auto' },
   brandRow: { display: 'flex', alignItems: 'center', gap: '10px', padding: '0 6px 20px 6px' },
-  logo: { width: '28px', height: '28px', objectFit: 'contain' },
-  brandTxt: { color: C.text, fontSize: '18px', fontWeight: '800', letterSpacing: '0.3px', lineHeight: 1 },
+  logo: { width: '36px', height: '36px', objectFit: 'contain' },
+  brandTxt: { color: C.text, fontSize: '20px', fontWeight: '800', letterSpacing: '0.3px', lineHeight: 1 },
   tagline: { color: C.muted, fontSize: '9.5px', marginTop: '3px', letterSpacing: '0.5px' },
   navList: { display: 'flex', flexDirection: 'column', gap: '2px' },
   navBtn: { display: 'flex', alignItems: 'center', gap: '11px', width: '100%', background: 'transparent', border: 'none', borderRadius: '9px', padding: '10px 10px', cursor: 'pointer', textAlign: 'left' },
