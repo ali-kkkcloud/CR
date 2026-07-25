@@ -32,7 +32,7 @@ export default function Sidebar({ activeTab, setActiveTab, counts = {}, vehicles
         <div style={s.brandRow}>
           <img src="/cautio_shield.webp" alt="Cautio" style={s.logo} onError={e => (e.target.style.display = 'none')} />
           <div>
-            <div style={s.brandTxt}>cautio</div>
+            <div style={s.brandTxt}>Cautio</div>
             <div style={s.tagline}>Smarter Journeys. Safer Fleets.</div>
           </div>
         </div>
@@ -93,8 +93,8 @@ export default function Sidebar({ activeTab, setActiveTab, counts = {}, vehicles
 const s = {
   wrap: { width: '260px', minWidth: '260px', height: '100vh', position: 'sticky', top: 0, background: C.bg, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '20px 14px', overflowY: 'auto' },
   brandRow: { display: 'flex', alignItems: 'center', gap: '10px', padding: '0 6px 18px 6px' },
-  logo: { width: '30px', height: '30px', objectFit: 'contain' },
-  brandTxt: { color: C.text, fontSize: '19px', fontWeight: '800', letterSpacing: '0.3px', lineHeight: 1 },
+  logo: { width: '38px', height: '38px', objectFit: 'contain' },
+  brandTxt: { color: C.text, fontSize: '21px', fontWeight: '800', letterSpacing: '0.3px', lineHeight: 1 },
   tagline: { color: C.muted, fontSize: '9.5px', marginTop: '3px' },
   sectionLbl: { color: C.muted, fontSize: '10px', fontWeight: '700', letterSpacing: '1.5px', padding: '0 10px', marginBottom: '8px' },
   navList: { display: 'flex', flexDirection: 'column', gap: '2px' },
