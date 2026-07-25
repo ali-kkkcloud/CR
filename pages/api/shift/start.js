@@ -1,6 +1,6 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
-import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr } from '../../../lib/sheets'
+import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, calcDurationMinutes } from '../../../lib/sheets'
 import { getEmployeeShift, computeEarlyStart } from '../../../lib/schedule'
 
 export default async function handler(req, res) {
@@ -25,6 +25,17 @@ export default async function handler(req, res) {
 
     if (latestRow && latestRow[6] === 'Active') {
       return res.status(200).json({ success: true, alreadyStarted: true, startTime: latestRow[3] })
+    }
+
+    // Safety net: close out any orphaned Active break left over from a
+    // previous day (e.g. shift ended without End Shift being clicked).
+    const breakRows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`)
+    for (let i = breakRows.length - 1; i >= 1; i--) {
+      const r = breakRows[i]
+      if ((r[0] || '').toString().trim() === user.empId.toString().trim() && r[6] === 'Active' && r[2] !== today) {
+        await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 4, [r[3], 0, 'Completed'])
+        break
+      }
     }
 
     // Recompute Early Start server-side (never trust the client) so
@@ -57,6 +68,6 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error('Shift start error:', err)
-    return res.status(500).json({ error: 'Server error' })
+    return res.status(500).json({ error: `Start shift failed: ${err.message || 'unknown error'}` })
   }
 }
