@@ -59,6 +59,7 @@ export default function Dashboard() {
   const [startingShift, setStartingShift] = useState(false)
   const [showOTConfirm, setShowOTConfirm] = useState(false)
   const [otLoading, setOtLoading] = useState(false)
+  const [shiftStartedInfo, setShiftStartedInfo] = useState(null) // { start, end } | null — shown after a normal (non-early) start
 
   const hourRef = useRef(currentHour)
   const autoRef = useRef(null)
@@ -84,6 +85,9 @@ export default function Dashboard() {
       if (statusData.status === 'active') {
         setShiftStatus('active')
         setStartTime(statusData.startTime)
+      } else if (statusData.status === 'ended') {
+        setShiftStatus('ended')
+        setStartTime(statusData.startTime || '')
       } else {
         setShiftStatus('not_started')
       }
@@ -172,6 +176,14 @@ export default function Dashboard() {
         setStartTime(data.startTime)
         setEarlyStartPreview(null)
         loadClients(); loadMyDay(); loadSummary(summaryRangeRef.current)
+        // Normal (non-early) start — the early-start path already showed its
+        // own confirmation before this call, so only pop this up here.
+        if (!confirmEarly) {
+          const empSchedule = summary && summary.scheduledStart != null
+            ? { start: summary.scheduledStart, end: summary.scheduledEnd }
+            : null
+          if (empSchedule) setShiftStartedInfo(empSchedule)
+        }
       } else {
         alert(data.error || 'Could not start shift. Please try again.')
       }
@@ -543,6 +555,23 @@ export default function Dashboard() {
         </div>
       </div>
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
+
+      {/* Shift started (normal, non-early) confirmation */}
+      {shiftStartedInfo && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={()=>setShiftStartedInfo(null)}>
+          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'1.75rem', width:'360px', maxWidth:'90vw', textAlign:'center' }} onClick={e=>e.stopPropagation()}>
+            <div style={{ width:'52px', height:'52px', borderRadius:'50%', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
+              <Icon name="check-circle" size={22} color={C.accent} />
+            </div>
+            <div style={{ color:C.text, fontSize:'16px', fontWeight:700, marginBottom:'8px' }}>Shift started ✓</div>
+            <div style={{ color:C.muted, fontSize:'12.5px', lineHeight:1.6, marginBottom:'18px' }}>
+              Your shift today is<br/>
+              <strong style={{ color:C.accent, fontSize:'14px' }}>{fmtShift(shiftStartedInfo.start, shiftStartedInfo.end)}</strong>
+            </div>
+            <button onClick={()=>setShiftStartedInfo(null)} style={{ width:'100%', background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'11px', cursor:'pointer' }}>Got it</button>
+          </div>
+        </div>
+      )}
 
       {/* Early Start confirmation */}
       {earlyStartPreview && (
