@@ -9,6 +9,18 @@ function hourLabel(h) {
 }
 function hourLabelShort(h) { return h.toString().padStart(2,'0') }
 
+// Builds a readable shift-time string. When the employee used Early Start
+// and/or OT, this shows BOTH the originally scheduled window and the
+// actual (effective) one, so admin can see exactly what changed.
+function shiftLabel(emp) {
+  const sched = `${emp.shiftStart}:00–${emp.shiftEnd}:00`
+  const hasOverride = emp.usedEarlyStart || emp.usedOT
+  if (!hasOverride || emp.effectiveStart == null) return sched
+  const actual = `${emp.effectiveStart}:00–${emp.effectiveEnd}:00`
+  const otTag = emp.usedOT ? ' (+3 OT)' : ''
+  return `Scheduled ${sched} → Actual ${actual}${otTag}`
+}
+
 function statusOf(emp) {
   if (!emp) return { label:'—', color:C.muted }
   const nowOnLeave = emp.hours.some(h => h.isOnLeave)
@@ -306,7 +318,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                     {dayScore(selectedEmp)!=null && <ScoreBadge score={dayScore(selectedEmp)} />}
                   </div>
                   <div style={{ color:C.muted, fontSize:'11px', marginTop:'2px' }}>
-                    {selectedEmp.isNight?'Night':'Day'} shift · {selectedEmp.shiftStart}:00–{selectedEmp.shiftEnd}:00
+                    {selectedEmp.isNight?'Night':'Day'} shift · {shiftLabel(selectedEmp)}
                     {selectedEmp.loggedIn && ` · In ${selectedEmp.startTime}${selectedEmp.endTime?` → Out ${selectedEmp.endTime}`:''}`}
                   </div>
                 </div>
@@ -654,7 +666,7 @@ function EmployeeDrawer({ emp, employees, footageAll, date, matchDateFlexible, o
         <span style={{ background:st.color+'1f', color:st.color, border:`1px solid ${st.color}40`, borderRadius:'20px', padding:'2px 9px', fontSize:'10px', fontWeight:700 }}>{st.label}</span>
         {score!=null && <ScoreBadge score={score} />}
       </div>
-      <div style={{ color:C.muted, fontSize:'11px', marginBottom:'14px' }}>{emp.isNight?'Night':'Day'} shift · {emp.shiftStart}:00–{emp.shiftEnd}:00{emp.loggedIn && ` · In ${emp.startTime}${emp.endTime?` → Out ${emp.endTime}`:''}`}</div>
+      <div style={{ color:C.muted, fontSize:'11px', marginBottom:'14px' }}>{emp.isNight?'Night':'Day'} shift · {shiftLabel(emp)}{emp.loggedIn && ` · In ${emp.startTime}${emp.endTime?` → Out ${emp.endTime}`:''}`}</div>
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'16px' }}>
         <MiniBox label="CLIENTS" val={emp.totalAssigned} />
         <MiniBox label="COMPLETED" val={emp.totalCompleted} color={C.accent} />
