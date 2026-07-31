@@ -1,9 +1,9 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
+  readSheet, appendRow, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate,
 } from '../../../lib/sheets'
-import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, distributeClientsForHour } from '../../../lib/schedule'
+import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, distributeClientsForHour, ALL_EMPLOYEES } from '../../../lib/schedule'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -16,11 +16,36 @@ export default async function handler(req, res) {
     const now   = nowStr()
 
     // ── Leave map + today's Early Start/OT overrides ──
-    const [leaveMap, overridesMap, updateRows] = await Promise.all([
+    const [leaveMap, overridesMap, updateRows, shiftLogRows] = await Promise.all([
       getLeaveMapForDate(today),
       getShiftOverridesForDate(today),
       readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
+      readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`),
     ])
+
+    // ── No-show sweep: anyone who has missed their grace hour entirely
+    // (no Shift_Log row at all today) gets auto-marked "Week Off" from the
+    // hour after their scheduled start onward — this frees their clients
+    // for the normal leave-aware distribution below, without needing admin
+    // to manually mark it. Idempotent (skips anyone already marked). ──
+    const startedToday = new Set(shiftLogRows.slice(1).filter(r => r[2] === today).map(r => r[1]))
+    const newLeaveRows = []
+    ALL_EMPLOYEES.forEach(emp => {
+      if (startedToday.has(emp.name)) return
+      const already = (leaveMap[emp.name] || []).some(l => l.reason === 'Week Off')
+      if (already) return
+      const override = overridesMap[emp.name]
+      const effStart = override ? override.start : emp.start
+      const effEnd   = override ? override.end   : emp.end
+      const hoursSinceStart = emp.isNight ? (hour - effStart + 24) % 24 : hour - effStart
+      if (hoursSinceStart >= 1 && hoursSinceStart < 24) {
+        const fromHour = (effStart + 1) % 24
+        newLeaveRows.push([emp.empId || '', emp.name, today, fromHour, effEnd, 'Week Off', 'System', now])
+        if (!leaveMap[emp.name]) leaveMap[emp.name] = []
+        leaveMap[emp.name].push({ fromHour, toHour: effEnd, reason: 'Week Off' })
+      }
+    })
+    if (newLeaveRows.length) await appendRows(CRM_SHEET_ID, TABS.LEAVES, newLeaveRows)
 
     // ── Scheduled employees for this hour (leave + override aware) ──
     const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
