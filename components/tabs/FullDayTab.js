@@ -23,8 +23,11 @@ function shiftLabel(emp) {
 
 function statusOf(emp) {
   if (!emp) return { label:'—', color:C.muted }
-  const nowOnLeave = emp.hours.some(h => h.isOnLeave)
-  if (nowOnLeave && !emp.loggedIn) return { label:'On Leave', color:C.purple }
+  const leaveHour = emp.hours.find(h => h.isOnLeave)
+  if (leaveHour && !emp.loggedIn) {
+    if (leaveHour.leaveReason === 'Week Off') return { label:'Week Off', color:C.purple }
+    return { label:'On Leave', color:C.purple }
+  }
   if (!emp.loggedIn) return { label:'Not Started', color:C.red }
   if (emp.endTime) return { label:'Shift Ended', color:C.blue }
   return { label:'Working', color:C.accent }
@@ -435,75 +438,41 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
               </div>
             )}
 
-            {/* Employee Timeline — one row per employee, hour pills for their actual scheduled hours */}
+            {/* Employee summary chips — compact, click to open full detail above */}
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'12px' }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'12px' }}>
-                <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700 }}>EMPLOYEE TIMELINE — {filtered.length} employee(s)</div>
-                <div style={{ display:'flex', gap:'14px', flexWrap:'wrap' }}>
-                  {[['✓ Completed',C.accent],['○ Pending',C.red],['L On Leave',C.purple],['↩ Redistributed',C.blue]].map(([l,c])=>(
-                    <div key={l} style={{ display:'flex', alignItems:'center', gap:'5px' }}><span style={{width:8,height:8,borderRadius:'50%',background:c}}></span><span style={{color:C.muted,fontSize:'9px'}}>{l}</span></div>
-                  ))}
-                </div>
-              </div>
-              <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+              <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'12px' }}>EMPLOYEES — {filtered.length}</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
                 {filtered.map(e => {
                   const es = statusOf(e)
                   const isSelected = e.name === selectedEmp.name
+                  const empFootage = [...footageAll.pending, ...footageAll.completed].filter(f => f.raisedBy===e.name && matchDateFlexible(f.raisedAt, date))
+                  const empFootageResolved = empFootage.filter(f => f.resolved).length
+                  const empFootagePending = empFootage.length - empFootageResolved
                   return (
                     <div
                       key={e.name}
                       onClick={()=>setSelectedEmpName(e.name)}
                       style={{
-                        display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', cursor:'pointer',
+                        display:'flex', alignItems:'center', gap:'16px', flexWrap:'wrap', cursor:'pointer',
                         background: isSelected ? '#16321f' : C.s2, border:`1px solid ${isSelected?C.accent+'55':C.border2}`,
-                        borderRadius:'10px', padding:'10px 12px',
+                        borderRadius:'10px', padding:'9px 14px',
                       }}
                     >
                       <span style={{ width:8, height:8, borderRadius:'50%', background:es.color, flexShrink:0 }}></span>
-                      <div style={{ minWidth:'118px' }}>
-                        <div style={{ color:C.text, fontSize:'12px', fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'118px' }}>{e.name}</div>
+                      <div style={{ minWidth:'110px' }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
+                          <span style={{ color:C.text, fontSize:'12.5px', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'110px' }}>{e.name}</span>
+                          {e.usedOT && <span style={{ background:C.accentDark, color:C.accent, fontSize:'8px', fontWeight:800, borderRadius:'4px', padding:'1px 5px' }}>OT</span>}
+                        </div>
                         <div style={{ color:C.muted, fontSize:'9.5px' }}>{es.label}</div>
                       </div>
-
-                      <div style={{ display:'flex', gap:'5px', overflowX:'auto', flex:1, minWidth:'160px', padding:'2px 0' }}>
-                        {e.hours.length===0 ? (
-                          <span style={{ color:C.dim, fontSize:'10px' }}>No scheduled hours</span>
-                        ) : e.hours.map(h => {
-                          const future = playbackOn && h.hour > playHour
-                          let bg = C.dim, label = '·'
-                          if (!future) {
-                            if (h.isOnLeave) { bg = C.purple; label = 'L' }
-                            else if (h.totalClients === 0) { bg = C.dim; label = '·' }
-                            else if (h.clients.some(c=>c.isRedistributed)) { bg = C.blue; label = '↩' }
-                            else if (h.completedClients === h.totalClients) { bg = C.accent; label = '✓' }
-                            else { bg = C.red; label = '○' }
-                          }
-                          return (
-                            <div
-                              key={h.hour}
-                              title={`${hourLabel(h.hour)} — ${h.isOnLeave ? 'On leave' : `${h.completedClients}/${h.totalClients} done`}`}
-                              onClick={(ev)=>{
-                                if (future) return
-                                ev.stopPropagation()
-                                setSelectedEmpName(e.name); setSelectedHour(h.hour); setDrawerClient(null)
-                              }}
-                              style={{
-                                width:'26px', height:'26px', borderRadius:'50%', flexShrink:0, opacity: future?0.3:1,
-                                background: bg+'22', border:`1.5px solid ${bg}`, color:bg,
-                                display:'flex', alignItems:'center', justifyContent:'center', fontSize:'11px', fontWeight:700,
-                                cursor: future?'default':'pointer',
-                              }}
-                            >
-                              {label}
-                            </div>
-                          )
-                        })}
-                      </div>
-
-                      <div style={{ display:'flex', gap:'14px', flexShrink:0 }}>
+                      <div style={{ display:'flex', gap:'16px', flexWrap:'wrap', marginLeft:'auto' }}>
                         <MiniStat label="CLIENTS" val={e.totalAssigned} />
                         <MiniStat label="DONE" val={e.totalCompleted} />
                         <MiniStat label="PENDING" val={e.totalMissed} warn={e.totalMissed>0} />
+                        <MiniStat label="FOOTAGE IN" val={empFootage.length} />
+                        <MiniStat label="RESOLVED" val={empFootageResolved} />
+                        <MiniStat label="FOOTAGE PENDING" val={empFootagePending} warn={empFootagePending>0} />
                         <div style={{ textAlign:'center' }}>
                           <div style={{ color: e.totalAssigned>0 && e.totalCompleted===e.totalAssigned ? C.accent : C.text, fontSize:'13px', fontWeight:800 }}>
                             {e.totalAssigned>0?Math.round((e.totalCompleted/e.totalAssigned)*100):0}%
