@@ -1,7 +1,7 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
-import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, calcDurationMinutes } from '../../../lib/sheets'
-import { getEmployeeShift, computeEarlyStart } from '../../../lib/schedule'
+import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDurationMinutes } from '../../../lib/sheets'
+import { getEmployeeShift, computeEarlyStart, computeLateStart } from '../../../lib/schedule'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -46,7 +46,17 @@ export default async function handler(req, res) {
       earlyStart = computeEarlyStart(emp, new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })))
     }
 
-    if (earlyStart) {
+    // Late Start is automatic (not opt-in) — if they missed their grace
+    // hour entirely, their whole shift shifts forward by however many
+    // hours they missed, same mechanism as Early Start but the other way.
+    let lateStart = null
+    if (emp && !earlyStart) {
+      const arrivalHour = nowIST().getHours()
+      lateStart = computeLateStart(emp, arrivalHour)
+    }
+
+    if (earlyStart || lateStart) {
+      const adj = earlyStart || lateStart
       const overrideRows = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_OVERRIDES}!A:H`)
       let overrideRowIndex = -1
       for (let i = overrideRows.length - 1; i >= 1; i--) {
@@ -54,17 +64,31 @@ export default async function handler(req, res) {
       }
       if (overrideRowIndex === -1) {
         await appendRow(CRM_SHEET_ID, TABS.SHIFT_OVERRIDES, [
-          today, user.empId, user.name, earlyStart.start, earlyStart.end, 'Yes', 'No', now,
+          today, user.empId, user.name, adj.start, adj.end, 'Yes', 'No', now,
         ])
       } else {
-        await updateRowCells(CRM_SHEET_ID, TABS.SHIFT_OVERRIDES, overrideRowIndex, 4, [earlyStart.start, earlyStart.end, 'Yes'])
+        await updateRowCells(CRM_SHEET_ID, TABS.SHIFT_OVERRIDES, overrideRowIndex, 4, [adj.start, adj.end, 'Yes'])
+      }
+    }
+
+    if (lateStart) {
+      // Shorten (or fully cancel) the auto "Week Off" leave the no-show
+      // sweep marked while this employee was absent — from their actual
+      // arrival hour onward, they're working again.
+      const leaveRows = await readSheet(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`)
+      for (let i = leaveRows.length - 1; i >= 1; i--) {
+        const r = leaveRows[i]
+        if (r[1] === user.name && r[2] === today && r[5] === 'Week Off') {
+          await updateRowCells(CRM_SHEET_ID, TABS.LEAVES, i + 1, 5, [lateStart.start, 'Week Off (returned)'])
+          break
+        }
       }
     }
 
     // Shift_Log always records the REAL clock-in time (attendance truth) —
     // the effective scheduling window lives separately in Shift_Overrides.
     await appendRow(CRM_SHEET_ID, TABS.SHIFT_LOG, [user.empId, user.name, today, now, '', '', 'Active', ''])
-    return res.status(200).json({ success: true, startTime: now, earlyStart })
+    return res.status(200).json({ success: true, startTime: now, earlyStart, lateStart })
 
   } catch (err) {
     console.error('Shift start error:', err)
