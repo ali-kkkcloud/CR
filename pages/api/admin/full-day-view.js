@@ -62,13 +62,20 @@ export default async function handler(req, res) {
       const empOverride = overridesMap[emp.name]
       const effectiveEmp = empOverride ? { ...emp, start: empOverride.start, end: empOverride.end } : emp
 
-      // All scheduled hours for this employee (Early Start / OT aware)
+      // All scheduled hours for this employee (Early Start / OT aware),
+      // built in CHRONOLOGICAL SHIFT ORDER starting from the actual start
+      // hour — not ascending numeric order, which would put post-midnight
+      // hours (0,1,2...) before the shift's real early hours for anyone
+      // wrapping past midnight. Wraparound is derived from the EFFECTIVE
+      // start/end (not the static isNight flag), since an Early/Late Start
+      // or OT can push a normally-day shift across midnight too.
+      const isWrap = effectiveEmp.end <= effectiveEmp.start
       const scheduledHours = []
-      for (let h = 0; h < 24; h++) {
-        let inShift = false
-        if (effectiveEmp.isNight) inShift = h >= effectiveEmp.start || h < effectiveEmp.end
-        else                      inShift = h >= effectiveEmp.start && h < effectiveEmp.end
-        if (inShift) scheduledHours.push(h)
+      if (isWrap) {
+        for (let h = effectiveEmp.start; h < 24; h++) scheduledHours.push(h)
+        for (let h = 0; h < effectiveEmp.end; h++) scheduledHours.push(h)
+      } else {
+        for (let h = effectiveEmp.start; h < effectiveEmp.end; h++) scheduledHours.push(h)
       }
 
       const hours = scheduledHours.map(hour => {
