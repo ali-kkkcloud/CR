@@ -47,12 +47,24 @@ export default async function handler(req, res) {
 
   try {
     const range = (req.query.range || 'month').toString()
-    const today = todayStr()
+    const calendarToday = todayStr()
     const dates = rangeDates(range)
     const dateStrs = dates.map(ddmmyyyy)
     const dateStrSet = new Set(dateStrs)
 
     const emp = ALL_EMPLOYEES.find(e => e.name === user.name)
+
+    // Resolve MY operating "shift date" — for a night shift that began
+    // yesterday evening and is still running past midnight, everything
+    // (attendance, today's targets, the active override) must stay
+    // attached to the date the shift STARTED, not the new calendar date.
+    const yesterdayDate = new Date(nowISTDate().getTime() - 24*3600000)
+    const yesterday = ddmmyyyy(yesterdayDate)
+    const shiftLogPeek = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
+    const myToday     = shiftLogPeek.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===calendarToday)
+    const myYesterday = shiftLogPeek.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===yesterday)
+    const today = (myToday.length === 0 && myYesterday.some(r => r[6] === 'Active')) ? yesterday : calendarToday
+
     const todayOverride = await getShiftOverridesForDate(today)
     const myOverride = todayOverride[user.name]
 
