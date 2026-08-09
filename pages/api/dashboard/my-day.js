@@ -1,8 +1,18 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
+  readSheet, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import { ALL_EMPLOYEES, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT } from '../../../lib/schedule'
+
+function ddmmyyyyFromDate(d) {
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
+}
+
+// Whether an EFFECTIVE (possibly override-adjusted) start/end window wraps
+// past midnight — derived from the actual hours, NOT the employee's static
+// isNight flag (an Early/Late Start or OT can push a normally-day shift
+// across midnight, or pull a night shift's wrap point earlier).
+function wrapsPastMidnight(start, end) { return end <= start }
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -10,7 +20,21 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
-    const date = (req.query.date || todayStr()).toString()
+    const today = todayStr()
+    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+    const explicitDate = req.query.date ? req.query.date.toString() : null
+
+    // If the caller asked for a specific date (e.g. admin), use it as-is.
+    // Otherwise (the employee's own live "My Day"), resolve MY actual
+    // operating shift date — which stays the day the shift started even
+    // after midnight rolls the calendar date over.
+    let date = explicitDate || today
+    if (!explicitDate) {
+      const shiftLogRows = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
+      const myToday     = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===today)
+      const myYesterday = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===yesterday)
+      if (myToday.length === 0 && myYesterday.some(r => r[6] === 'Active')) date = yesterday
+    }
 
     const [updateRows, redistRows, vehicleMap, leaveMap, overridesMap] = await Promise.all([
       readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
@@ -24,19 +48,22 @@ export default async function handler(req, res) {
     const emp = ALL_EMPLOYEES.find(e => e.name === user.name)
     if (!emp) return res.status(200).json({ date, timeline: [], totalClients:0, totalCompleted:0, totalMissed:0 })
 
-    // Today's effective window — Early Start / OT overrides take priority
-    // over the static ALL_EMPLOYEES schedule when present.
+    // This date's effective window — Early Start / OT overrides take
+    // priority over the static ALL_EMPLOYEES schedule when present.
     const myOverride = overridesMap[user.name]
     const effectiveEmp = myOverride ? { ...emp, start: myOverride.start, end: myOverride.end } : emp
+    const isWrap = wrapsPastMidnight(effectiveEmp.start, effectiveEmp.end)
 
-    // Build all hours this employee is scheduled for
+    // Build all hours this employee is scheduled for, IN CHRONOLOGICAL
+    // SHIFT ORDER (starting from their actual start hour) — not ascending
+    // numeric order, which would put post-midnight hours (0, 1, 2...)
+    // before the shift's real early-evening hours for a wrapping shift.
     const scheduledHours = []
-    for (let h = 0; h < 24; h++) {
-      if (effectiveEmp.isNight) {
-        if (h >= effectiveEmp.start || h < effectiveEmp.end) scheduledHours.push(h)
-      } else {
-        if (h >= effectiveEmp.start && h < effectiveEmp.end) scheduledHours.push(h)
-      }
+    if (isWrap) {
+      for (let h = effectiveEmp.start; h < 24; h++) scheduledHours.push(h)
+      for (let h = 0; h < effectiveEmp.end; h++) scheduledHours.push(h)
+    } else {
+      for (let h = effectiveEmp.start; h < effectiveEmp.end; h++) scheduledHours.push(h)
     }
 
     // Build CRM_Updates index for this employee+date — keyed by hour+client
