@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
+  readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, getShiftOverridesForDate,
 } from '../../../lib/sheets'
 import { ALL_EMPLOYEES } from '../../../lib/schedule'
@@ -60,7 +60,7 @@ export default async function handler(req, res) {
     // attached to the date the shift STARTED, not the new calendar date.
     const yesterdayDate = new Date(nowISTDate().getTime() - 24*3600000)
     const yesterday = ddmmyyyy(yesterdayDate)
-    const shiftLogPeek = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
+    const shiftLogPeek = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
     const myToday     = shiftLogPeek.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===calendarToday)
     const myYesterday = shiftLogPeek.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===yesterday)
     const today = (myToday.length === 0 && myYesterday.some(r => r[6] === 'Active')) ? yesterday : calendarToday
@@ -69,12 +69,12 @@ export default async function handler(req, res) {
     const myOverride = todayOverride[user.name]
 
     const [updateRows, footageRows, followupRows, redistRows, shiftRows, leaveRows, vehicleMap] = await Promise.all([
-      readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
-      readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`),
-      readSheet(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`),
-      readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`),
-      readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`),
-      readSheet(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 15000),
+      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 30000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`, 30000),
       fetchClientVehicleCounts(),
     ])
 
