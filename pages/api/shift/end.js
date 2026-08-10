@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, appendRow, appendRows, updateRowCells,
-  CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes,
+  CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution } from '../../../lib/schedule'
@@ -91,7 +91,19 @@ export default async function handler(req, res) {
       const by  = (r[7] || '').toString().trim().toLowerCase()
       return sub.includes('customer request for video') && by === user.name.toLowerCase()
     })
-    const pendingFootage = myFootage.filter(r => (r[17] || '').toString().toLowerCase() !== 'yes')
+    const pendingFootageAll = myFootage.filter(r => (r[17] || '').toString().toLowerCase() !== 'yes')
+    // Only surface what was raised during THIS shift (today, at/after
+    // clock-in) — the hand-off prompt at shift end is about work created
+    // during the shift, not every historical pending request ever raised.
+    const shiftStartDate = parseISTDateTime(today, startTimeStr)
+    const pendingFootage = pendingFootageAll.filter(r => {
+      const raisedRaw = (r[4] || '').toString()
+      if (!raisedRaw.includes(today)) return false
+      if (!shiftStartDate) return true
+      const timePart = raisedRaw.split(',').map(s => s.trim()).slice(1).join(' ') || raisedRaw
+      const raisedAt = parseISTDateTime(today, timePart)
+      return !raisedAt || raisedAt >= shiftStartDate
+    })
     const footageCompletedToday = myFootage.filter(r => {
       return (r[17] || '').toString().toLowerCase() === 'yes' && (r[18] || '').includes(today)
     }).length
