@@ -64,6 +64,12 @@ export default function Dashboard() {
   const hourRef = useRef(currentHour)
   const autoRef = useRef(null)
   const summaryRefreshRef = useRef(null)
+  // Tracks whether we've ever successfully loaded a summary, so a transient
+  // server error doesn't wipe out a dashboard that's already showing data.
+  const summaryRef = useRef(null)
+  // { clientName: lastEditedTimestamp } — protects in-progress edits from
+  // being overwritten by the 30s background refresh.
+  const editingRef = useRef({})
 
   useEffect(() => {
     function tick() {
@@ -96,38 +102,70 @@ export default function Dashboard() {
   }, [])
 
   const loadClients = useCallback(async () => {
-    const res  = await fetch('/api/clients/current')
-    const data = await res.json()
-    if (data.clients) setClients(data.clients)
-    if (data.filled)  setFilled(data.filled)
-    setCurrentHour(data.hour)
-    hourRef.current = data.hour
+    try {
+      const res  = await fetch('/api/clients/current')
+      const data = await res.json()
+      if (!res.ok || data.error) return   // keep last good state, retry on next poll
+      if (data.clients) setClients(data.clients)
+      if (data.filled) {
+        // Merge, don't clobber: a background refresh must never wipe out
+        // what the employee is part-way through typing. Any client they've
+        // touched in the last 2 minutes keeps its local value.
+        setFilled(prev => {
+          const merged = { ...data.filled }
+          const cutoff = Date.now() - 120000
+          Object.entries(editingRef.current).forEach(([client, at]) => {
+            if (at > cutoff && prev[client]) merged[client] = { ...merged[client], ...prev[client] }
+          })
+          return merged
+        })
+      }
+      if (typeof data.hour === 'number') { setCurrentHour(data.hour); hourRef.current = data.hour }
+    } catch (e) { console.error('loadClients failed:', e) }
   }, [])
 
   const loadFootage = useCallback(async () => {
-    const res  = await fetch('/api/footage/list')
-    const data = await res.json()
-    setFootage({ pending: data.pending || [], completed: data.completed || [], followups: data.followups || [] })
+    try {
+      const res  = await fetch('/api/footage/list')
+      const data = await res.json()
+      if (!res.ok || data.error) return
+      setFootage({ pending: data.pending || [], completed: data.completed || [], followups: data.followups || [] })
+    } catch (e) { console.error('loadFootage failed:', e) }
   }, [])
 
   const loadMyDay = useCallback(async () => {
-    const res  = await fetch('/api/dashboard/my-day')
-    const data = await res.json()
-    setMyDay(data)
+    try {
+      const res  = await fetch('/api/dashboard/my-day')
+      const data = await res.json()
+      if (!res.ok || data.error || !Array.isArray(data.timeline)) return
+      setMyDay(data)
+    } catch (e) { console.error('loadMyDay failed:', e) }
   }, [])
 
   const loadSummary = useCallback(async (range) => {
     setSummaryLoading(true)
-    const res  = await fetch(`/api/dashboard/summary?range=${range}`)
-    const data = await res.json()
-    setSummary(data)
-    setSummaryLoading(false)
+    try {
+      const res  = await fetch(`/api/dashboard/summary?range=${range}`)
+      const data = await res.json()
+      // Only accept a well-formed payload; a 500 body would otherwise be
+      // stored as "summary" and crash the dashboard on first render.
+      if (res.ok && !data.error && data.trend) { setSummary(data); summaryRef.current = data }
+      else if (!summaryRef.current) setSummary({ error: data.error || 'Server is busy, retrying…' })
+    } catch (e) {
+      console.error('loadSummary failed:', e)
+      if (!summaryRef.current) setSummary({ error: 'Could not reach the server, retrying…' })
+    } finally {
+      setSummaryLoading(false)
+    }
   }, [])
 
   const loadBreakStatus = useCallback(async () => {
-    const res  = await fetch('/api/break/status')
-    const data = await res.json()
-    setBreakStatus(data)
+    try {
+      const res  = await fetch('/api/break/status')
+      const data = await res.json()
+      if (!res.ok || data.error) return
+      setBreakStatus(data)
+    } catch (e) { console.error('loadBreakStatus failed:', e) }
   }, [])
 
   useEffect(() => {
@@ -260,6 +298,7 @@ export default function Dashboard() {
 
   async function saveUpdate(client, field, value, hourOverride) {
     const key = `${client}_${field}`
+    editingRef.current[client] = Date.now()   // protect from background refresh
     const targetHour = hourOverride ?? currentHour
     const isCurrentHourEdit = targetHour === currentHour
     setSaving(p => ({...p, [key]: true}))
