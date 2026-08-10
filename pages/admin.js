@@ -78,18 +78,27 @@ export default function Admin() {
   }, [])
 
   const loadData = useCallback(async () => {
-    const [ov, ft] = await Promise.all([
-      fetch('/api/admin/overview').then(r => r.json()),
-      fetch('/api/footage/list').then(r => r.json()),
-    ])
-    if (ov.employees) setOverview(ov)
-    setFootage({ pending: ft.pending || [], completed: ft.completed || [], followups: ft.followups || [] })
+    // Every loader below keeps the last good state on failure rather than
+    // storing an error payload — a 500 body written into state would be
+    // read as real data downstream and crash the page on render.
+    try {
+      const [ov, ft] = await Promise.all([
+        fetch('/api/admin/overview').then(r => r.json()).catch(() => ({})),
+        fetch('/api/footage/list').then(r => r.json()).catch(() => ({})),
+      ])
+      if (ov && ov.employees) setOverview(ov)
+      if (ft && Array.isArray(ft.pending)) {
+        setFootage({ pending: ft.pending, completed: ft.completed || [], followups: ft.followups || [] })
+      }
+    } catch (e) { console.error('loadData failed:', e) }
   }, [])
 
   const loadBreaks = useCallback(async (range, from, to) => {
     const qs = range === 'today' ? '' : `?from=${from}&to=${to}`
-    const data = await fetch(`/api/admin/breaks${qs}`).then(r => r.json())
-    if (data.employees) setBreaks(data)
+    try {
+      const data = await fetch(`/api/admin/breaks${qs}`).then(r => r.json())
+      if (data && data.employees) setBreaks(data)
+    } catch (e) { console.error('loadBreaks failed:', e) }
   }, [])
 
   useEffect(() => {
@@ -99,16 +108,23 @@ export default function Admin() {
   }, [breakRange, breakFrom, breakTo])
 
   const loadProgress = useCallback(async (from, to) => {
-    const data = await fetch(`/api/admin/employee-progress?from=${from}&to=${to}`).then(r => r.json())
-    if (data.progress) setProgress(data)
+    try {
+      const data = await fetch(`/api/admin/employee-progress?from=${from}&to=${to}`).then(r => r.json())
+      if (data && data.progress) setProgress(data)
+    } catch (e) { console.error('loadProgress failed:', e) }
   }, [])
 
   const loadFullDay = useCallback(async (dateISO) => {
     setFullDayLoading(true)
     setFullDayData(null)
     const ddmmyyyy = dateISO.split('-').reverse().join('/')
-    const data = await fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`).then(r => r.json())
-    setFullDayData(data)
+    try {
+      const data = await fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`).then(r => r.json())
+      setFullDayData(data && Array.isArray(data.employees) ? data : { employees: [] })
+    } catch (e) {
+      console.error('loadFullDay failed:', e)
+      setFullDayData({ employees: [] })
+    }
     setFullDayLoading(false)
   }, [])
 
@@ -116,7 +132,11 @@ export default function Admin() {
   // into a single day without disturbing the Full Day View tab's own state).
   const loadDayView = useCallback(async (dateISO) => {
     const ddmmyyyy = dateISO.split('-').reverse().join('/')
-    return fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`).then(r => r.json())
+    // Always resolve to a valid shape — callers index into .employees
+    return fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`)
+      .then(r => r.json())
+      .then(d => (d && Array.isArray(d.employees)) ? d : { employees: [] })
+      .catch(() => ({ employees: [] }))
   }, [])
 
   useEffect(() => {
@@ -356,6 +376,7 @@ export default function Admin() {
           {/* ══════════ OVERVIEW ══════════ */}
           {activeTab === 'overview' && (
             <>
+              <div style={s.sectionLabel}>WORKFORCE &amp; WORKLOAD — TODAY</div>
               <div style={s.kpiGrid}>
                 <KpiCard icon="shield" label="Fleet Health" value={`${fleetHealthPct}%`} sub="Active vs total workforce" />
                 <KpiCard icon="users" label="Active Employees" value={kpis.active} sub={`${activePct}% of total`} progress={activePct} />
@@ -368,21 +389,6 @@ export default function Admin() {
               </div>
 
               <div style={s.row1}>
-                {/* Live Fleet Map — preview placeholder (needs vehicle GPS feed) */}
-                <div style={{...s.card, gridColumn:'span 2', minHeight:'320px'}}>
-                  <div style={s.cardHeadRow}>
-                    <div style={s.cardHead}><span className="live-dot" style={{width:7,height:7}}></span> LIVE FLEET MAP</div>
-                    <span style={s.previewTag}>PREVIEW</span>
-                  </div>
-                  <div style={s.mapArea}>
-                    <MapIllustration />
-                    <div style={s.mapOverlayNote}>
-                      Vehicle GPS feed not connected yet — this panel will light up with live vehicle
-                      locations once the tracking API is wired in.
-                    </div>
-                  </div>
-                </div>
-
                 {/* Employee Status donut */}
                 <div style={s.card}>
                   <div style={s.cardHeadRow}>
@@ -443,6 +449,7 @@ export default function Admin() {
                 </div>
               </div>
 
+              <div style={{...s.sectionLabel, marginTop:'4px'}}>BREAKDOWN</div>
               <div style={s.row2}>
                 {/* Client distribution */}
                 <div style={s.card}>
@@ -865,13 +872,14 @@ const s = {
 
   body: { padding:'8px 24px 32px' },
 
+  sectionLabel: { color:C.muted, fontSize:'10px', fontWeight:700, letterSpacing:'1.2px', marginBottom:'10px' },
   kpiGrid: { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'10px', marginBottom:'16px' },
   kpiCard: { background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'14px' },
   kpiIconWrap: { width:'28px', height:'28px', borderRadius:'8px', background:C.accentSoft, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:'10px' },
   kpiLabel: { color:C.muted, fontSize:'10.5px', marginBottom:'4px' },
   kpiValue: { color:C.text, fontSize:'22px', fontWeight:800, lineHeight:1 },
 
-  row1: { display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:'12px', marginBottom:'14px' },
+  row1: { display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'14px' },
   row2: { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:'12px' },
 
   card: { background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' },
