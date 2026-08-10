@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
+  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import { ALL_EMPLOYEES, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT } from '../../../lib/schedule'
 
@@ -30,15 +30,15 @@ export default async function handler(req, res) {
     // after midnight rolls the calendar date over.
     let date = explicitDate || today
     if (!explicitDate) {
-      const shiftLogRows = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
+      const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
       const myToday     = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===today)
       const myYesterday = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===yesterday)
       if (myToday.length === 0 && myYesterday.some(r => r[6] === 'Active')) date = yesterday
     }
 
     const [updateRows, redistRows, vehicleMap, leaveMap, overridesMap] = await Promise.all([
-      readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
-      readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 8000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 8000),
       fetchClientVehicleCounts(),
       getLeaveMapForDate(date),
       getShiftOverridesForDate(date),
