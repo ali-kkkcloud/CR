@@ -1,9 +1,9 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, appendRow, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
+  readSheet, readSheetCached, appendRow, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate,
 } from '../../../lib/sheets'
-import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, distributeClientsForHour, ALL_EMPLOYEES } from '../../../lib/schedule'
+import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, distributeClientsForHour, ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -36,8 +36,8 @@ export default async function handler(req, res) {
       getLeaveMapForDate(yesterday),
       getShiftOverridesForDate(today),
       getShiftOverridesForDate(yesterday),
-      readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
-      readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 8000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
     ])
 
     // ── Resolve MY operating "shift date" — the date my shift actually
@@ -74,11 +74,20 @@ export default async function handler(req, res) {
       const override = overridesMap[emp.name]
       const effStart = override ? override.start : emp.start
       const effEnd   = override ? override.end   : emp.end
+      const effective = { ...emp, start: effStart, end: effEnd }
+
+      // Only mark a no-show while the shift is ACTUALLY running. Without
+      // this guard a night-shift employee (e.g. 22:00–07:00) gets marked
+      // Week Off at 10:00 the previous morning, because the wraparound
+      // maths reports them as "12 hours late" when their shift hasn't
+      // even started yet.
+      if (!isScheduledAtHour(effective, hour)) return
+
       const isWrap = wrapsPastMidnight(effStart, effEnd)
       const hoursSinceStart = isWrap ? (hour - effStart + 24) % 24 : hour - effStart
-      if (hoursSinceStart >= 1 && hoursSinceStart < 24) {
+      if (hoursSinceStart >= 1) {
         const fromHour = (effStart + 1) % 24
-        newLeaveRows.push([emp.empId || '', emp.name, today, fromHour, effEnd, 'Week Off', 'System', now])
+        newLeaveRows.push([emp.empId || emp.name, emp.name, today, fromHour, effEnd, 'Week Off', 'System', now])
         if (!leaveMap[emp.name]) leaveMap[emp.name] = []
         leaveMap[emp.name].push({ fromHour, toHour: effEnd, reason: 'Week Off' })
       }
@@ -137,12 +146,12 @@ export default async function handler(req, res) {
       if (redistRows.length)      await appendRows(CRM_SHEET_ID, TABS.REDISTRIB, redistRows)
       if (placeholderRows.length) {
         await appendRows(CRM_SHEET_ID, TABS.CRM_UPDATES, placeholderRows)
-        updateRowsFresh = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`)
+        updateRowsFresh = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 8000)
       }
     }
 
     // ── Redistribution_Log — away/to filtering ──
-    const redistRowsAll = await readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`)
+    const redistRowsAll = await readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 8000)
     const awayThisHour = redistRowsAll.slice(1)
       .filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[5]) === hour)
       .map(r => ({ client: r[4], toEmployee: r[3] }))
