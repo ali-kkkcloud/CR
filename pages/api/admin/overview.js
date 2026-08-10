@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, getShiftOverridesForDate } from '../../../lib/sheets'
+import { readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, getShiftOverridesForDate } from '../../../lib/sheets'
 import { ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -14,11 +14,11 @@ export default async function handler(req, res) {
     const currentHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours()
 
     const [credRows, shiftRows, updateRows, redistRows, footageRows, overridesMap] = await Promise.all([
-      readSheet(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`),
-      readSheet(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`),
-      readSheet(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`),
-      readSheet(CRM_SHEET_ID,   `${TABS.REDISTRIB}!A:G`),
-      readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`, 60000),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`, 15000),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.REDISTRIB}!A:G`, 15000),
+      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 30000),
       getShiftOverridesForDate(today),
     ])
 
