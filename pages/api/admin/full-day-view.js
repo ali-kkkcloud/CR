@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
+  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import {
   ALL_EMPLOYEES, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT
@@ -15,10 +15,10 @@ export default async function handler(req, res) {
     const date = (req.query.date || todayStr()).toString()
 
     const [updateRows, shiftRows, leaveMap, redistRows, vehicleMap, overridesMap] = await Promise.all([
-      readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
-      readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 10000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
       getLeaveMapForDate(date),
-      readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`),
+      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 10000),
       fetchClientVehicleCounts(),
       getShiftOverridesForDate(date),
     ])
