@@ -56,11 +56,19 @@ export default async function handler(req, res) {
     // Merge everyone's leave/override maps (today takes priority, filled
     // in by yesterday for anyone not present today) — used for the sweep
     // and for scheduling, since OTHER employees may also be mid-night-shift.
-    const leaveMap = { ...leaveMapYesterday, ...leaveMapToday }
-    const overridesMap = { ...overridesYesterday, ...overridesToday }
-    // My own entry always comes from MY resolved shift date specifically
-    if (myLeaveMap[user.name]) leaveMap[user.name] = myLeaveMap[user.name]
-    if (myOverridesMap[user.name]) overridesMap[user.name] = myOverridesMap[user.name]
+    // Scheduling for the CURRENT calendar day must use today's leave and
+    // override data only. Merging yesterday's in wholesale meant anyone
+    // marked Week Off yesterday stayed excluded today, and their client
+    // list came back empty. Yesterday's maps are consulted solely for the
+    // caller when their own shift began yesterday and is still running.
+    const leaveMap = { ...leaveMapToday }
+    const overridesMap = { ...overridesToday }
+    if (myShiftDate === yesterday) {
+      if (myLeaveMap[user.name]) leaveMap[user.name] = myLeaveMap[user.name]
+      else delete leaveMap[user.name]
+      if (myOverridesMap[user.name]) overridesMap[user.name] = myOverridesMap[user.name]
+      else delete overridesMap[user.name]
+    }
 
     // ── No-show sweep: anyone who has missed their grace hour entirely
     // (no Shift_Log row at all today) gets auto-marked "Week Off" from the
