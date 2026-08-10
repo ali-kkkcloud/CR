@@ -54,7 +54,9 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
 
   const selected = filtered.find(e => e.name === selectedEmpName) || filtered[0] || null
   const liveStatus = selected && isToday ? overviewEmployees?.find(e => e.name === selected.name) : null
-  const selectedDayHours = selected && dayData ? dayData.employees.find(e => e.name === selected.name)?.hours : null
+  const selectedDayHours = selected && dayData && Array.isArray(dayData.employees)
+    ? dayData.employees.find(e => e.name === selected.name)?.hours
+    : null
 
   const kpis = useMemo(() => {
     if (list.length === 0) return null
