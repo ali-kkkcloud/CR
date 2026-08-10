@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import Icon from '../Icons'
-import { C, KpiCard, Donut, LineChart, HBarList, slaBadge, parseSheetDate } from '../Widgets'
+import { C, slaBadge, parseSheetDate } from '../Widgets'
 
 const PAGE_SIZE = 10
 
@@ -70,6 +70,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
   const tableRows = useMemo(() => {
     if (statusChip==='all') return searchScoped
     if (statusChip==='overdue') return searchScoped.filter(i => i.ageHours!=null && i.ageHours>24)
+    if (statusChip==='over72') return searchScoped.filter(i => i.status!=='Completed' && i.ageHours!=null && i.ageHours>72)
     return searchScoped.filter(i => i.status.toLowerCase()===statusChip)
   }, [searchScoped, statusChip])
 
@@ -93,79 +94,13 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     }
   }, [searchScoped])
 
-  // Employee performance — ALL employees appearing in the current scope (scrollable list)
-  const employeePerf = useMemo(() => {
-    const map = {}
-    searchScoped.forEach(i => {
-      const by = i.raisedBy || 'Unknown'
-      if (!map[by]) map[by] = { name:by, total:0, pending:0, resolved:0, resolveTimes:[] }
-      map[by].total++
-      if (i.status==='Completed') { map[by].resolved++; if (i.resolveHours!=null) map[by].resolveTimes.push(i.resolveHours) }
-      else map[by].pending++
-    })
-    return Object.values(map).map(e => ({ ...e, avgResolve: e.resolveTimes.length ? e.resolveTimes.reduce((a,b)=>a+b,0)/e.resolveTimes.length : null }))
-      .sort((a,b)=>b.total-a.total)
-  }, [searchScoped])
+  // How many still-open requests have been sitting more than 72 hours —
+  // surfaced prominently since these are the ones most likely to be forgotten.
+  const pendingOver72h = useMemo(
+    () => searchScoped.filter(i => i.status !== 'Completed' && i.ageHours != null && i.ageHours > 72).length,
+    [searchScoped]
+  )
 
-  // Client health
-  const clientHealth = useMemo(() => {
-    const map = {}
-    searchScoped.forEach(i => {
-      const cl = i.client || 'Unknown'
-      if (!map[cl]) map[cl] = { name:cl, total:0, pending:0, resolved:0 }
-      map[cl].total++
-      if (i.status==='Completed') map[cl].resolved++; else map[cl].pending++
-    })
-    return Object.values(map).map(c => ({ ...c, pendingPct: c.total?Math.round((c.pending/c.total)*100):0 }))
-      .sort((a,b)=>b.total-a.total).slice(0,6)
-  }, [searchScoped])
-
-  // Top vehicles
-  const topVehicles = useMemo(() => {
-    const map = {}
-    searchScoped.forEach(i => { const v=i.vehicle||'Unknown'; map[v]=(map[v]||0)+1 })
-    return Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([label,value])=>({label,value,color:C.blue}))
-  }, [searchScoped])
-
-  // Trend — last 7 days
-  const trend = useMemo(() => {
-    const days = Array.from({length:7},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()-(6-i)); return d })
-    const labels = days.map(d=>d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'}))
-    const raised = days.map(d => searchScoped.filter(i=>i.raisedD && ddmmyyyy(i.raisedD)===ddmmyyyy(d)).length)
-    const resolved = days.map(d => searchScoped.filter(i=>i.resolvedD && ddmmyyyy(i.resolvedD)===ddmmyyyy(d)).length)
-    return { labels, raised, resolved }
-  }, [searchScoped])
-
-  // Recent activity — last 24h, graceful fallback if timestamps don't parse
-  const recentActivity = useMemo(() => {
-    const events = []
-    searchScoped.forEach(i => {
-      if (i.raisedD) events.push({ t:i.raisedD, label:`${i.raisedBy||'Someone'} raised request for ${i.vehicle}`, tag:'Raised', color:C.blue, issueId:i.issueId })
-      if (i.resolvedD) events.push({ t:i.resolvedD, label:`${i.raisedBy||'Someone'} completed request for ${i.vehicle}`, tag:'Completed', color:C.accent, issueId:i.issueId })
-    })
-    footageAll.followups.forEach(f => events.push({ t:null, label:`${f.originalEmployee} forwarded ${f.vehicle} to ${f.forwardedTo}`, tag:'Forwarded', color:C.purple, issueId:f.issueId }))
-    const withTime = events.filter(e=>e.t).sort((a,b)=>b.t-a.t)
-    const last24h = withTime.filter(e => Date.now()-e.t.getTime() < 24*3600000)
-    return (last24h.length ? last24h : withTime).slice(0,8)
-  }, [searchScoped, footageAll.followups])
-
-  const insights = useMemo(() => {
-    const out = []
-    if (clientHealth[0]) out.push(`${clientHealth[0].name} has the highest footage request volume (${clientHealth[0].total} requests) in this view.`)
-    if (employeePerf.length) {
-      const withAvg = employeePerf.filter(e=>e.avgResolve!=null)
-      if (withAvg.length) {
-        const teamAvg = withAvg.reduce((s,e)=>s+e.avgResolve,0)/withAvg.length
-        const slowest = [...withAvg].sort((a,b)=>b.avgResolve-a.avgResolve)[0]
-        if (slowest && teamAvg>0) {
-          const pctSlower = Math.round(((slowest.avgResolve-teamAvg)/teamAvg)*100)
-          if (pctSlower>5) out.push(`${slowest.name}'s avg resolution time is ${pctSlower}% slower than the team average.`)
-        }
-      }
-    }
-    if (kpis.overdue>0) out.push(`${kpis.overdue} request(s) are currently overdue (open more than 24 hours).`)
-    return out
-  }, [clientHealth, employeePerf, kpis])
 
   function exportFiltered() {
     const rows = [
@@ -188,113 +123,50 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
         <button style={outlineBtnStyle} onClick={exportFiltered}><Icon name="download" size={12} color={C.text2}/> Export</button>
       </div>
 
-      {/* KPI strip */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))', gap:'10px', marginBottom:'14px' }}>
-        <KpiCard icon="footage" label="Total Requests" value={kpis.total} />
-        <KpiCard icon="clock" label="Pending" value={kpis.pending} subColor={kpis.pending>0?C.amber:C.muted} />
-        <KpiCard icon="check-circle" label="Completed" value={kpis.completed} />
-        <KpiCard icon="alerts" label="Overdue (>24h)" value={kpis.overdue} subColor={kpis.overdue>0?C.red:C.muted} />
-        <KpiCard icon="clock" label="Avg Resolution" value={fmtHours(kpis.avgResolve)} />
-        <KpiCard icon="clock" label="Oldest Pending" value={fmtHours(kpis.oldestPending)} subColor={kpis.oldestPending>24?C.red:C.muted} />
-        <KpiCard icon="followups" label="Forwarded" value={kpis.forwarded} />
-        <KpiCard icon="check-circle" label="Closed Today" value={kpis.closedToday} />
+      {/* Two headline cards — click either to filter the table below */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'12px' }}>
+        {[
+          { key:'pending',   label:'PENDING REQUESTS',   count:kpis.pending,   color:C.amber,  sub:'Newest first' },
+          { key:'completed', label:'COMPLETED REQUESTS', count:kpis.completed, color:C.accent, sub:`${kpis.closedToday} closed today` },
+        ].map(card => {
+          const active = statusChip === card.key
+          return (
+            <div key={card.key} onClick={()=>{ setStatusChip(active?'all':card.key); setPage(1) }}
+              style={{
+                background: active ? C.accentDark+'33' : C.card,
+                border:`1px solid ${active ? card.color : C.border}`,
+                borderRadius:'14px', padding:'18px 20px', cursor:'pointer',
+              }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
+                <span style={{ color:C.muted, fontSize:'10.5px', fontWeight:700, letterSpacing:'0.5px' }}>{card.label}</span>
+                <Icon name={card.key==='pending'?'clock':'check-circle'} size={16} color={card.color} />
+              </div>
+              <div style={{ color:card.color, fontSize:'32px', fontWeight:800, lineHeight:1 }}>{card.count}</div>
+              <div style={{ color:C.muted, fontSize:'11px', marginTop:'6px' }}>{card.sub}</div>
+              <div style={{ color:C.muted, fontSize:'10px', marginTop:'8px' }}>
+                {active ? '✓ Showing below — click to clear' : 'Click to view full list →'}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
-      {/* Analytics row */}
-      <div style={{ display:'grid', gridTemplateColumns:'1.3fr 1.3fr 1fr', gap:'12px', marginBottom:'12px' }}>
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>EMPLOYEE PERFORMANCE</div>
-          {employeePerf.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No data.</div> : (
-            <div style={{ display:'flex', flexDirection:'column', gap:'7px', maxHeight:'260px', overflowY:'auto' }}>
-              <div style={{ display:'flex', color:C.muted, fontSize:'9px', fontWeight:700, padding:'0 2px', position:'sticky', top:0, background:C.card }}>
-                <span style={{flex:1}}>EMPLOYEE</span><span style={{width:'40px',textAlign:'right'}}>TOT</span><span style={{width:'40px',textAlign:'right'}}>PEND</span><span style={{width:'50px',textAlign:'right'}}>AVG</span>
-              </div>
-              {employeePerf.map(e => (
-                <div key={e.name} style={{ display:'flex', alignItems:'center', fontSize:'11px' }}>
-                  <span style={{ flex:1, color:C.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{e.name}</span>
-                  <span style={{ width:'40px', textAlign:'right', color:C.text2 }}>{e.total}</span>
-                  <span style={{ width:'40px', textAlign:'right', color:e.pending>0?C.amber:C.muted }}>{e.pending}</span>
-                  <span style={{ width:'50px', textAlign:'right', color:C.muted }}>{fmtHours(e.avgResolve)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'6px' }}>REQUEST TREND (LAST 7 DAYS)</div>
-          <div style={{ display:'flex', gap:'12px', marginBottom:'6px' }}>
-            <span style={{ fontSize:'9.5px', color:C.blue }}>● Raised</span>
-            <span style={{ fontSize:'9.5px', color:C.accent }}>● Resolved</span>
-          </div>
-          <LineChart series={[{name:'Raised',color:C.blue,data:trend.raised},{name:'Resolved',color:C.accent,data:trend.resolved}]} labels={trend.labels} height={180} />
-        </div>
-
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>STATUS MATRIX</div>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'center' }}>
-            <Donut segments={[
-              { label:'Pending', value:kpis.pending-kpis.forwarded>0?kpis.pending-kpis.forwarded:0, color:C.amber },
-              { label:'Forwarded', value:kpis.forwarded, color:C.purple },
-              { label:'Completed', value:kpis.completed, color:C.accent },
-            ]} size={110} thickness={15} centerLabel={kpis.total} centerSub="Total" />
-          </div>
-          <div style={{ display:'flex', flexDirection:'column', gap:'5px', marginTop:'10px' }}>
-            {[{l:'Pending',c:C.amber,v:kpis.pending-kpis.forwarded>0?kpis.pending-kpis.forwarded:0},{l:'Forwarded',c:C.purple,v:kpis.forwarded},{l:'Completed',c:C.accent,v:kpis.completed}].map(x=>(
-              <div key={x.l} style={{ display:'flex', alignItems:'center', gap:'6px', fontSize:'10.5px' }}>
-                <span style={{width:7,height:7,borderRadius:'50%',background:x.c}}></span><span style={{color:C.text2,flex:1}}>{x.l}</span><span style={{color:C.text,fontWeight:700}}>{x.v}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Ageing highlight — the requests most likely to have been forgotten */}
+      <div
+        onClick={()=>{ setStatusChip(statusChip==='over72'?'all':'over72'); setPage(1) }}
+        style={{
+          display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', cursor:'pointer',
+          background: pendingOver72h>0 ? C.red+'14' : C.card,
+          border:`1px solid ${pendingOver72h>0 ? C.red+'55' : C.border}`,
+          borderRadius:'12px', padding:'14px 18px', marginBottom:'12px',
+        }}>
+        <Icon name="alerts" size={16} color={pendingOver72h>0?C.red:C.muted} />
+        <span style={{ color: pendingOver72h>0?C.red:C.muted, fontSize:'20px', fontWeight:800 }}>{pendingOver72h}</span>
+        <span style={{ color:C.text2, fontSize:'12px', fontWeight:600 }}>pending more than 72 hours</span>
+        <span style={{ marginLeft:'auto', color:C.muted, fontSize:'10.5px' }}>
+          {statusChip==='over72' ? '✓ Showing below — click to clear' : 'Click to view →'}
+        </span>
       </div>
-
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'12px', marginBottom:'14px' }}>
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>CLIENT HEALTH</div>
-          {clientHealth.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No data.</div> : clientHealth.map(c => (
-            <div key={c.name} style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'7px' }}>
-              <span style={{ color:C.text2, fontSize:'10.5px', width:'92px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</span>
-              <div style={{ flex:1, height:'6px', background:C.border2, borderRadius:'3px', overflow:'hidden' }}>
-                <div style={{ height:'100%', width:`${c.pendingPct}%`, background: c.pendingPct>50?C.red:c.pendingPct>20?C.amber:C.accent, borderRadius:'3px' }}></div>
-              </div>
-              <span style={{ color:C.muted, fontSize:'10px', width:'34px', textAlign:'right' }}>{c.pendingPct}%</span>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>TOP 5 VEHICLES (BY REQUESTS)</div>
-          {topVehicles.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No data.</div> : <HBarList items={topVehicles} />}
-        </div>
-
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>RECENT ACTIVITY</div>
-          {recentActivity.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No recent activity.</div> : (
-            <div style={{ display:'flex', flexDirection:'column', gap:'8px', maxHeight:'160px', overflowY:'auto' }}>
-              {recentActivity.map((a,i) => (
-                <div key={i} style={{ display:'flex', gap:'7px', alignItems:'flex-start' }}>
-                  <span style={{ width:6, height:6, borderRadius:'50%', background:a.color, marginTop:'4px', flexShrink:0 }}></span>
-                  <div style={{ fontSize:'10.5px', color:C.text2 }}>{a.label}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {insights.length>0 && (
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'14px' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'6px', marginBottom:'10px' }}>
-            <Icon name="sparkles" size={13} color={C.accent}/>
-            <span style={{ color:C.accent, fontSize:'10.5px', fontWeight:700 }}>AI INSIGHTS</span>
-            <span style={{ background:C.accentDark, color:C.accent, fontSize:'8px', fontWeight:700, borderRadius:'4px', padding:'1px 5px' }}>BETA</span>
-          </div>
-          <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
-            {insights.map((t,i) => <div key={i} style={{ color:C.text2, fontSize:'11px', background:C.s2, borderRadius:'8px', padding:'8px 12px' }}>{t}</div>)}
-          </div>
-        </div>
-      )}
 
       {/* Table */}
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', overflow:'hidden' }}>
