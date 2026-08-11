@@ -73,10 +73,16 @@ export default async function handler(req, res) {
     // ── No-show sweep: anyone who has missed their grace hour entirely
     // (no Shift_Log row at all today) gets auto-marked "Week Off" from the
     // hour after their scheduled start onward. Idempotent. ──
+    const onShiftNames = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
     const startedToday = new Set(shiftLogRows.slice(1).filter(r => r[2] === today).map(r => r[1]))
     const newLeaveRows = []
     ALL_EMPLOYEES.forEach(emp => {
       if (startedToday.has(emp.name)) return
+      // A night shift that began yesterday evening has no row dated today,
+      // so "no row today" alone would brand someone absent in the middle of
+      // the shift they are currently working. Anyone clocked in is present
+      // by definition, whichever day their shift started on.
+      if (onShiftNames.has(emp.name)) return
       // Prefix match, so an already-shortened "Week Off (returned)" row
       // still counts as "this employee has been swept today". Comparing
       // the exact string meant a returning employee could be marked absent
@@ -101,7 +107,10 @@ export default async function handler(req, res) {
         const fromHour = (effStart + 1) % 24
         newLeaveRows.push([emp.empId || emp.name, emp.name, today, fromHour, effEnd, 'Week Off', 'System', now])
         if (!leaveMap[emp.name]) leaveMap[emp.name] = []
-        leaveMap[emp.name].push({ fromHour, toHour: effEnd, reason: 'Week Off' })
+        // markedBy mirrors what was just written to the sheet, so the
+        // pool's "ignore System absences for anyone clocked in" rule sees
+        // this entry the same way it will on the next request.
+        leaveMap[emp.name].push({ fromHour, toHour: effEnd, reason: 'Week Off', markedBy: 'System' })
       }
     })
     if (newLeaveRows.length) await appendRows(CRM_SHEET_ID, TABS.LEAVES, newLeaveRows)
@@ -117,8 +126,7 @@ export default async function handler(req, res) {
     // Deriving the pool from who is clocked in makes the split
     // self-correcting: a lone employee covers the whole hour, and every
     // start or end reshuffles the remainder on the next refresh.
-    const onShiftNames = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
-
+    //
     // Somebody who is clocked in is, by definition, not absent. The
     // no-show sweep writes "Week Off" rows automatically, and a stale one
     // left over from before an employee arrived would otherwise keep them
@@ -192,6 +200,11 @@ export default async function handler(req, res) {
     const filled = {}
     allMyRows.forEach(r => {
       const hasRealData = !!(r[5] || '').toString().trim()
+      // Never let a blank row shadow a saved one. Two polls landing
+      // together can each append a placeholder for the same client, and if
+      // the blank one sorts last the employee's saved update would read
+      // back as unfilled and look lost.
+      if (!hasRealData && filled[r[3]] && filled[r[3]].status) return
       filled[r[3]] = {
         status: r[5] || '', misalignVehicles: r[6] || '', alertCount: r[7] || '',
         fatigue: r[8] || '', fatigueCount: r[9] || '', notes: r[10] || '',

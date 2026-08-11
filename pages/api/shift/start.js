@@ -1,7 +1,11 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
-import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDurationMinutes } from '../../../lib/sheets'
+import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
 import { getEmployeeShift, computeEarlyStart, computeLateStart } from '../../../lib/schedule'
+
+function ddmmyyyyFromDate(d) {
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -13,18 +17,13 @@ export default async function handler(req, res) {
     const now   = nowStr()
     const rows  = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
 
-    // Check most recent row for this employee+today
-    let latestRow = null
-    for (let i = rows.length - 1; i >= 1; i--) {
-      const r = rows[i]
-      if ((r[0] || '').toString().trim() === user.empId.toString().trim() && r[2] === today) {
-        latestRow = r
-        break
-      }
-    }
-
-    if (latestRow && latestRow[6] === 'Active') {
-      return res.status(200).json({ success: true, alreadyStarted: true, startTime: latestRow[3] })
+    // Already clocked in? Checked across yesterday too, so a night shift
+    // running past midnight isn't handed a second, duplicate shift row
+    // when the calendar date rolls over.
+    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+    const open = findOpenShiftRow(rows, user.empId, [today, yesterday])
+    if (open) {
+      return res.status(200).json({ success: true, alreadyStarted: true, startTime: open.row[3], shiftDate: open.date })
     }
 
     // Safety net: close out any orphaned Active break left over from a
