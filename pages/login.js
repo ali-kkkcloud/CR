@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
+import CautioWordmark from '../components/Wordmark'
 
 export default function Login() {
   const router = useRouter()
@@ -260,7 +261,7 @@ export default function Login() {
               />
               <div>
                 <div className="brand-name">
-                  Cau<span style={{color:'#22c55e'}}>tio</span>
+                  <CautioWordmark size={30} color="#fff" letterSpacing="-0.5px" />
                 </div>
                 <div className="brand-sub">FLEET INTELLIGENCE · CRM</div>
               </div>

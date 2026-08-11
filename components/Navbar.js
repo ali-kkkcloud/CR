@@ -1,4 +1,5 @@
 import { useRouter } from 'next/router'
+import CautioWordmark from './Wordmark'
 import { useEffect, useState } from 'react'
 import LogoutModal from './LogoutModal'
 
@@ -31,7 +32,7 @@ export default function Navbar({ user, shiftStatus, onEndShift }) {
         <div style={s.left}>
           <img src="/cautio_shield.webp" alt="Cautio" style={s.logo}
             onError={e => e.target.style.display='none'}/>
-          <span style={s.brand}>Cau<span style={{color:'#22c55e'}}>tio</span> CRM</span>
+          <span style={s.brand}><CautioWordmark size={15} color="#fff" weight={700} letterSpacing="0" /> CRM</span>
           {user?.role === 'admin' && <span style={s.adminBadge}>ADMIN</span>}
           {shiftStatus === 'active' && (
             <span style={s.shiftPill}>

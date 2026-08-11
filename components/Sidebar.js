@@ -1,4 +1,5 @@
 import Icon from './Icons'
+import CautioWordmark from './Wordmark'
 
 const C = {
   bg: '#000000',
@@ -32,7 +33,7 @@ export default function Sidebar({ activeTab, setActiveTab, counts = {}, vehicles
         <div style={s.brandRow}>
           <img src="/cautio_shield.webp" alt="Cautio" style={s.logo} onError={e => (e.target.style.display = 'none')} />
           <div>
-            <div style={s.brandTxt}>Cautio</div>
+            <div style={s.brandTxt}><CautioWordmark size={21} color={C.text} weight={800} letterSpacing="0.3px" /></div>
             <div style={s.tagline}>Smarter Journeys. Safer Fleets.</div>
           </div>
         </div>
