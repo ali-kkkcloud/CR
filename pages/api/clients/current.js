@@ -77,7 +77,11 @@ export default async function handler(req, res) {
     const newLeaveRows = []
     ALL_EMPLOYEES.forEach(emp => {
       if (startedToday.has(emp.name)) return
-      const already = (leaveMap[emp.name] || []).some(l => l.reason === 'Week Off')
+      // Prefix match, so an already-shortened "Week Off (returned)" row
+      // still counts as "this employee has been swept today". Comparing
+      // the exact string meant a returning employee could be marked absent
+      // all over again on the next poll.
+      const already = (leaveMap[emp.name] || []).some(l => (l.reason || '').startsWith('Week Off'))
       if (already) return
       const override = overridesMap[emp.name]
       const effStart = override ? override.start : emp.start
@@ -113,9 +117,24 @@ export default async function handler(req, res) {
     // Deriving the pool from who is clocked in makes the split
     // self-correcting: a lone employee covers the whole hour, and every
     // start or end reshuffles the remainder on the next refresh.
-    const scheduledEmps  = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
+    const onShiftNames = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
+
+    // Somebody who is clocked in is, by definition, not absent. The
+    // no-show sweep writes "Week Off" rows automatically, and a stale one
+    // left over from before an employee arrived would otherwise keep them
+    // out of the split for the rest of their shift — clocked in, sitting
+    // on the dashboard, and handed no clients at all. Auto rows are
+    // ignored for anyone on shift; leave an admin marked by hand always
+    // stands.
+    const leaveMapForPool = {}
+    Object.entries(leaveMap).forEach(([name, entries]) => {
+      leaveMapForPool[name] = onShiftNames.has(name)
+        ? entries.filter(l => (l.markedBy || '') !== 'System')
+        : entries
+    })
+
+    const scheduledEmps  = getScheduledEmployeesAtHour(hour, leaveMapForPool, overridesMap)
     const scheduledNames = scheduledEmps.map(e => e.name)
-    const onShiftNames   = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
 
     let poolNames = scheduledNames.filter(n => onShiftNames.has(n))
     // Nobody clocked in yet (start of day, or everyone still to arrive):

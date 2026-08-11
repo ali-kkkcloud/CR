@@ -62,12 +62,16 @@ export default async function handler(req, res) {
       for (let i = overrideRows.length - 1; i >= 1; i--) {
         if (overrideRows[i][0] === today && overrideRows[i][2] === user.name) { overrideRowIndex = i + 1; break }
       }
+      // Record WHICH kind of adjustment this was. Both paths used to write
+      // "Yes" into the Early Start column, so a late arrival showed up in
+      // the admin's Full Day View tagged as an early start.
+      const earlyFlag = earlyStart ? 'Yes' : 'No'
       if (overrideRowIndex === -1) {
         await appendRow(CRM_SHEET_ID, TABS.SHIFT_OVERRIDES, [
-          today, user.empId, user.name, adj.start, adj.end, 'Yes', 'No', now,
+          today, user.empId, user.name, adj.start, adj.end, earlyFlag, 'No', now,
         ])
       } else {
-        await updateRowCells(CRM_SHEET_ID, TABS.SHIFT_OVERRIDES, overrideRowIndex, 4, [adj.start, adj.end, 'Yes'])
+        await updateRowCells(CRM_SHEET_ID, TABS.SHIFT_OVERRIDES, overrideRowIndex, 4, [adj.start, adj.end, earlyFlag])
       }
     }
 
@@ -75,12 +79,24 @@ export default async function handler(req, res) {
       // Shorten (or fully cancel) the auto "Week Off" leave the no-show
       // sweep marked while this employee was absent — from their actual
       // arrival hour onward, they're working again.
+      //
+      // EVERY such row has to be shortened, not just the first one found.
+      // The sweep can leave more than one behind (it decides whether to
+      // mark someone from a cached read of the Leaves tab, so two polls
+      // landing together both append a row), and stopping at the first
+      // match left the other one covering the whole shift — the employee
+      // came back, was still excluded from distribution for the rest of
+      // the day, and silently received no clients at all.
+      //
+      // Matching on the "Week Off" prefix rather than the exact string
+      // also makes this idempotent: a row already shortened to
+      // "Week Off (returned)" is picked up again instead of being treated
+      // as a different kind of leave and skipped.
       const leaveRows = await readSheet(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`)
       for (let i = leaveRows.length - 1; i >= 1; i--) {
         const r = leaveRows[i]
-        if (r[1] === user.name && r[2] === today && r[5] === 'Week Off') {
+        if (r[1] === user.name && r[2] === today && (r[5] || '').toString().startsWith('Week Off')) {
           await updateRowCells(CRM_SHEET_ID, TABS.LEAVES, i + 1, 5, [lateStart.start, 'Week Off (returned)'])
-          break
         }
       }
     }

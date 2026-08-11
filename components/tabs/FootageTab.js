@@ -33,7 +33,10 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     const list = [...p, ...c].map(i => {
       const raised = parseSheetDate(i.raisedAt)
       const resolvedD = i.resolved ? parseSheetDate(i.resolvedAt) : null
-      const ageHours = !i.resolved && raised ? (Date.now() - raised.getTime())/3600000 : null
+      // Clamped at 0: a handful of rows carry a raised-at timestamp in the
+      // future (data entry slips), which would otherwise render as a
+      // negative age like "-5.0h".
+      const ageHours = !i.resolved && raised ? Math.max(0, (Date.now() - raised.getTime())/3600000) : null
       const resolveHours = i.resolved && raised && resolvedD ? (resolvedD.getTime() - raised.getTime())/3600000 : null
       return { ...i, raisedD: raised, resolvedD, ageHours, resolveHours }
     })
