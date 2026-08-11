@@ -74,7 +74,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     if (!statusChip) return []
     if (statusChip==='all') return searchScoped
     if (statusChip==='overdue') return searchScoped.filter(i => i.ageHours!=null && i.ageHours>24)
-    if (statusChip==='over72') return searchScoped.filter(i => i.status!=='Completed' && i.ageHours!=null && i.ageHours>72)
+    if (statusChip==='last72') return searchScoped.filter(i => i.status!=='Completed' && i.ageHours!=null && i.ageHours<=72)
     return searchScoped.filter(i => i.status.toLowerCase()===statusChip)
   }, [searchScoped, statusChip])
 
@@ -98,10 +98,10 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     }
   }, [searchScoped])
 
-  // How many still-open requests have been sitting more than 72 hours —
-  // surfaced prominently since these are the ones most likely to be forgotten.
-  const pendingOver72h = useMemo(
-    () => searchScoped.filter(i => i.status !== 'Completed' && i.ageHours != null && i.ageHours > 72).length,
+  // Still-open requests raised within the LAST 72 hours — the current
+  // working window. Anything older than 72h is deliberately excluded.
+  const pendingLast72h = useMemo(
+    () => searchScoped.filter(i => i.status !== 'Completed' && i.ageHours != null && i.ageHours <= 72).length,
     [searchScoped]
   )
 
@@ -155,20 +155,20 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
         })}
       </div>
 
-      {/* Ageing highlight — the requests most likely to have been forgotten */}
+      {/* Last-72-hours highlight — the active working window */}
       <div
-        onClick={()=>{ setStatusChip(statusChip==='over72'?null:'over72'); setPage(1) }}
+        onClick={()=>{ setStatusChip(statusChip==='last72'?null:'last72'); setPage(1) }}
         style={{
           display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', cursor:'pointer',
-          background: pendingOver72h>0 ? C.red+'14' : C.card,
-          border:`1px solid ${pendingOver72h>0 ? C.red+'55' : C.border}`,
+          background: pendingLast72h>0 ? C.amber+'14' : C.card,
+          border:`1px solid ${pendingLast72h>0 ? C.amber+'55' : C.border}`,
           borderRadius:'12px', padding:'14px 18px', marginBottom:'12px',
         }}>
-        <Icon name="alerts" size={16} color={pendingOver72h>0?C.red:C.muted} />
-        <span style={{ color: pendingOver72h>0?C.red:C.muted, fontSize:'20px', fontWeight:800 }}>{pendingOver72h}</span>
-        <span style={{ color:C.text2, fontSize:'12px', fontWeight:600 }}>pending more than 72 hours</span>
+        <Icon name="alerts" size={16} color={pendingLast72h>0?C.amber:C.muted} />
+        <span style={{ color: pendingLast72h>0?C.amber:C.muted, fontSize:'20px', fontWeight:800 }}>{pendingLast72h}</span>
+        <span style={{ color:C.text2, fontSize:'12px', fontWeight:600 }}>pending from the last 72 hours</span>
         <span style={{ marginLeft:'auto', color:C.muted, fontSize:'10.5px' }}>
-          {statusChip==='over72' ? '✓ Showing below — click to clear' : 'Click to view →'}
+          {statusChip==='last72' ? '✓ Showing below — click to clear' : 'Click to view →'}
         </span>
       </div>
 

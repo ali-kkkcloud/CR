@@ -22,15 +22,21 @@ export const C = {
   purple:     '#a78bfa',
 }
 
-export function KpiCard({ icon, label, value, sub, subColor, progress }) {
+export function KpiCard({ icon, label, value, sub, subColor, progress, onClick }) {
   return (
-    <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'14px' }}>
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); onClick() } } : undefined}
+      style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'14px', cursor:onClick?'pointer':'default' }}>
       <div style={{ width:'28px', height:'28px', borderRadius:'8px', background:C.accentSoft, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:'10px' }}>
         <Icon name={icon} size={15} color={C.accent}/>
       </div>
       <div style={{ color:C.muted, fontSize:'10.5px', marginBottom:'4px' }}>{label}</div>
       <div style={{ color:C.text, fontSize:'22px', fontWeight:800, lineHeight:1 }}>{value}</div>
       {sub && <div style={{ fontSize:'10px', color:subColor||C.muted, marginTop:'2px' }}>{sub}</div>}
+      {onClick && <div style={{ fontSize:'9.5px', color:C.muted, marginTop:'6px' }}>Click to view →</div>}
       {typeof progress === 'number' && (
         <div style={{ height:'4px', background:C.border2, borderRadius:'3px', overflow:'hidden', marginTop:'8px' }}>
           <div style={{ height:'100%', width:`${Math.max(0,Math.min(100,progress))}%`, background:C.accent, borderRadius:'3px' }}></div>
