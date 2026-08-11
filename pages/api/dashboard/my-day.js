@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
+  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog
 } from '../../../lib/sheets'
 import { ALL_EMPLOYEES, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT } from '../../../lib/schedule'
 
@@ -28,13 +28,16 @@ export default async function handler(req, res) {
     // Otherwise (the employee's own live "My Day"), resolve MY actual
     // operating shift date — which stays the day the shift started even
     // after midnight rolls the calendar date over.
+    const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
     let date = explicitDate || today
     if (!explicitDate) {
-      const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
       const myToday     = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===today)
       const myYesterday = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===yesterday)
       if (myToday.length === 0 && myYesterday.some(r => r[6] === 'Active')) date = yesterday
     }
+    // Who is clocked in right now — used to project hours that have no
+    // rows yet, matching how the live current-hour view splits the work.
+    const onShiftNames = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
 
     const [updateRows, redistRows, vehicleMap, leaveMap, overridesMap] = await Promise.all([
       readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 8000),
@@ -122,26 +125,52 @@ export default async function handler(req, res) {
         }
       }
 
-      // Get scheduled employees for this hour (with leave map)
-      const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
-      const scheduledNames = scheduledEmps.map(e => e.name)
+      // What was actually on my board that hour.
+      //
+      // Once an hour has rows in CRM_Updates those rows ARE the record —
+      // a row is written for every client put in front of me — so the
+      // timeline reports them directly instead of re-deriving the split.
+      // Re-deriving was what made the counts drift: the live split
+      // depends on who was clocked in at the time, which can't be
+      // reconstructed after the fact, so a past hour would be recomputed
+      // against the current roster and show a different set of clients
+      // than the employee was actually given.
+      const myRowsThisHour = updatesByHour[hour] || {}
+      const rowClients = Object.keys(myRowsThisHour)
 
-      // Get locked assignments for this hour from CRM_Updates
-      const lockedAssignments = {}
-      updateRows.slice(1)
-        .filter(r => r[0] === date && parseInt(r[4]) === hour)
-        .forEach(r => { lockedAssignments[r[3]] = r[2] })
+      let myClients
+      if (rowClients.length > 0) {
+        myClients = rowClients.map(client => ({
+          client,
+          vehicleCount: vehicleMap[(client || '').toLowerCase()]?.vehicleCount || 0,
+          isSpecific: false,
+          isRedistributed: false,
+          fromEmployee: null,
+          toEmployee: null,
+        }))
+      } else {
+        // No rows yet (an hour still ahead of me, or one I never opened):
+        // fall back to a projection using the same rules as the live view.
+        const scheduledNames = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap).map(e => e.name)
+        const onShiftScheduled = scheduledNames.filter(n => onShiftNames.has(n))
+        const poolNames = onShiftScheduled.length > 0 ? onShiftScheduled : scheduledNames
 
-      // Distribute clients for this hour
-      const dist = distributeClientsForHour(hour, scheduledNames, vehicleMap, lockedAssignments)
-      let myClients = (dist[user.name] || []).map(c => ({
-        client: c.client,
-        vehicleCount: c.vehicleCount,
-        isSpecific: c.isSpecific,
-        isRedistributed: false,
-        fromEmployee: null,
-        toEmployee: null,
-      }))
+        // Only genuinely completed work is pinned — see /api/clients/current.
+        const lockedAssignments = {}
+        updateRows.slice(1)
+          .filter(r => r[0] === date && parseInt(r[4]) === hour && (r[5] || '').toString().trim())
+          .forEach(r => { lockedAssignments[r[3]] = r[2] })
+
+        const dist = distributeClientsForHour(hour, poolNames, vehicleMap, lockedAssignments, true)
+        myClients = (dist[user.name] || []).map(c => ({
+          client: c.client,
+          vehicleCount: c.vehicleCount,
+          isSpecific: c.isSpecific,
+          isRedistributed: false,
+          fromEmployee: null,
+          toEmployee: null,
+        }))
+      }
 
       // Mark clients redistributed AWAY from me this hour
       const awayThisHour = redistFromMe.filter(r => r.hour === hour)

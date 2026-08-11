@@ -30,6 +30,32 @@ export default async function handler(req, res) {
 
     const todayShifts = shiftRows.slice(1).filter(r => r[2] === today)
 
+    // ── Collapse every (client, hour) slot down to one owner + done flag ──
+    // CRM_Updates is append-only, so a single slot can show up several
+    // times: the placeholder written when it was assigned, another one if
+    // it later moved to someone else, and the real update once it's filled
+    // in. Counting rows directly therefore double-counts the same piece of
+    // work — which is why "Updates Completed" was reporting the assigned
+    // total instead of what was actually done. A row carrying real data
+    // always wins (that's who did the work); otherwise the most recent
+    // placeholder is the current owner.
+    const slotState = new Map()
+    updateRows.slice(1).forEach(r => {
+      if (r[0] !== today) return
+      const key = `${r[3]}|${r[4]}`
+      const isDone = !!(r[5] || '').toString().trim()
+      const prev = slotState.get(key)
+      if (prev && prev.done && !isDone) return
+      slotState.set(key, { owner: r[2], done: isDone })
+    })
+
+    const workByEmp = {}
+    slotState.forEach(({ owner, done }) => {
+      if (!workByEmp[owner]) workByEmp[owner] = { assigned: 0, completed: 0 }
+      workByEmp[owner].assigned += 1
+      if (done) workByEmp[owner].completed += 1
+    })
+
     const empStatus = ALL_EMPLOYEES.map(emp => {
       const shiftLog   = todayShifts.find(r => r[1] === emp.name)
       const override   = overridesMap[emp.name]
@@ -39,8 +65,9 @@ export default async function handler(req, res) {
       const hasStarted = !!shiftLog?.[3]
       const hasEnded   = shiftLog?.[6] === 'Ended'
 
-      const myUpdates = updateRows.slice(1).filter(r => r[0] === today && r[2] === emp.name)
-      const myPending = myUpdates.filter(r => !r[5] || r[5] === '')
+      const myWork = workByEmp[emp.name] || { assigned: 0, completed: 0 }
+      const assignedCount  = myWork.assigned
+      const completedCount = myWork.completed
 
       let statusLabel = 'Not Started'
       if (isWeekOff)       statusLabel = 'Week Off'
@@ -53,14 +80,24 @@ export default async function handler(req, res) {
         name:         emp.name,
         shiftStart:   emp.start,
         shiftEnd:     emp.end,
+        // The window actually in force today — an Early/Late Start or OT
+        // adjustment moves this away from the static roster hours, and the
+        // admin needs to see the real one.
+        effStart:     effective.start,
+        effEnd:       effective.end,
+        isAdjusted:   !!override,
+        // Is this employee inside their shift window at this very hour?
+        // Drives the live "right now" health reading.
+        isScheduledNow: isActive,
         isNight:      emp.isNight,
         isWeekOff,
         statusLabel,
         startTime:    shiftLog?.[3] || '',
         endTime:      shiftLog?.[4] || '',
         duration:     shiftLog?.[5] || '',
-        totalUpdates: myUpdates.length,
-        pendingCount: myPending.length,
+        totalUpdates: completedCount,
+        assignedCount,
+        pendingCount: assignedCount - completedCount,
       }
     })
 

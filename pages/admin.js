@@ -56,6 +56,8 @@ export default function Admin() {
   const [closingFollowup, setClosingFollowup] = useState(false)
   const [showLogout, setShowLogout] = useState(false)
   const [clock, setClock] = useState('')
+  // { title, rows } — roster drill-down opened from an Overview KPI card
+  const [rosterModal, setRosterModal] = useState(null)
 
   useEffect(() => {
     function tick() {
@@ -317,13 +319,27 @@ export default function Admin() {
   const completionPct = totalUpdatesToday+totalPendingToday>0
     ? Math.round((totalUpdatesToday/(totalUpdatesToday+totalPendingToday))*100) : 100
   const activePct = kpis.total>0 ? Math.round((kpis.active/kpis.total)*100) : 0
-  // Distinct from Active Employees %: of everyone who SHOULD be working
-  // today (i.e. not on week off), how many are behaving as expected
-  // (active or already ended their shift on record) vs. flagged as a
-  // problem (Not Started when they should be). Was previously an exact
-  // duplicate of activePct — two cards showing the same number.
-  const scheduledToday = kpis.total - kpis.weekOff
-  const fleetHealthPct = scheduledToday>0 ? Math.round(((scheduledToday-kpis.notStarted)/scheduledToday)*100) : 100
+
+  // Command Center Health — a live "right now" reading for today, not a
+  // whole-day average: of the people whose shift window covers THIS hour
+  // (week-off excluded), how many are actually clocked in. Previously this
+  // was active/total, i.e. the exact same number as Active Employees %,
+  // so two cards showed identical values and neither reflected the
+  // current hour.
+  const onDutyNow    = employees.filter(e => e.isScheduledNow && !e.isWeekOff)
+  const activeNowCnt = onDutyNow.filter(e => e.statusLabel === 'Active').length
+  const commandHealthPct = onDutyNow.length>0 ? Math.round((activeNowCnt/onDutyNow.length)*100) : 100
+
+  const shiftLabel = (e) => {
+    const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
+    const suf  = (n) => n >= 12 ? 'PM' : 'AM'
+    const s = e.effStart ?? e.shiftStart, en = e.effEnd ?? e.shiftEnd
+    if (s == null || en == null) return '—'
+    return `${to12(s)}:00 ${suf(s)} – ${to12(en)}:00 ${suf(en)}`
+  }
+
+  const activeEmployees     = employees.filter(e => e.statusLabel === 'Active')
+  const notStartedEmployees = employees.filter(e => e.statusLabel === 'Not Started')
 
   const statusCounts = employees.reduce((acc,e)=>{ acc[e.statusLabel]=(acc[e.statusLabel]||0)+1; return acc }, {})
   const statusDonutSegs = [
@@ -403,12 +419,18 @@ export default function Admin() {
             <>
               <div style={s.sectionLabel}>WORKFORCE &amp; WORKLOAD — TODAY</div>
               <div style={s.kpiGrid}>
-                <KpiCard icon="shield" label="Fleet Health" value={`${fleetHealthPct}%`} sub="Active vs total workforce" />
-                <KpiCard icon="users" label="Active Employees" value={kpis.active} sub={`${activePct}% of total`} progress={activePct} />
+                <KpiCard icon="shield" label="Command Center Health" value={`${commandHealthPct}%`} sub={`${activeNowCnt}/${onDutyNow.length} on duty this hour`} />
+                <KpiCard
+                  icon="users" label="Active Employees" value={kpis.active} sub={`${activePct}% of total`} progress={activePct}
+                  onClick={()=>setRosterModal({ title:'Active Employees', empty:'Nobody is clocked in right now.', rows:activeEmployees })}
+                />
                 <KpiCard icon="check-circle" label="Updates Completed" value={totalUpdatesToday} sub="Across all employees today" />
                 <KpiCard icon="clock" label="Pending Updates" value={totalPendingToday} sub="Awaiting completion" subColor={totalPendingToday>0?C.amber:C.muted} />
                 <KpiCard icon="leaves" label="Week Off" value={kpis.weekOff} sub="Scheduled off today" />
-                <KpiCard icon="offline" label="Not Started" value={kpis.notStarted} sub="Should be active by now" subColor={kpis.notStarted>0?C.red:C.muted} />
+                <KpiCard
+                  icon="offline" label="Not Started" value={kpis.notStarted} sub="Should be active by now" subColor={kpis.notStarted>0?C.red:C.muted}
+                  onClick={()=>setRosterModal({ title:'Not Started', empty:'Everyone scheduled has clocked in.', rows:notStartedEmployees })}
+                />
                 <KpiCard icon="camera" label="Footage Queue" value={footage.pending.length} sub={`${footage.followups.length} follow-up(s) open`} subColor={footage.pending.length>0?C.amber:C.muted} />
                 <KpiCard icon="shuffle" label="Redistribution Today" value={redistribution.length} sub="Slots reassigned" />
               </div>
@@ -825,6 +847,47 @@ export default function Admin() {
                 {closingFollowup?'Closing...':'Close Follow-up'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Roster drill-down — opened from the Active / Not Started KPI cards */}
+      {rosterModal && (
+        <div style={modal.overlay} onClick={()=>setRosterModal(null)}>
+          <div style={{...modal.box, maxWidth:'460px'}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'4px'}}>
+              <div style={modal.title}>{rosterModal.title}</div>
+              <button onClick={()=>setRosterModal(null)} style={{background:'transparent',border:'none',color:C.muted,fontSize:'20px',cursor:'pointer',lineHeight:1}}>×</button>
+            </div>
+            <div style={{color:C.muted, fontSize:'12px', marginBottom:'14px'}}>
+              {rosterModal.rows.length} employee(s) · shift timings shown in IST
+            </div>
+            {rosterModal.rows.length === 0 ? (
+              <div style={{color:C.muted, fontSize:'12.5px', padding:'18px 0', textAlign:'center'}}>{rosterModal.empty}</div>
+            ) : (
+              <div style={{maxHeight:'50vh', overflowY:'auto'}}>
+                {rosterModal.rows.map(e => (
+                  <div key={e.name} style={{display:'flex', alignItems:'center', gap:'10px', padding:'10px 0', borderBottom:`1px solid ${C.borderRow}`}}>
+                    <div style={{width:'30px', height:'30px', borderRadius:'50%', background:C.accentDark, color:C.accent, fontSize:'11px', fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0}}>
+                      {e.name.slice(0,2).toUpperCase()}
+                    </div>
+                    <div style={{flex:1, minWidth:0}}>
+                      <div style={{color:C.text, fontSize:'12.5px', fontWeight:600}}>{e.name}</div>
+                      <div style={{color:C.muted, fontSize:'10.5px'}}>
+                        {shiftLabel(e)}
+                        {e.isAdjusted && <span style={{color:C.amber, marginLeft:'6px'}}>· adjusted today</span>}
+                      </div>
+                    </div>
+                    <div style={{textAlign:'right', flexShrink:0}}>
+                      {e.startTime
+                        ? <div style={{color:C.accent, fontSize:'10.5px', fontWeight:600}}>In {e.startTime}</div>
+                        : <div style={{color:C.red, fontSize:'10.5px', fontWeight:600}}>Not clocked in</div>}
+                      {e.endTime && <div style={{color:C.muted, fontSize:'9.5px'}}>Out {e.endTime}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

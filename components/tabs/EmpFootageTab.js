@@ -45,13 +45,14 @@ export default function EmpFootageTab({ footage }) {
   const filteredPending = useMemo(() => applyFilters(sortedPending), [sortedPending, search, dateFilter])
   const filteredCompleted = useMemo(() => applyFilters(sortedCompleted), [sortedCompleted, search, dateFilter])
 
-  // Still-open requests sitting more than 72 hours — the ones most likely to be forgotten.
-  const pendingOver72h = useMemo(
-    () => filteredPending.filter(i => i.raisedD && (Date.now() - i.raisedD.getTime())/3600000 > 72),
+  // Still-open requests raised within the LAST 72 hours — the current
+  // working window. Anything older than 72h is deliberately excluded.
+  const pendingLast72h = useMemo(
+    () => filteredPending.filter(i => i.raisedD && (Date.now() - i.raisedD.getTime())/3600000 <= 72),
     [filteredPending]
   )
 
-  const listToShow = view === 'pending' ? filteredPending : view === 'completed' ? filteredCompleted : view === 'over72' ? pendingOver72h : []
+  const listToShow = view === 'pending' ? filteredPending : view === 'completed' ? filteredCompleted : view === 'last72' ? pendingLast72h : []
 
   return (
     <div style={{ maxWidth:'900px' }}>
@@ -90,20 +91,20 @@ export default function EmpFootageTab({ footage }) {
         })}
       </div>
 
-      {/* Ageing highlight — sits outside/below the cards */}
+      {/* Last-72-hours highlight — sits outside/below the cards */}
       <div
-        onClick={()=>setView(view==='over72'?null:'over72')}
+        onClick={()=>setView(view==='last72'?null:'last72')}
         style={{
           display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', cursor:'pointer',
-          background: pendingOver72h.length>0 ? C.red+'14' : C.card,
-          border:`1px solid ${pendingOver72h.length>0 ? C.red+'55' : C.border}`,
+          background: pendingLast72h.length>0 ? C.amber+'14' : C.card,
+          border:`1px solid ${pendingLast72h.length>0 ? C.amber+'55' : C.border}`,
           borderRadius:'12px', padding:'14px 18px', marginBottom:'12px',
         }}>
-        <Icon name="alerts" size={16} color={pendingOver72h.length>0?C.red:C.muted} />
-        <span style={{ color: pendingOver72h.length>0?C.red:C.muted, fontSize:'20px', fontWeight:800 }}>{pendingOver72h.length}</span>
-        <span style={{ color:C.text2, fontSize:'12px', fontWeight:600 }}>pending more than 72 hours</span>
+        <Icon name="alerts" size={16} color={pendingLast72h.length>0?C.amber:C.muted} />
+        <span style={{ color: pendingLast72h.length>0?C.amber:C.muted, fontSize:'20px', fontWeight:800 }}>{pendingLast72h.length}</span>
+        <span style={{ color:C.text2, fontSize:'12px', fontWeight:600 }}>pending from the last 72 hours</span>
         <span style={{ marginLeft:'auto', color:C.muted, fontSize:'10.5px' }}>
-          {view==='over72' ? '✓ Showing below — click to clear' : 'Click to view →'}
+          {view==='last72' ? '✓ Showing below — click to clear' : 'Click to view →'}
         </span>
       </div>
 

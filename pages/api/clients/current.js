@@ -1,9 +1,9 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, readSheetCached, appendRow, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate,
+  readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog,
 } from '../../../lib/sheets'
-import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, distributeClientsForHour, ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
+import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -102,99 +102,64 @@ export default async function handler(req, res) {
     })
     if (newLeaveRows.length) await appendRows(CRM_SHEET_ID, TABS.LEAVES, newLeaveRows)
 
-    // ── Scheduled employees for this hour (leave + override aware) ──
-    const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
+    // ── Who this hour's clients get shared between ─────────────────────
+    // The roster says who COULD be on this hour; Shift_Log says who
+    // actually is. Distribution follows the second one. Splitting by
+    // roster meant an hour rostered to six people was still carved six
+    // ways when only one had clocked in, so that one employee saw (and
+    // could update) barely a sixth of the clients due that hour, and
+    // anyone who had already gone home kept being handed new work.
+    //
+    // Deriving the pool from who is clocked in makes the split
+    // self-correcting: a lone employee covers the whole hour, and every
+    // start or end reshuffles the remainder on the next refresh.
+    const scheduledEmps  = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
     const scheduledNames = scheduledEmps.map(e => e.name)
+    const onShiftNames   = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
+
+    let poolNames = scheduledNames.filter(n => onShiftNames.has(n))
+    // Nobody clocked in yet (start of day, or everyone still to arrive):
+    // fall back to the roster so the hour still has owners and no client
+    // silently drops off the board.
+    if (poolNames.length === 0) poolNames = scheduledNames
+    // The caller is looking at this screen because they're working, so
+    // keep them in the pool even if their own Shift_Log row is a beat
+    // behind the read cache.
+    if (!poolNames.includes(user.name) && scheduledNames.includes(user.name)) {
+      poolNames = [...poolNames, user.name]
+    }
 
     const vehicleMap = await fetchClientVehicleCounts()
 
-    const existingForMeSet = new Set(
-      updateRows.slice(1)
-        .filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[4]) === hour)
-        .map(r => r[3])
-    )
-
-    // ── Detect a genuine "join mid-hour" event (Early/Late Start) ──
-    const myOverride = overridesMap[user.name]
-    const isJoiningThisHour = !!myOverride && myOverride.start === hour && existingForMeSet.size === 0
-      && scheduledNames.includes(user.name)
-
-    let updateRowsFresh = updateRows
-
-    if (isJoiningThisHour) {
-      const priorScheduledNames = scheduledNames.filter(n => n !== user.name)
-
-      const lockedAll = {}
-      updateRows.slice(1)
-        .filter(r => r[0] === myShiftDate && parseInt(r[4]) === hour)
-        .forEach(r => { lockedAll[r[3]] = r[2] })
-
-      const lockedFilledOnly = {}
-      updateRows.slice(1)
-        .filter(r => r[0] === myShiftDate && parseInt(r[4]) === hour && (r[5]||'').toString().trim())
-        .forEach(r => { lockedFilledOnly[r[3]] = r[2] })
-
-      const oldDist = distributeClientsForHour(hour, priorScheduledNames, vehicleMap, lockedAll)
-      const newDist = distributeClientsForHour(hour, scheduledNames, vehicleMap, lockedFilledOnly)
-
-      const redistRows = [], placeholderRows = []
-      Object.entries(oldDist).forEach(([empName, clients]) => {
-        clients.forEach(c => {
-          if (lockedFilledOnly[c.client]) return
-          let newOwner = null
-          for (const [name, list] of Object.entries(newDist)) {
-            if (list.some(x => x.client === c.client)) { newOwner = name; break }
-          }
-          if (!newOwner || newOwner === empName) return
-          redistRows.push([myShiftDate, now, empName, newOwner, c.client, String(hour), 'Early Start Join'])
-          const exists = updateRows.slice(1).some(r => r[0]===myShiftDate && r[2]===newOwner && r[3]===c.client && parseInt(r[4])===hour)
-          if (!exists) placeholderRows.push([myShiftDate, now, newOwner, c.client, String(hour), '', '', '', 'No', '', ''])
-        })
-      })
-      if (redistRows.length)      await appendRows(CRM_SHEET_ID, TABS.REDISTRIB, redistRows)
-      if (placeholderRows.length) {
-        await appendRows(CRM_SHEET_ID, TABS.CRM_UPDATES, placeholderRows)
-        updateRowsFresh = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 8000)
-      }
-    }
-
-    // ── Redistribution_Log — away/to filtering ──
-    const redistRowsAll = await readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 8000)
-    const awayThisHour = redistRowsAll.slice(1)
-      .filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[5]) === hour)
-      .map(r => ({ client: r[4], toEmployee: r[3] }))
-    const toMeThisHour = redistRowsAll.slice(1)
-      .filter(r => r[0] === myShiftDate && r[3] === user.name && parseInt(r[5]) === hour)
-      .map(r => ({ client: r[4], fromEmployee: r[2] }))
-
-    // ── Locked assignments (already decided this hour) ──
+    // ── Locked assignments ─────────────────────────────────────────────
+    // ONLY slots that already carry a real update stay pinned to whoever
+    // did that work — nobody's finished update should ever jump to
+    // another name. Empty placeholder rows are deliberately NOT locked:
+    // pinning those froze the hour's split to whoever happened to open
+    // the page first, which is what stopped the workload rebalancing
+    // when somebody else started or ended their shift.
     const lockedAssignments = {}
-    updateRowsFresh.slice(1)
-      .filter(r => r[0] === myShiftDate && parseInt(r[4]) === hour)
+    updateRows.slice(1)
+      .filter(r => r[0] === myShiftDate && parseInt(r[4]) === hour && (r[5] || '').toString().trim())
       .forEach(r => { lockedAssignments[r[3]] = r[2] })
 
-    let clients = getClientsForEmployeeAtHour(user.name, hour, scheduledNames, vehicleMap, lockedAssignments)
-
-    const awaySet = new Set(awayThisHour.map(a => a.client))
-    clients = clients.filter(c => !awaySet.has(c.client))
-    toMeThisHour.forEach(r => {
-      if (!clients.some(c => c.client === r.client)) {
-        clients.push({ client: r.client, vehicleCount: vehicleMap[(r.client||'').toLowerCase()]?.vehicleCount || 0, isRedistributed: true, fromEmployee: r.fromEmployee })
-      }
-    })
+    // reserveOffShiftLocks=true: every lock here is finished work, so a
+    // client someone completed before going home stays done instead of
+    // bouncing back onto a colleague's board.
+    const clients = getClientsForEmployeeAtHour(user.name, hour, poolNames, vehicleMap, lockedAssignments, true)
 
     // ── Write placeholder rows — always dated with MY shift date, so a
     // night shift's post-midnight hours stay attached to the day it
     // started, not the calendar day they literally occurred on. ──
-    const existingForMeFreshSet = new Set(
-      updateRowsFresh.slice(1)
+    const existingForMeSet = new Set(
+      updateRows.slice(1)
         .filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[4]) === hour)
         .map(r => r[3])
     )
     const newRows = []
     clients.forEach(c => {
       if (c.isCustom) return
-      if (!existingForMeFreshSet.has(c.client)) {
+      if (!existingForMeSet.has(c.client)) {
         newRows.push([myShiftDate, now, user.name, c.client, String(hour), '', '', '', 'No', '', ''])
       }
     })
@@ -202,8 +167,8 @@ export default async function handler(req, res) {
 
     // ── Build filled map ──
     const allMyRows = [
-      ...updateRowsFresh.slice(1).filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[4]) === hour),
-      ...newRows.map(r => r),
+      ...updateRows.slice(1).filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[4]) === hour),
+      ...newRows,
     ]
     const filled = {}
     allMyRows.forEach(r => {
@@ -215,7 +180,14 @@ export default async function handler(req, res) {
       }
     })
 
-    return res.status(200).json({ hour, clients, filled, scheduledCount: scheduledNames.length, shiftDate: myShiftDate })
+    return res.status(200).json({
+      hour, clients, filled,
+      // How many people this hour is actually being shared between, so the
+      // UI can explain why a list is long (working solo) or short.
+      scheduledCount: poolNames.length,
+      rosteredCount:  scheduledNames.length,
+      shiftDate: myShiftDate,
+    })
 
   } catch (err) {
     console.error('Clients fetch error:', err)
