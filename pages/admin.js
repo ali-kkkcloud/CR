@@ -4,7 +4,7 @@ import Head from 'next/head'
 import Sidebar from '../components/Sidebar'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
-import { C, Donut, KpiCard, MiniStat, AttendanceDots } from '../components/Widgets'
+import { C, Donut, KpiCard, MiniStat, AttendanceDots, parseSheetDate } from '../components/Widgets'
 import FullDayTab from '../components/tabs/FullDayTab'
 import ProgressTab from '../components/tabs/ProgressTab'
 import FootageTab from '../components/tabs/FootageTab'
@@ -253,6 +253,25 @@ export default function Admin() {
     return segs
   }, [footage.pending, footage.completed])
 
+  // footage.pending/completed arrive in raw sheet-row order, not
+  // chronological — sort newest-first before any widget claims to show
+  // "recent" requests.
+  const recentPendingFootage = useMemo(() => {
+    return [...footage.pending].sort((a,b) => {
+      const at = parseSheetDate(a.raisedAt)?.getTime() ?? 0
+      const bt = parseSheetDate(b.raisedAt)?.getTime() ?? 0
+      return bt - at
+    })
+  }, [footage.pending])
+
+  const recentCompletedFootage = useMemo(() => {
+    return [...footage.completed].sort((a,b) => {
+      const at = parseSheetDate(a.resolvedAt)?.getTime() ?? parseSheetDate(a.raisedAt)?.getTime() ?? 0
+      const bt = parseSheetDate(b.resolvedAt)?.getTime() ?? parseSheetDate(b.raisedAt)?.getTime() ?? 0
+      return bt - at
+    })
+  }, [footage.completed])
+
   const activityFeed = useMemo(() => {
     if (!overview) return []
     const items = []
@@ -260,14 +279,14 @@ export default function Admin() {
       if (e.startTime) items.push({ icon:'check-circle', color:C.accent, name:e.name, action:'started shift', time:e.startTime })
       if (e.endTime)   items.push({ icon:'check-circle', color:C.muted, name:e.name, action:'ended shift', time:e.endTime })
     })
-    footage.completed.slice(0,4).forEach(i => {
+    recentCompletedFootage.slice(0,4).forEach(i => {
       items.push({ icon:'footage', color:C.blue, name:i.raisedBy||'Team', action:`completed footage for ${i.vehicle}`, time:i.resolvedAt||'' })
     })
     overview.redistribution.slice(0,4).forEach(r => {
       items.push({ icon:'shuffle', color:C.purple, name:r.from, action:`redistributed ${r.client} to ${r.to}`, time:`${r.hour}:00` })
     })
     return items.slice(0,8)
-  }, [overview, footage.completed])
+  }, [overview, recentCompletedFootage])
 
   if (loading || !overview) return (
     <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}>
@@ -297,8 +316,14 @@ export default function Admin() {
   const totalPendingToday = employees.reduce((s,e)=>s+(e.pendingCount||0),0)
   const completionPct = totalUpdatesToday+totalPendingToday>0
     ? Math.round((totalUpdatesToday/(totalUpdatesToday+totalPendingToday))*100) : 100
-  const fleetHealthPct = kpis.total>0 ? Math.round((kpis.active/kpis.total)*100) : 0
   const activePct = kpis.total>0 ? Math.round((kpis.active/kpis.total)*100) : 0
+  // Distinct from Active Employees %: of everyone who SHOULD be working
+  // today (i.e. not on week off), how many are behaving as expected
+  // (active or already ended their shift on record) vs. flagged as a
+  // problem (Not Started when they should be). Was previously an exact
+  // duplicate of activePct — two cards showing the same number.
+  const scheduledToday = kpis.total - kpis.weekOff
+  const fleetHealthPct = scheduledToday>0 ? Math.round(((scheduledToday-kpis.notStarted)/scheduledToday)*100) : 100
 
   const statusCounts = employees.reduce((acc,e)=>{ acc[e.statusLabel]=(acc[e.statusLabel]||0)+1; return acc }, {})
   const statusDonutSegs = [
@@ -513,11 +538,11 @@ export default function Admin() {
                 {/* Recent footage requests */}
                 <div style={s.card}>
                   <div style={s.cardHead}>RECENT FOOTAGE REQUESTS</div>
-                  {footage.pending.length===0 ? (
+                  {recentPendingFootage.length===0 ? (
                     <div style={{color:C.muted, fontSize:'11px', padding:'20px 0', textAlign:'center'}}>No pending requests.</div>
                   ) : (
                     <div style={{display:'flex', flexDirection:'column', gap:'8px', marginTop:'10px'}}>
-                      {footage.pending.slice(0,4).map(item => (
+                      {recentPendingFootage.slice(0,4).map(item => (
                         <div key={item.issueId} style={{display:'flex', alignItems:'center', gap:'8px'}}>
                           <div style={{flex:1, minWidth:0}}>
                             <div style={{color:C.text, fontSize:'11px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{item.vehicle}</div>

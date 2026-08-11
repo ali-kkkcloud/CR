@@ -88,7 +88,7 @@ export default async function handler(req, res) {
     // Shift_Log always records the REAL clock-in time (attendance truth) —
     // the effective scheduling window lives separately in Shift_Overrides.
     await appendRow(CRM_SHEET_ID, TABS.SHIFT_LOG, [user.empId, user.name, today, now, '', '', 'Active', ''])
-    return res.status(200).json({ success: true, startTime: now, earlyStart, lateStart })
+    return res.status(200).json({ success: true, startTime: now, shiftDate: today, earlyStart, lateStart })
 
   } catch (err) {
     console.error('Shift start error:', err)

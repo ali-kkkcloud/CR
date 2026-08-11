@@ -53,51 +53,25 @@ export default function Login() {
           .left-video {
             width: 100%;
             height: 100%;
-            object-fit: cover;
+            /* contain — never crop the video. The old "cover" setting sliced
+               off both edges whenever the panel's aspect ratio didn't match
+               the video's, and this footage has real content (map, stats,
+               captions) baked in right up to the edges, so any crop lost
+               real information. Contain always shows the full frame,
+               letterboxing top/bottom instead. */
+            object-fit: contain;
             display: block;
             filter: brightness(0.85) saturate(1.15) contrast(1.05);
           }
 
-          /* Subtle dark vignette on edges, NOT center — keeps video clear */
+          /* Soft fade only where the video meets the login panel — with
+             object-fit:contain the frame is fully visible, so we no longer
+             need heavy edge vignetting to hide a crop. */
           .left-vignette {
             position: absolute;
             inset: 0;
-            background:
-              linear-gradient(to right,  rgba(2,7,4,0.3) 0%, transparent 15%, transparent 85%, rgba(2,7,4,0.9) 100%),
-              linear-gradient(to bottom, rgba(2,7,4,0.4) 0%, transparent 12%, transparent 80%, rgba(2,7,4,0.7) 100%);
+            background: linear-gradient(to right, transparent 82%, rgba(2,7,4,0.85) 100%);
             pointer-events: none;
-          }
-
-          /* Bottom-left text over video */
-          .left-branding {
-            position: absolute;
-            bottom: 40px;
-            left: 40px;
-            z-index: 5;
-          }
-          .lb-tag {
-            color: rgba(74,222,128,0.75);
-            font-size: 10px;
-            letter-spacing: 3px;
-            font-weight: 700;
-            margin-bottom: 12px;
-            text-transform: uppercase;
-          }
-          .lb-headline {
-            color: #fff;
-            font-size: 28px;
-            font-weight: 900;
-            line-height: 1.3;
-            text-shadow: 0 2px 20px rgba(0,0,0,0.9), 0 0 40px rgba(0,0,0,0.7);
-            margin-bottom: 10px;
-          }
-          .lb-green { color: #4ade80; }
-          .lb-sub {
-            color: rgba(255,255,255,0.55);
-            font-size: 13px;
-            line-height: 1.6;
-            max-width: 360px;
-            text-shadow: 0 1px 10px rgba(0,0,0,0.9);
           }
 
           /* ── RIGHT: Login card panel ── */
@@ -270,19 +244,6 @@ export default function Login() {
             src="/fleet_bg.mp4"
           />
           <div className="left-vignette"/>
-
-          {/* Branding text bottom-left */}
-          <div className="left-branding">
-            <div className="lb-tag">Cautio Fleet Intelligence</div>
-            <div className="lb-headline">
-              Every vehicle,<br/>
-              <span className="lb-green">every moment,</span><br/>
-              under your watch.
-            </div>
-            <div className="lb-sub">
-              India's most trusted fleet command center — monitoring 5Cr+ safe kilometers in real time.
-            </div>
-          </div>
         </div>
 
         {/* ── RIGHT: LOGIN CARD ── */}
