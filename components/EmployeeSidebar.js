@@ -1,4 +1,5 @@
 import Icon from './Icons'
+import CautioWordmark from './Wordmark'
 import { C } from './Widgets'
 
 const NAV_ITEMS = [
@@ -20,7 +21,7 @@ export default function EmployeeSidebar({ activeTab, setActiveTab, counts = {}, 
         <div style={s.brandRow}>
           <img src="/cautio_shield.webp" alt="Cautio" style={s.logo} onError={e => (e.target.style.display = 'none')} />
           <div>
-            <div style={s.brandTxt}>Cautio</div>
+            <div style={s.brandTxt}><CautioWordmark size={20} color={C.text} weight={800} letterSpacing="0.3px" /></div>
             <div style={s.tagline}>Command Center</div>
           </div>
         </div>
