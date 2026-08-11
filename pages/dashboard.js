@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import EmployeeSidebar from '../components/EmployeeSidebar'
 import BreakOverlay from '../components/BreakOverlay'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
-import { C } from '../components/Widgets'
+import { C, parseSheetDate } from '../components/Widgets'
 import { computeEarlyStart } from '../lib/schedule'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
 import MyDayTab from '../components/tabs/MyDayTab'
@@ -17,6 +17,16 @@ function hourLabel(h) {
   const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
   const suf  = (n) => n >= 12 ? 'PM' : 'AM'
   return `${to12(h)}:00 ${suf(h)} – ${to12((h+1)%24)}:00 ${suf((h+1)%24)}`
+}
+// shiftDateStr is "DD/MM/YYYY" (todayStr() format, the date this shift
+// started on). Compares calendar day, not raw string, so single- vs
+// zero-padded sheet dates still match correctly.
+function sameDayAsShift(raisedAt, shiftDateStr) {
+  if (!shiftDateStr) return true // shift date unknown — don't hide anything
+  const raisedD = parseSheetDate(raisedAt)
+  if (!raisedD) return false
+  const [d, m, y] = shiftDateStr.split('/').map(Number)
+  return raisedD.getFullYear() === y && raisedD.getMonth() === m - 1 && raisedD.getDate() === d
 }
 function fmtShift(startHour, endHour) {
   if (startHour==null || endHour==null) return '—'
@@ -30,6 +40,7 @@ export default function Dashboard() {
   const [user, setUser] = useState(null)
   const [shiftStatus, setShiftStatus] = useState('loading')
   const [startTime, setStartTime] = useState('')
+  const [shiftDate, setShiftDate] = useState('') // DD/MM/YYYY — the calendar date THIS shift started on (not "today", for night shifts crossing midnight)
   const [currentHour, setCurrentHour] = useState(new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours())
   const [clients, setClients] = useState([])
   const [filled, setFilled] = useState({})
@@ -91,9 +102,11 @@ export default function Dashboard() {
       if (statusData.status === 'active') {
         setShiftStatus('active')
         setStartTime(statusData.startTime)
+        setShiftDate(statusData.shiftDate || '')
       } else if (statusData.status === 'ended') {
         setShiftStatus('ended')
         setStartTime(statusData.startTime || '')
+        setShiftDate(statusData.shiftDate || '')
       } else {
         setShiftStatus('not_started')
       }
@@ -212,6 +225,7 @@ export default function Dashboard() {
       if (data.success) {
         setShiftStatus('active')
         setStartTime(data.startTime)
+        setShiftDate(data.shiftDate || '')
         setEarlyStartPreview(null)
         loadClients(); loadMyDay(); loadSummary(summaryRangeRef.current)
         // Normal (non-early) start — the early-start path already showed its
@@ -257,9 +271,18 @@ export default function Dashboard() {
     }
   }
 
+  // Only the requests raised on the day THIS shift started — not the
+  // employee's entire pending backlog — belong in the end-of-shift
+  // follow-up prompt. Works for night shifts crossing midnight too, since
+  // shiftDate is the calendar day the shift actually started on.
+  const todaysPendingFootage = useMemo(
+    () => footage.pending.filter(item => sameDayAsShift(item.raisedAt, shiftDate)),
+    [footage.pending, shiftDate]
+  )
+
   async function handleEndShiftClick() {
     if (!confirm('Are you sure you want to end your shift?')) return
-    if (footage.pending.length > 0) {
+    if (todaysPendingFootage.length > 0) {
       const res = await fetch('/api/footage/followup-options')
       const data = await res.json()
       setForwardOptions(data)
@@ -283,7 +306,7 @@ export default function Dashboard() {
 
   async function handleForwardAndEnd() {
     setForwarding(true)
-    for (const item of footage.pending) {
+    for (const item of todaysPendingFootage) {
       const forwardTo = forwardSelections[item.issueId]
       if (forwardTo) {
         await fetch('/api/footage/forward', {
@@ -403,9 +426,9 @@ export default function Dashboard() {
         <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'16px',padding:'2rem',maxWidth:'600px',width:'100%'}}>
           <div style={{color:C.amber,fontSize:'20px',fontWeight:'700',marginBottom:'8px'}}>⚠ Pending Footage Requests</div>
           <div style={{color:C.muted,fontSize:'13px',marginBottom:'24px'}}>
-            You have {footage.pending.length} pending footage request(s). Forward them to another employee before ending shift, or skip forwarding.
+            You have {todaysPendingFootage.length} pending footage request(s) from today's shift. Forward them to another employee before ending shift, or skip forwarding.
           </div>
-          {footage.pending.map(item => (
+          {todaysPendingFootage.map(item => (
             <div key={item.issueId} style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'10px',padding:'14px',marginBottom:'10px'}}>
               <div style={{color:C.text,fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}>
                 <span style={{color:C.blue,marginRight:'6px'}}>▶</span>{item.client} · {item.vehicle}

@@ -26,10 +26,10 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'not_started' })
     }
     if (myRow[6] === 'Active') {
-      return res.status(200).json({ status: 'active', startTime: myRow[3] })
+      return res.status(200).json({ status: 'active', startTime: myRow[3], shiftDate: myRow[2] })
     }
     if (myRow[6] === 'Ended') {
-      return res.status(200).json({ status: 'ended', startTime: myRow[3], endTime: myRow[4] })
+      return res.status(200).json({ status: 'ended', startTime: myRow[3], endTime: myRow[4], shiftDate: myRow[2] })
     }
     return res.status(200).json({ status: 'not_started' })
 
