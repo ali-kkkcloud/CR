@@ -18,7 +18,10 @@ function ddmmyyyy(d) {
 export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, todayISO }) {
   const [search, setSearch] = useState('')
   const [quickRange, setQuickRange] = useState('all')
-  const [statusChip, setStatusChip] = useState('all')
+  // null = nothing selected yet — only the two summary cards + the 72h
+  // highlight are shown. The full list only opens once a card (or the
+  // highlight) is clicked.
+  const [statusChip, setStatusChip] = useState(null)
   const [page, setPage] = useState(1)
   const [drawerItem, setDrawerItem] = useState(null)
 
@@ -68,6 +71,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
   }, [rangeFiltered, search])
 
   const tableRows = useMemo(() => {
+    if (!statusChip) return []
     if (statusChip==='all') return searchScoped
     if (statusChip==='overdue') return searchScoped.filter(i => i.ageHours!=null && i.ageHours>24)
     if (statusChip==='over72') return searchScoped.filter(i => i.status!=='Completed' && i.ageHours!=null && i.ageHours>72)
@@ -131,7 +135,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
         ].map(card => {
           const active = statusChip === card.key
           return (
-            <div key={card.key} onClick={()=>{ setStatusChip(active?'all':card.key); setPage(1) }}
+            <div key={card.key} onClick={()=>{ setStatusChip(active?null:card.key); setPage(1) }}
               style={{
                 background: active ? C.accentDark+'33' : C.card,
                 border:`1px solid ${active ? card.color : C.border}`,
@@ -153,7 +157,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
 
       {/* Ageing highlight — the requests most likely to have been forgotten */}
       <div
-        onClick={()=>{ setStatusChip(statusChip==='over72'?'all':'over72'); setPage(1) }}
+        onClick={()=>{ setStatusChip(statusChip==='over72'?null:'over72'); setPage(1) }}
         style={{
           display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', cursor:'pointer',
           background: pendingOver72h>0 ? C.red+'14' : C.card,
@@ -168,7 +172,16 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
         </span>
       </div>
 
-      {/* Table */}
+      {/* Nothing selected yet — nudge instead of dumping the full list */}
+      {!statusChip && (
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:'8px', color:C.muted, fontSize:'12px', background:C.card, border:`1px dashed ${C.border2}`, borderRadius:'12px', padding:'26px', marginBottom:'12px' }}>
+          <Icon name="search" size={14} color={C.muted} />
+          Click "Pending" or "Completed" above to view the full, newest-first list.
+        </div>
+      )}
+
+      {/* Table — only once a card (or the 72h highlight) has been opened */}
+      {statusChip && (
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', overflow:'hidden' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'6px', padding:'14px 16px', borderBottom:`1px solid ${C.border}`, flexWrap:'wrap' }}>
           {['all','pending','forwarded','completed','overdue'].map(chip => (
@@ -229,6 +242,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
           <button disabled={page>=totalPages} onClick={()=>setPage(p=>p+1)} style={{ ...chipStyle, opacity:page>=totalPages?0.4:1 }}>Next ›</button>
         </div>
       </div>
+      )}
 
       {/* Drawer */}
       {drawerItem && (
