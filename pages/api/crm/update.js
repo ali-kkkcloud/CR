@@ -27,10 +27,16 @@ export default async function handler(req, res) {
     const shiftDate = (!startedToday && activeYesterday) ? yesterday : today
 
     const rows  = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`)
+    // If the same slot somehow has more than one row (two polls can each
+    // append a placeholder), always edit the one that already holds data —
+    // otherwise a second save would land on the blank twin and the earlier
+    // update would be stranded on a row nothing reads back.
     let existingRowIndex = -1
     for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0]===shiftDate && rows[i][2]===user.name && rows[i][3]===client && rows[i][4]===String(slot??hour)) {
-        existingRowIndex = i+1; break
+      const r = rows[i]
+      if (r[0]===shiftDate && r[2]===user.name && r[3]===client && r[4]===String(slot??hour)) {
+        if ((r[5] || '').toString().trim()) { existingRowIndex = i+1; break }
+        if (existingRowIndex === -1) existingRowIndex = i+1
       }
     }
     const rowData = [

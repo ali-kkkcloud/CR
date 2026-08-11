@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, appendRow, appendRows, updateRowCells,
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, findOpenShiftRow
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution } from '../../../lib/schedule'
 
@@ -31,14 +31,10 @@ export default async function handler(req, res) {
     // employee "Active" forever.
     const yesterday = ddmmyyyyFromDate(new Date(nowTime.getTime() - 24*3600000))
     const shiftRows = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
-    let shiftRowIndex = -1, startTimeStr = '', shiftDate = today
-    for (let i = shiftRows.length - 1; i >= 1; i--) {
-      const r = shiftRows[i]
-      if ((r[0] || '').toString().trim() === user.empId.toString().trim()
-          && (r[2] === today || r[2] === yesterday) && r[6] === 'Active') {
-        shiftRowIndex = i + 1; startTimeStr = r[3]; shiftDate = r[2]; break
-      }
-    }
+    const open = findOpenShiftRow(shiftRows, user.empId, [today, yesterday])
+    const shiftRowIndex = open ? open.rowNumber : -1
+    const startTimeStr  = open ? open.row[3] : ''
+    const shiftDate     = open ? open.date : today
     const duration = startTimeStr ? calcDuration(shiftDate, startTimeStr, today, now) : '—'
     if (shiftRowIndex > 0) {
       await updateRowCells(CRM_SHEET_ID, TABS.SHIFT_LOG, shiftRowIndex, 5, [now, duration, 'Ended'])
