@@ -235,7 +235,11 @@ export default function Dashboard() {
         if (!confirmEarly) {
           const adjusted = data.lateStart
           const empSchedule = adjusted
-            ? { start: adjusted.start, end: adjusted.end, actualStart: data.startTime, isLateAdjustment: true }
+            ? {
+                start: adjusted.start, end: adjusted.end, actualStart: data.startTime,
+                isLateAdjustment: true,
+                hoursShifted: adjusted.hoursShifted, extraHour: adjusted.extraHour,
+              }
             : (summary && summary.scheduledStart != null
                 ? { start: summary.scheduledStart, end: summary.scheduledEnd, actualStart: data.startTime }
                 : null)
@@ -625,7 +629,9 @@ export default function Dashboard() {
 
       {/* Shift started (normal, non-early) confirmation */}
       {shiftStartedInfo && (() => {
-        const isLate = !!shiftStartedInfo.isLateAdjustment
+        const isLate  = !!shiftStartedInfo.isLateAdjustment
+        const moved   = (shiftStartedInfo.hoursShifted || 0) > 0
+        const owesHour = shiftStartedInfo.extraHour === 1
         return (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={()=>setShiftStartedInfo(null)}>
           <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'1.75rem', width:'380px', maxWidth:'90vw', textAlign:'center' }} onClick={e=>e.stopPropagation()}>
@@ -635,9 +641,14 @@ export default function Dashboard() {
             <div style={{ color:C.text, fontSize:'16px', fontWeight:700, marginBottom:'8px' }}>Shift started ✓</div>
             <div style={{ color:C.muted, fontSize:'12.5px', lineHeight:1.6, marginBottom:'18px' }}>
               You clocked in at <strong style={{color:isLate?C.amber:C.accent}}>{shiftStartedInfo.actualStart}</strong>.<br/>
-              {isLate ? 'Since you missed your grace hour, your shift has been updated to' : 'Your scheduled shift is'}<br/>
+              {isLate
+                ? (moved
+                    ? 'Your shift has been moved to'
+                    : 'You clocked in after the half hour, so your shift runs to')
+                : 'Your scheduled shift is'}<br/>
               <strong style={{ color: isLate?C.amber:C.text2, fontSize:'14px' }}>{fmtShift(shiftStartedInfo.start, shiftStartedInfo.end)}</strong>
-              {isLate && <><br/><span style={{color:C.muted}}>Your earlier hours today are marked Week Off and won't be counted.</span></>}
+              {owesHour && <><br/><span style={{color:C.muted}}>That includes one extra hour at the end, because you clocked in past the half hour.</span></>}
+              {moved && <><br/><span style={{color:C.muted}}>The hours before you arrived are marked Week Off and won't be counted.</span></>}
             </div>
             <button onClick={()=>setShiftStartedInfo(null)} style={{ width:'100%', background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'11px', cursor:'pointer' }}>Got it</button>
           </div>
@@ -657,6 +668,9 @@ export default function Dashboard() {
               You're early — your shift will be updated to<br/>
               <strong style={{ color:C.accent, fontSize:'14px' }}>{fmtShift(earlyStartPreview.start, earlyStartPreview.end)}</strong>
               <br/>instead of {fmtShift(summary?.scheduledStart, summary?.scheduledEnd)}.
+              {earlyStartPreview.extraHour === 1 && (
+                <><br/><span style={{ color:C.amber }}>You're past the half hour, so this includes one extra hour at the end.</span></>
+              )}
             </div>
             <div style={{ display:'flex', gap:'10px' }}>
               <button onClick={()=>{ setEarlyStartPreview(null); doStartShift(false) }} style={{ flex:1, background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'12.5px', fontWeight:600, padding:'11px', cursor:'pointer' }}>Keep Normal Time</button>
