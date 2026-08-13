@@ -1,7 +1,7 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
 import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
-import { getEmployeeShift, computeEarlyStart, computeLateStart } from '../../../lib/schedule'
+import { getEmployeeShift, computeShiftWindow } from '../../../lib/schedule'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -37,22 +37,18 @@ export default async function handler(req, res) {
       }
     }
 
-    // Recompute Early Start server-side (never trust the client) so
-    // scheduling stays correct even if the confirm dialog was skipped.
+    // Work out the window this arrival earns, server-side — never trust the
+    // client, so the maths is right even if the confirm dialog was skipped.
     const emp = getEmployeeShift(user.name)
-    let earlyStart = null
-    if (emp && req.body?.confirmEarlyStart) {
-      earlyStart = computeEarlyStart(emp, new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })))
-    }
+    const arrival = emp ? computeShiftWindow(emp, nowIST()) : null
 
-    // Late Start is automatic (not opt-in) — if they missed their grace
-    // hour entirely, their whole shift shifts forward by however many
-    // hours they missed, same mechanism as Early Start but the other way.
-    let lateStart = null
-    if (emp && !earlyStart) {
-      const arrivalHour = nowIST().getHours()
-      lateStart = computeLateStart(emp, arrivalHour)
-    }
+    // Arriving EARLY pulls the shift forward, which means finishing earlier,
+    // so it stays opt-in. Everything else — on time or late — is applied
+    // automatically, including the extra hour owed for arriving past the
+    // half hour.
+    const isEarly    = !!arrival?.isEarly
+    const earlyStart = isEarly && req.body?.confirmEarlyStart ? arrival : null
+    const lateStart  = !isEarly && arrival && !arrival.unchanged ? arrival : null
 
     if (earlyStart || lateStart) {
       const adj = earlyStart || lateStart
