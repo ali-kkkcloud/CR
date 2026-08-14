@@ -19,8 +19,8 @@ export default async function handler(req, res) {
       }
     }
 
-    // Cols: EmpId | Name | Date | StartTime | EndTime | DurationMinutes | Status
-    await appendRow(CRM_SHEET_ID, TABS.BREAKS, [user.empId, user.name, today, now, '', '', 'Active'])
+    // Cols: EmpId | Name | Date | StartTime | EndTime | DurationMinutes | Status | Type
+    await appendRow(CRM_SHEET_ID, TABS.BREAKS, [user.empId, user.name, today, now, '', '', 'Active', 'Manual'])
     return res.status(200).json({ success: true, startTime: now })
   } catch (err) {
     console.error('Break start error:', err)

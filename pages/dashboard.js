@@ -63,7 +63,7 @@ export default function Dashboard() {
   const summaryRangeRef = useRef('month')
   useEffect(() => { summaryRangeRef.current = summaryRange }, [summaryRange])
 
-  const [breakStatus, setBreakStatus] = useState({ onBreak:false, startTime:null, history:[], totalMinutesToday:0 })
+  const [breakStatus, setBreakStatus] = useState({ onBreak:false, startTime:null, history:[], totalMinutesToday:0, isAuto:false, idleMinutes:10 })
   const [breakActionLoading, setBreakActionLoading] = useState(false)
 
   const [earlyStartPreview, setEarlyStartPreview] = useState(null) // { start, end, hoursShifted } | null
@@ -503,6 +503,8 @@ export default function Dashboard() {
       <Head><title>Cautio CRM — On Break</title></Head>
       <BreakOverlay
         startTime={breakStatus.startTime}
+        isAuto={breakStatus.isAuto}
+        idleMinutes={breakStatus.idleMinutes}
         history={breakStatus.history}
         totalMinutesToday={breakStatus.totalMinutesToday}
         onResume={resumeFromBreak}

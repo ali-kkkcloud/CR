@@ -11,20 +11,30 @@ export default async function handler(req, res) {
     const now   = nowStr()
     const rows  = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`)
 
-    let rowIndex = -1, startTime = ''
+    // Close EVERY open break, not just the newest one. Auto-breaks are
+    // written from two places (the employee's own poll and the admin view),
+    // so two requests landing together can leave a duplicate open row behind.
+    // Closing them all means resuming always actually resumes, instead of the
+    // employee clicking Resume and staying stuck behind the overlay.
+    const open = []
     for (let i = rows.length - 1; i >= 1; i--) {
       const r = rows[i]
       if ((r[0] || '').toString().trim() === user.empId.toString().trim() && r[2] === today && r[6] === 'Active') {
-        rowIndex = i + 1
-        startTime = r[3]
-        break
+        open.push({ rowIndex: i + 1, startTime: r[3] })
       }
     }
-    if (rowIndex === -1) return res.status(404).json({ error: 'No active break found' })
+    if (open.length === 0) return res.status(404).json({ error: 'No active break found' })
 
-    const minutes = calcDurationMinutes(today, startTime, today, now)
-    // Cols E=EndTime F=DurationMinutes G=Status (1-indexed start col 5 = 'E')
-    await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, rowIndex, 5, [now, minutes, 'Completed'])
+    let minutes = 0
+    for (const b of open) {
+      const m = calcDurationMinutes(today, b.startTime, today, now)
+      // Only the earliest open row carries the real duration; any duplicate
+      // is closed at zero so the day's break total isn't counted twice.
+      const isPrimary = b.rowIndex === open[open.length - 1].rowIndex
+      if (isPrimary) minutes = m
+      // Cols E=EndTime F=DurationMinutes G=Status (1-indexed start col 5 = 'E')
+      await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, b.rowIndex, 5, [now, isPrimary ? m : 0, 'Completed'])
+    }
 
     return res.status(200).json({ success: true, endTime: now, minutes })
   } catch (err) {

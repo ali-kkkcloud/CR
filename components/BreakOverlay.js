@@ -7,7 +7,7 @@ function fmtMinutes(mins) {
   return h>0 ? `${h}h ${m}m` : `${m}m`
 }
 
-export default function BreakOverlay({ startTime, history, totalMinutesToday, onResume, resuming }) {
+export default function BreakOverlay({ startTime, history, totalMinutesToday, onResume, resuming, isAuto, idleMinutes }) {
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
@@ -49,8 +49,14 @@ export default function BreakOverlay({ startTime, history, totalMinutesToday, on
         <div style={{ width:'72px', height:'72px', borderRadius:'50%', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 20px' }}>
           <Icon name="clock" size={32} color={C.accent} />
         </div>
-        <div style={{ color:C.text, fontSize:'20px', fontWeight:800, marginBottom:'6px' }}>You're on a break</div>
-        <div style={{ color:C.muted, fontSize:'13px', marginBottom:'28px' }}>Take your time. Your dashboard will be here when you're back.</div>
+        <div style={{ color:C.text, fontSize:'20px', fontWeight:800, marginBottom:'6px' }}>
+          {isAuto ? 'Break started automatically' : "You're on a break"}
+        </div>
+        <div style={{ color:C.muted, fontSize:'13px', marginBottom:'28px' }}>
+          {isAuto
+            ? `Nothing was recorded for ${idleMinutes || 10} minutes, so a break was started for you from when you stopped. Resume when you're back at your desk.`
+            : "Take your time. Your dashboard will be here when you're back."}
+        </div>
 
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'28px', marginBottom:'20px' }}>
           <div style={{ color:C.muted, fontSize:'10.5px', fontWeight:700, letterSpacing:'1px', marginBottom:'10px' }}>BREAK STARTED AT {startTime}</div>
@@ -71,7 +77,10 @@ export default function BreakOverlay({ startTime, history, totalMinutesToday, on
             <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
               {history.map((h,i) => (
                 <div key={i} style={{ display:'flex', justifyContent:'space-between', fontSize:'11px' }}>
-                  <span style={{ color:C.text2 }}>{h.startTime} {h.endTime ? `→ ${h.endTime}` : '(ongoing)'}</span>
+                  <span style={{ color:C.text2 }}>
+                    {h.startTime} {h.endTime ? `→ ${h.endTime}` : '(ongoing)'}
+                    {h.isAuto && <span style={{ color:C.amber, marginLeft:'6px', fontSize:'9.5px', fontWeight:700 }}>AUTO</span>}
+                  </span>
                   <span style={{ color: h.status==='Active'?C.accent:C.muted, fontWeight:600 }}>{fmtMinutes(h.minutes)}</span>
                 </div>
               ))}
