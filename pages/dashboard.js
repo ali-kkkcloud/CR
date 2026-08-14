@@ -81,6 +81,10 @@ export default function Dashboard() {
   // { clientName: lastEditedTimestamp } — protects in-progress edits from
   // being overwritten by the 30s background refresh.
   const editingRef = useRef({})
+  // When this employee was last actually at the screen. Only genuine input
+  // counts — the 30s poll itself must never look like activity, or nobody
+  // would ever go idle.
+  const lastInputRef = useRef(Date.now())
 
   useEffect(() => {
     function tick() {
@@ -172,9 +176,25 @@ export default function Dashboard() {
     }
   }, [])
 
+  // Mouse, keys, scroll, touch — throttled, because mousemove fires
+  // constantly and we only need the timestamp, not every event.
+  useEffect(() => {
+    const events = ['mousemove','mousedown','keydown','wheel','scroll','touchstart']
+    let last = 0
+    const onInput = () => {
+      const n = Date.now()
+      if (n - last < 5000) return
+      last = n
+      lastInputRef.current = n
+    }
+    events.forEach(e => window.addEventListener(e, onInput, { passive: true }))
+    return () => events.forEach(e => window.removeEventListener(e, onInput))
+  }, [])
+
   const loadBreakStatus = useCallback(async () => {
     try {
-      const res  = await fetch('/api/break/status')
+      const agoMs = Math.max(0, Date.now() - lastInputRef.current)
+      const res  = await fetch(`/api/break/status?activeAgoMs=${agoMs}`)
       const data = await res.json()
       if (!res.ok || data.error) return
       setBreakStatus(data)
