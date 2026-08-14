@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { readSheet, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr } from '../../../lib/sheets'
-import { sweepAutoBreaks, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
+import { sweepAutoBreaks, recordHeartbeat, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -16,7 +16,21 @@ export default async function handler(req, res) {
     // crossing the threshold — and if they closed the laptop instead, it is
     // picked up the moment they come back, backdated to when they stopped.
     if (user.role !== 'admin') {
-      await sweepAutoBreaks([{ empId: user.empId, name: user.name }])
+      // The browser tells us how long ago it last saw real input. Mark that
+      // first, so somebody sitting at their screen through a quiet hour is
+      // counted as present even when there is nothing left to update.
+      let seenAt = null
+      if (req.query.activeAgoMs != null) {
+        try {
+          seenAt = await recordHeartbeat(user, req.query.activeAgoMs)
+        } catch (e) {
+          // A failed heartbeat must never block the status the page is asking
+          // for — worst case the employee looks idle for one more poll.
+          console.error('Heartbeat failed:', e.message)
+        }
+      }
+      const override = seenAt != null ? { [user.empId.toString().trim()]: seenAt } : null
+      await sweepAutoBreaks([{ empId: user.empId, name: user.name }], override)
     }
 
     const rows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`)
