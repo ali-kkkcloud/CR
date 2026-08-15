@@ -3,7 +3,7 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import {
-  employees, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT
+  employees, getScheduledEmployeesAtHour, distributeClientsForHour, customTextFor
 } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
@@ -89,7 +89,7 @@ export default async function handler(req, res) {
           return hour >= l.fromHour || hour < l.toHour
         })
 
-        const customText = EMPLOYEE_CUSTOM_TEXT[emp.name]?.[hour]
+        const customText = customTextFor(emp.name, hour)
         if (customText) {
           return { hour, isOnLeave: false, isCustom: true, customText, clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
         }

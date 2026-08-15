@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog
 } from '../../../lib/sheets'
-import { employees, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT } from '../../../lib/schedule'
+import { employees, getScheduledEmployeesAtHour, distributeClientsForHour, customTextFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
 function ddmmyyyyFromDate(d) {
@@ -135,7 +135,7 @@ export default async function handler(req, res) {
       }
 
       // Custom text slot (e.g. BRINDA's CALL hours)
-      const customText = EMPLOYEE_CUSTOM_TEXT[user.name]?.[hour]
+      const customText = customTextFor(user.name, hour)
       if (customText) {
         return {
           hour,
