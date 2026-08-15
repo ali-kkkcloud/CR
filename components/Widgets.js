@@ -204,8 +204,19 @@ export function slaBadge(hoursElapsed) {
 // exports. Returns null if unparseable — callers should fall back to "—".
 export function parseSheetDate(str) {
   if (!str) return null
-  const m = str.toString().match(/(\d{1,2})\/(\d{1,2})\/(\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?/)
-  if (!m) return null
-  const [, d, mo, y, h, mi, se] = m
-  return new Date(+y, +mo-1, +d, +h, +mi, +(se||0))
+  const t = str.toString()
+  const m = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (m) {
+    const [, d, mo, y, h, mi, se] = m
+    return new Date(+y, +mo-1, +d, +h, +mi, +(se||0))
+  }
+  // Some Issue Tracker rows carry a date with no time at all. Treating those
+  // as unreadable dropped them out of every sort and out of the 72-hour
+  // window entirely; midnight on that day is the honest reading.
+  const d2 = t.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+  if (d2) {
+    const [, d, mo, y] = d2
+    return new Date(+y, +mo-1, +d, 0, 0, 0)
+  }
+  return null
 }
