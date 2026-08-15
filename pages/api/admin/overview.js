@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
-  getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, fetchClientVehicleCounts,
+  getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, fetchClientVehicleCounts,
 } from '../../../lib/sheets'
 import { ALL_EMPLOYEES, isScheduledAtHour, distributeClientsForHour } from '../../../lib/schedule'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
@@ -65,7 +65,10 @@ export default async function handler(req, res) {
       const y = new Date(istNow.getTime() - 24 * 3600000)
       const yesterday = `${String(y.getDate()).padStart(2,'0')}/${String(y.getMonth()+1).padStart(2,'0')}/${y.getFullYear()}`
       const onShiftNames = getOnShiftNamesFromLog(shiftRows, [today, yesterday])
-      const { poolNames } = buildHourPool({ hour: currentHour, leaveMap, overridesMap, onShiftNames })
+      const { poolNames } = buildHourPool({
+        hour: currentHour, leaveMap, overridesMap, onShiftNames,
+        clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterday]),
+      })
       const locked = buildLockedAssignments(updateRows, today, currentHour)
       const dist = distributeClientsForHour(currentHour, poolNames, vehicleMap, locked, true)
       Object.entries(dist).forEach(([name, clients]) => {

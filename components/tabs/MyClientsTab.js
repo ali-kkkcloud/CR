@@ -3,7 +3,31 @@ import { C } from '../Widgets'
 const STATUS_OPTIONS  = ['', 'Updated', 'No New Misalignment', 'All Vehicles are Offline', 'No Misalignment']
 const FATIGUE_OPTIONS = ['No', 'Yes']
 
-export default function MyClientsTab({ clients, filled, saveUpdate, saving, currentHour, canEdit = true }) {
+function fmtHour(h) {
+  if (h == null) return ''
+  const ampm = h >= 12 ? 'pm' : 'am'
+  const hh = h % 12 === 0 ? 12 : h % 12
+  return `${hh}:00 ${ampm}`
+}
+
+// An empty list has three quite different meanings, and saying only "no
+// clients" leaves the employee guessing which one they're looking at —
+// most often after clocking in early, when the page looks broken.
+function emptyMessage({ scheduledThisHour, clockedOut, myWindow }) {
+  if (clockedOut) {
+    return { title: 'Your shift has ended.', detail: 'Anything still open went to whoever is on shift now.' }
+  }
+  if (scheduledThisHour === false && myWindow) {
+    return {
+      title: `Your shift starts at ${fmtHour(myWindow.start)}.`,
+      detail: 'You clocked in early and kept your normal timing, so this hour belongs to whoever is on shift right now. Your clients appear the moment your shift begins.',
+    }
+  }
+  return { title: 'No clients assigned for this slot.', detail: '' }
+}
+
+export default function MyClientsTab({ clients, filled, saveUpdate, saving, currentHour, canEdit = true, scheduledThisHour, clockedOut, myWindow }) {
+  const empty = emptyMessage({ scheduledThisHour, clockedOut, myWindow })
   return (
     <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', overflow:'hidden' }}>
       {!canEdit && (
@@ -12,7 +36,14 @@ export default function MyClientsTab({ clients, filled, saveUpdate, saving, curr
         </div>
       )}
       {clients.length === 0 ? (
-        <div style={{ color:C.muted, textAlign:'center', padding:'3rem' }}>No clients assigned for this slot.</div>
+        <div style={{ textAlign:'center', padding:'3rem 1.5rem' }}>
+          <div style={{ color:C.text2, fontSize:'13.5px', fontWeight:600 }}>{empty.title}</div>
+          {empty.detail && (
+            <div style={{ color:C.muted, fontSize:'12px', lineHeight:1.6, marginTop:'8px', maxWidth:'420px', marginLeft:'auto', marginRight:'auto' }}>
+              {empty.detail}
+            </div>
+          )}
+        </div>
       ) : (
         <>
           <div style={th.row}>

@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog,
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
 } from '../../../lib/sheets'
 import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
 import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
@@ -144,6 +144,7 @@ export default async function handler(req, res) {
 
     const { poolNames, scheduledNames } = buildHourPool({
       hour, leaveMap, overridesMap, onShiftNames,
+      clockedOutNames: getClockedOutNamesFromLog(shiftLogRows, [today, yesterday]),
       alwaysInclude: iHaveClockedOut ? null : user.name,
     })
 
@@ -192,6 +193,14 @@ export default async function handler(req, res) {
       }
     })
 
+    // Why the list might be empty. An employee who clocks in before their
+    // shift opens — arriving at 07:42 for an eight o'clock start and choosing
+    // to keep their normal time — has no clients until eight, which is
+    // correct but looks exactly like a broken page unless the screen says so.
+    const myWindow = overridesMap[user.name]
+      ? { start: overridesMap[user.name].start, end: overridesMap[user.name].end }
+      : (() => { const e = ALL_EMPLOYEES.find(x => x.name === user.name); return e ? { start: e.start, end: e.end } : null })()
+
     return res.status(200).json({
       hour, clients, filled,
       // How many people this hour is actually being shared between, so the
@@ -199,6 +208,9 @@ export default async function handler(req, res) {
       scheduledCount: poolNames.length,
       rosteredCount:  scheduledNames.length,
       shiftDate: myShiftDate,
+      scheduledThisHour: scheduledNames.includes(user.name),
+      clockedOut: iHaveClockedOut,
+      myWindow,
     })
 
   } catch (err) {

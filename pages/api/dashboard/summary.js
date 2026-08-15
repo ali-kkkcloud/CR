@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, getShiftOverridesForDate,
-  getLeaveMapForDate, getOnShiftNamesFromLog,
+  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
 } from '../../../lib/sheets'
 import { ALL_EMPLOYEES, distributeClientsForHour } from '../../../lib/schedule'
 import { collapseSlotOwners, buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
@@ -282,7 +282,9 @@ export default async function handler(req, res) {
       const clockedOut = myShiftRows.length > 0 && !myShiftRows.some(r => r[6] === 'Active')
       const { poolNames } = buildHourPool({
         hour: nowISTDate().getHours(), leaveMap: leaveMapNow, overridesMap: todayOverride,
-        onShiftNames, alwaysInclude: clockedOut ? null : user.name,
+        onShiftNames,
+        clockedOutNames: getClockedOutNamesFromLog(shiftRows, [calendarToday, yesterday]),
+        alwaysInclude: clockedOut ? null : user.name,
       })
       const locked = buildLockedAssignments(updateRows, today, nowISTDate().getHours())
       const dist = distributeClientsForHour(nowISTDate().getHours(), poolNames, vehicleMap, locked, true)

@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, appendRow, appendRows, updateRowCells,
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, findOpenShiftRow
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, findOpenShiftRow
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, distributeClientsForHour } from '../../../lib/schedule'
 import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
@@ -90,7 +90,9 @@ export default async function handler(req, res) {
     // as handing over 51 clients on the way out when they were holding 11,
     // and the audit log grew by the same wrong number.
     const { poolNames } = buildHourPool({
-      hour: currentHour, leaveMap, overridesMap, onShiftNames, alwaysInclude: user.name,
+      hour: currentHour, leaveMap, overridesMap, onShiftNames,
+      clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterday]),
+      alwaysInclude: user.name,
     })
     const locked = buildLockedAssignments(updateRows, shiftDate, currentHour)
     const dist = distributeClientsForHour(currentHour, poolNames, vehicleMap, locked, true)

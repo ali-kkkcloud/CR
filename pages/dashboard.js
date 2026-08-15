@@ -44,6 +44,7 @@ export default function Dashboard() {
   const [currentHour, setCurrentHour] = useState(new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours())
   const [clients, setClients] = useState([])
   const [filled, setFilled] = useState({})
+  const [clientContext, setClientContext] = useState({})
   const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
   const [myDay, setMyDay] = useState(null)
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -124,6 +125,12 @@ export default function Dashboard() {
       const data = await res.json()
       if (!res.ok || data.error) return   // keep last good state, retry on next poll
       if (data.clients) setClients(data.clients)
+      // Why the list looks the way it does — an empty one needs explaining.
+      setClientContext({
+        scheduledThisHour: data.scheduledThisHour,
+        clockedOut: data.clockedOut,
+        myWindow: data.myWindow || null,
+      })
       if (data.filled) {
         // Merge, don't clobber: a background refresh must never wipe out
         // what the employee is part-way through typing. Any client they've
@@ -635,7 +642,7 @@ export default function Dashboard() {
               />
             )}
             {activeTab === 'clients' && (
-              <MyClientsTab clients={clients} filled={filled} saveUpdate={saveUpdate} saving={saving} currentHour={currentHour} canEdit={isActive} />
+              <MyClientsTab clients={clients} filled={filled} saveUpdate={saveUpdate} saving={saving} currentHour={currentHour} canEdit={isActive} {...clientContext} />
             )}
             {activeTab === 'footage' && <EmpFootageTab footage={footage} />}
             {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
