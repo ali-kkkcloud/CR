@@ -3,7 +3,8 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
   getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, fetchClientVehicleCounts,
 } from '../../../lib/sheets'
-import { ALL_EMPLOYEES, isScheduledAtHour, distributeClientsForHour } from '../../../lib/schedule'
+import { employees, isScheduledAtHour, distributeClientsForHour } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -14,6 +15,10 @@ export default async function handler(req, res) {
   if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today       = todayStr()
     const currentHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours()
 
@@ -84,7 +89,7 @@ export default async function handler(req, res) {
       console.error('overview: live split failed', e.message)
     }
 
-    const empStatus = ALL_EMPLOYEES.map(emp => {
+    const empStatus = employees().map(emp => {
       const shiftLog   = todayShifts.find(r => r[1] === emp.name)
       const override   = overridesMap[emp.name]
       const effective  = override ? { ...emp, start: override.start, end: override.end } : emp
@@ -151,7 +156,7 @@ export default async function handler(req, res) {
       redistribution: todayRedistrib,
       footage: { pending: pendingFootage, done: doneFootage },
       kpis: {
-        total:      ALL_EMPLOYEES.length,
+        total:      employees().length,
         active:     empStatus.filter(e => e.statusLabel === 'Active').length,
         weekOff:    empStatus.filter(e => e.isWeekOff).length,
         notStarted: empStatus.filter(e => e.statusLabel === 'Not Started').length,

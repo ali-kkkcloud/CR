@@ -1,6 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { readSheet, appendRow, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr } from '../../../lib/sheets'
 import { getEmployeeShift, computeOTExtension } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -8,6 +9,10 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today = todayStr()
     const now   = nowStr()
     const emp = getEmployeeShift(user.name)

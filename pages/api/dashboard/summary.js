@@ -4,7 +4,8 @@ import {
   fetchClientVehicleCounts, parseISTDateTime, getShiftOverridesForDate,
   getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
 } from '../../../lib/sheets'
-import { ALL_EMPLOYEES, distributeClientsForHour } from '../../../lib/schedule'
+import { employees, distributeClientsForHour } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 import { collapseSlotOwners, buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -48,13 +49,17 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const range = (req.query.range || 'month').toString()
     const calendarToday = todayStr()
     const dates = rangeDates(range)
     const dateStrs = dates.map(ddmmyyyy)
     const dateStrSet = new Set(dateStrs)
 
-    const emp = ALL_EMPLOYEES.find(e => e.name === user.name)
+    const emp = employees().find(e => e.name === user.name)
 
     // Resolve MY operating "shift date" — for a night shift that began
     // yesterday evening and is still running past midnight, everything

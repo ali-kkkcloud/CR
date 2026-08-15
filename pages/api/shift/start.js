@@ -2,6 +2,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
 import { getEmployeeShift, computeShiftWindow } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -13,6 +14,10 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today = todayStr()
     const now   = nowStr()
     const rows  = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)

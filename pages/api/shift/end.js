@@ -5,6 +5,7 @@ import {
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, findOpenShiftRow
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, distributeClientsForHour } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -19,6 +20,10 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today       = todayStr()
     const now         = nowStr()
     const nowTime     = nowIST()

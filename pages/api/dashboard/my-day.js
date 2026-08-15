@@ -2,7 +2,8 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog
 } from '../../../lib/sheets'
-import { ALL_EMPLOYEES, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT } from '../../../lib/schedule'
+import { employees, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -20,6 +21,10 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today = todayStr()
     const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
     const explicitDate = req.query.date ? req.query.date.toString() : null
@@ -48,11 +53,11 @@ export default async function handler(req, res) {
     ])
 
     // Find this employee's scheduled hours
-    const emp = ALL_EMPLOYEES.find(e => e.name === user.name)
+    const emp = employees().find(e => e.name === user.name)
     if (!emp) return res.status(200).json({ date, timeline: [], totalClients:0, totalCompleted:0, totalMissed:0 })
 
     // This date's effective window — Early Start / OT overrides take
-    // priority over the static ALL_EMPLOYEES schedule when present.
+    // priority over the static employees() schedule when present.
     const myOverride = overridesMap[user.name]
     const effectiveEmp = myOverride ? { ...emp, start: myOverride.start, end: myOverride.end } : emp
     const isWrap = wrapsPastMidnight(effectiveEmp.start, effectiveEmp.end)
