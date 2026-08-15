@@ -26,15 +26,23 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, alreadyStarted: true, startTime: open.row[3], shiftDate: open.date })
     }
 
-    // Safety net: close out any orphaned Active break left over from a
-    // previous day (e.g. shift ended without End Shift being clicked).
+    // Safety net: close out every orphaned Active break before the new shift
+    // begins (e.g. a shift that ended without End Shift being clicked).
+    // Nobody can be on a break at the moment they clock in, so any row still
+    // marked Active is stale — and leaving even one behind would put the
+    // employee straight back behind the break overlay and stop the idle
+    // check ever firing again for the whole shift.
     const breakRows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`)
     for (let i = breakRows.length - 1; i >= 1; i--) {
       const r = breakRows[i]
-      if ((r[0] || '').toString().trim() === user.empId.toString().trim() && r[6] === 'Active' && r[2] !== today) {
-        await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 4, [r[3], 0, 'Completed'])
-        break
-      }
+      if ((r[0] || '').toString().trim() !== user.empId.toString().trim()) continue
+      if (r[6] !== 'Active') continue
+      // The real end time is unknowable — the shift it belonged to was never
+      // closed — so it is zeroed rather than credited as break time.
+      // Cols E=EndTime F=DurationMinutes G=Status. Writing from column D
+      // instead put "Completed" in the duration cell and left Status on
+      // Active, so the row was corrupted AND still counted as an open break.
+      await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 5, [r[3], 0, 'Completed'])
     }
 
     // Work out the window this arrival earns, server-side — never trust the

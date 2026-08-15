@@ -42,7 +42,18 @@ export default async function handler(req, res) {
     }
 
     const rows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`)
-    const relevant = rows.slice(1).filter(r => dateSet ? dateSet.has(r[2]) : r[2] === today)
+    const inRange = rows.slice(1).filter(r => dateSet ? dateSet.has(r[2]) : r[2] === today)
+
+    // One break, one line. If two requests ever manage to open the same break
+    // together, the pair share an employee, a date and a start time — showing
+    // both would report one break as two and count its minutes twice.
+    const seen = new Set()
+    const relevant = inRange.filter(r => {
+      const key = `${(r[0]||'').toString().trim()}|${r[2]}|${r[3]}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
 
     const byEmployee = {}
     relevant.forEach(r => {

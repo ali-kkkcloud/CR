@@ -7,7 +7,7 @@ function fmtMinutes(mins) {
   return h>0 ? `${h}h ${m}m` : `${m}m`
 }
 
-export default function BreakOverlay({ startTime, history, totalMinutesToday, onResume, resuming, isAuto, idleMinutes }) {
+export default function BreakOverlay({ startTime, startDate, history, totalMinutesToday, onResume, resuming, isAuto, idleMinutes }) {
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
@@ -29,16 +29,33 @@ export default function BreakOverlay({ startTime, history, totalMinutesToday, on
       }
       return null
     }
+    // The day the break began, "DD/MM/YYYY", which for one started before
+    // midnight is yesterday. Without it the time-of-day alone would be read
+    // as today and the counter would sit at zero.
+    function dayOffset() {
+      const m = (startDate || '').toString().match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+      if (!m) return null
+      const [, dd, mm, yy] = m
+      const then = new Date(parseInt(yy), parseInt(mm)-1, parseInt(dd))
+      const today = new Date(); today.setHours(0,0,0,0)
+      return Math.round((today - then) / 86400000)
+    }
     function tick() {
       const start = parseToToday(startTime)
       if (!start) return
-      const diff = Math.max(0, Math.floor((Date.now()-start.getTime())/1000))
+      let startMs = start.getTime()
+      const days = dayOffset()
+      if (days != null && days > 0) startMs -= days * 86400000
+      // No date to go on: a start that lands in the future can only be one
+      // from before midnight, so pull it back a day rather than show zero.
+      else if (days == null && startMs > Date.now()) startMs -= 86400000
+      const diff = Math.max(0, Math.floor((Date.now()-startMs)/1000))
       setElapsed(diff)
     }
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
-  }, [startTime])
+  }, [startTime, startDate])
 
   const mm = String(Math.floor(elapsed/60)).padStart(2,'0')
   const ss = String(elapsed%60).padStart(2,'0')

@@ -44,15 +44,26 @@ export default async function handler(req, res) {
     // from a previous day that were never resumed) — a shift ending should
     // never leave a break "ongoing" forever. ──
     const breakRows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`)
+    // Every open row is closed, not just the newest. An employee should only
+    // ever have one break running, but two writers landing together can leave
+    // a duplicate behind, and any row still marked Active would block the
+    // next shift's breaks entirely.
     for (let i = breakRows.length - 1; i >= 1; i--) {
       const r = breakRows[i]
-      if ((r[0] || '').toString().trim() === user.empId.toString().trim() && r[6] === 'Active') {
-        const isFromToday = r[2] === today
-        const minutes = isFromToday ? calcDurationMinutes(r[2], r[3], today, now) : 0
-        const endTimeToWrite = isFromToday ? now : r[3] // orphaned from a prior day — can't know real end, just close it out
-        await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 4, [endTimeToWrite, minutes, 'Completed'])
-        break // an employee should only ever have one Active break at a time
-      }
+      if ((r[0] || '').toString().trim() !== user.empId.toString().trim()) continue
+      if (r[6] !== 'Active') continue
+      // A break belonging to this shift is measured properly, including one
+      // that started before midnight on a night shift — calcDurationMinutes
+      // works off the row's own date, so it reports 13 minutes rather than a
+      // negative. Anything older is a genuine orphan from a shift that was
+      // never closed out, so it is simply zeroed rather than credited.
+      const belongsToThisShift = r[2] === today || r[2] === yesterday
+      const minutes = belongsToThisShift ? calcDurationMinutes(r[2], r[3], today, now) : 0
+      const endTimeToWrite = belongsToThisShift ? now : r[3]
+      // Cols E=EndTime F=DurationMinutes G=Status. Writing from column D
+      // instead overwrote StartTime and left Status on Active, so the break
+      // was never actually closed — which then blocked every later break.
+      await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 5, [endTimeToWrite, minutes, 'Completed'])
     }
 
     // ── 2. Redistribute only THIS HOUR's unfilled clients ──
