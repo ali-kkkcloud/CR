@@ -1,5 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { appendRow, CRM_SHEET_ID, TABS, todayStr, nowStr } from '../../../lib/sheets'
+import { loadScheduleData } from '../../../lib/roster'
+import { employees } from '../../../lib/schedule'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -13,8 +15,14 @@ export default async function handler(req, res) {
     }
     const now = nowStr()
     // EmpID | Name | Date | LeaveFrom_Hour | LeaveTo_Hour | Reason | MarkedBy | MarkedAt
+    // The caller may not know the ID; the roster does. Writing a blank into
+    // the ID column left rows that couldn't be traced back to an employee
+    // by anything but their name.
+    await loadScheduleData()
+    const resolvedId = empId || employees().find(e => e.name === empName)?.empId || ''
+
     await appendRow(CRM_SHEET_ID, TABS.LEAVES, [
-      empId || '', empName, date, fromHour, toHour ?? '', reason || 'Admin marked', user.name, now,
+      resolvedId, empName, date, fromHour, toHour ?? '', reason || 'Admin marked', user.name, now,
     ])
     return res.status(200).json({ success: true })
   } catch (err) {
