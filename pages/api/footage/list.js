@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS } from '../../../lib/sheets'
+import { readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS } from '../../../lib/sheets'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -33,7 +33,9 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
-    const rows = await readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`)
+    // Cached — the Issue Tracker is the biggest sheet the app reads and this
+    // list is polled from every dashboard.
+    const rows = await readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 20000)
     if (!rows || rows.length < 2) {
       return res.status(200).json({ pending: [], completed: [], followups: [] })
     }
@@ -82,7 +84,7 @@ export default async function handler(req, res) {
     })
 
     // Follow-ups forwarded TO this employee
-    const followupRows = await readSheet(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`)
+    const followupRows = await readSheetCached(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, 15000)
     let followups = []
 
     if (user.role === 'admin') {

@@ -2,8 +2,10 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, getShiftOverridesForDate,
+  getLeaveMapForDate, getOnShiftNamesFromLog,
 } from '../../../lib/sheets'
-import { ALL_EMPLOYEES } from '../../../lib/schedule'
+import { ALL_EMPLOYEES, distributeClientsForHour } from '../../../lib/schedule'
+import { collapseSlotOwners, buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
 // Same real column layout as pages/api/footage/list.js
@@ -78,7 +80,23 @@ export default async function handler(req, res) {
       fetchClientVehicleCounts(),
     ])
 
-    const myUpdatesAll = updateRows.slice(1).filter(r => r[2] === user.name)
+    // Each (date, client, hour) counts once, for whoever ended up owning it.
+    // Without this an employee who covered an hour alone and then shared it
+    // when colleagues clocked in was shown every client they briefly held as
+    // one they had "missed", which dragged their completion rate down for
+    // work somebody else went on to do.
+    // Collapsed across everybody first — ownership of a slot is decided
+    // between all the names on it, then the winner's rows are picked out.
+    const ownedSlots = collapseSlotOwners(updateRows)
+    const currentHourStr = String(nowISTDate().getHours())
+    const myUpdatesAll = [...ownedSlots.values()]
+      .filter(s => s.owner === user.name)
+      // The hour in progress isn't finished, so nothing in it can have been
+      // missed yet. Anything already done there still counts; what's left is
+      // simply outstanding, and counting it as a miss would push somebody's
+      // completion rate down for work they still have time to do.
+      .filter(s => s.done || !(s.date === today && s.hour === currentHourStr))
+      .map(s => s.row)
     const myUpdatesInRange = myUpdatesAll.filter(r => dateStrSet.has(r[0]))
 
     // ── Trend: Completed vs Missed per day (a CRM_Updates row exists the
@@ -243,9 +261,39 @@ export default async function handler(req, res) {
     // ── TODAY's real assigned-vs-completed, independent of `range` ──
     // (My Targets is meant to be a daily target, per the spec — it must not
     // change when the person switches the Weekly/Monthly/Yearly trend filter.)
-    const myUpdatesToday = updateRows.slice(1).filter(r => r[2]===user.name && r[0]===today)
+    // Same collapse — the daily target must count the clients that are
+    // actually this employee's, not every one that passed through their board.
+    const myUpdatesToday = myUpdatesAll.filter(r => r[0] === today)
+
+    // The hour in progress is left out of the collapse above, because nothing
+    // in it can have been missed yet — but the daily target still has to show
+    // what's on the board right now. That comes from the live split, the same
+    // one the client list itself is built from, so the target and the board
+    // can never disagree.
+    let currentHourOutstanding = []
+    try {
+      const onShiftNames = getOnShiftNamesFromLog(shiftRows, [calendarToday, yesterday])
+      const leaveMapNow  = await getLeaveMapForDate(today)
+      // Clocked out means the day's work is finished — no outstanding board.
+      const myShiftRows = shiftRows.slice(1).filter(r =>
+        (r[0] || '').toString().trim() === user.empId.toString().trim() &&
+        (r[2] === calendarToday || r[2] === yesterday)
+      )
+      const clockedOut = myShiftRows.length > 0 && !myShiftRows.some(r => r[6] === 'Active')
+      const { poolNames } = buildHourPool({
+        hour: nowISTDate().getHours(), leaveMap: leaveMapNow, overridesMap: todayOverride,
+        onShiftNames, alwaysInclude: clockedOut ? null : user.name,
+      })
+      const locked = buildLockedAssignments(updateRows, today, nowISTDate().getHours())
+      const dist = distributeClientsForHour(nowISTDate().getHours(), poolNames, vehicleMap, locked, true)
+      currentHourOutstanding = (dist[user.name] || [])
+        .map(c => c.client)
+        .filter(c => locked[c] !== user.name)   // finished ones are counted already
+    } catch (e) {
+      console.error('summary: live split failed', e.message)
+    }
     const todayCompleted = myUpdatesToday.filter(r => (r[5]||'').toString().trim())
-    const todayClientSet = new Set(myUpdatesToday.map(r => r[3]))
+    const todayClientSet = new Set([...myUpdatesToday.map(r => r[3]), ...currentHourOutstanding])
     const todayCompletedClientSet = new Set(todayCompleted.map(r => r[3]))
     let todayVehicles = 0, todayVehiclesDone = 0
     todayClientSet.forEach(c => { todayVehicles += vehicleMap[(c||'').toLowerCase()]?.vehicleCount || 0 })
@@ -262,7 +310,7 @@ export default async function handler(req, res) {
     const todayTargets = {
       clientsAssigned: todayClientSet.size, clientsCompleted: todayCompletedClientSet.size,
       vehiclesAssigned: todayVehicles, vehiclesCompleted: todayVehiclesDone,
-      updatesAssigned: myUpdatesToday.length, updatesCompleted: todayCompleted.length,
+      updatesAssigned: todayClientSet.size, updatesCompleted: todayCompleted.length,
       footageAssigned: todayFootage.length, footageCompleted: todayFootageDone,
       followupsAssigned: todayFollowups.length, followupsCompleted: todayFollowupsClosed,
     }

@@ -1,6 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
+import { readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
 import { ALL_EMPLOYEES } from '../../../lib/schedule'
+import { collapseSlotOwners } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -47,10 +48,19 @@ export default async function handler(req, res) {
     const rangeDates = dateRangeArray(fromDDMMYYYY, toDDMMYYYY)
 
     const [shiftRows, updateRows, footageRows] = await Promise.all([
-      readSheet(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`),
-      readSheet(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`),
-      readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`, 15000),
+      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 30000),
     ])
+
+    // One owner per (date, client, hour). CRM_Updates keeps a placeholder for
+    // every name a client passed through, so counting rows per employee
+    // credited the same slot to two or three people and showed each of them
+    // pending work that somebody else had picked up.
+    const rangeSetAll = new Set(rangeDates)
+    const ownedSlots = [...collapseSlotOwners(updateRows, r => rangeSetAll.has(r[0])).values()]
+    const rowsByOwner = {}
+    ownedSlots.forEach(s => { (rowsByOwner[s.owner] ||= []).push(s.row) })
 
     const progress = ALL_EMPLOYEES.map(emp => {
       const attendance = rangeDates.map(date => {
@@ -71,8 +81,7 @@ export default async function handler(req, res) {
       const daysPresent = attendance.filter(a => a.status !== 'absent').length
       const daysAbsent   = attendance.filter(a => a.status === 'absent').length
 
-      const rangeSet = new Set(rangeDates)
-      const rangeUpdates = updateRows.slice(1).filter(r => rangeSet.has(r[0]) && r[2] === emp.name)
+      const rangeUpdates = rowsByOwner[emp.name] || []
       const rangeClients = [...new Set(rangeUpdates.map(r => r[3]))]
       const rangeCompletedUpdates = rangeUpdates.filter(r => (r[5]||'').toString().trim())
       const rangePendingUpdates   = rangeUpdates.length - rangeCompletedUpdates.length

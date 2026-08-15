@@ -1,6 +1,10 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, getShiftOverridesForDate } from '../../../lib/sheets'
-import { ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
+import {
+  readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
+  getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, fetchClientVehicleCounts,
+} from '../../../lib/sheets'
+import { ALL_EMPLOYEES, isScheduledAtHour, distributeClientsForHour } from '../../../lib/schedule'
+import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -30,31 +34,52 @@ export default async function handler(req, res) {
 
     const todayShifts = shiftRows.slice(1).filter(r => r[2] === today)
 
-    // ── Collapse every (client, hour) slot down to one owner + done flag ──
-    // CRM_Updates is append-only, so a single slot can show up several
-    // times: the placeholder written when it was assigned, another one if
-    // it later moved to someone else, and the real update once it's filled
-    // in. Counting rows directly therefore double-counts the same piece of
-    // work — which is why "Updates Completed" was reporting the assigned
-    // total instead of what was actually done. A row carrying real data
-    // always wins (that's who did the work); otherwise the most recent
-    // placeholder is the current owner.
-    const slotState = new Map()
-    updateRows.slice(1).forEach(r => {
-      if (r[0] !== today) return
-      const key = `${r[3]}|${r[4]}`
-      const isDone = !!(r[5] || '').toString().trim()
-      const prev = slotState.get(key)
-      if (prev && prev.done && !isDone) return
-      slotState.set(key, { owner: r[2], done: isDone })
-    })
+    // ── One owner per slot, rather than one row per hand-over ──
+    // For hours already gone this trail is the only record there is. For the
+    // hour in progress it isn't good enough: a placeholder keeps the name of
+    // whoever held the client when the row was written, and the split moves
+    // every time somebody clocks in or out — so the current hour is taken
+    // from the live split further down instead.
+    const slotState = collapseSlotOwners(updateRows, r => r[0] === today)
 
     const workByEmp = {}
-    slotState.forEach(({ owner, done }) => {
+    slotState.forEach(({ owner, done, hour }) => {
       if (!workByEmp[owner]) workByEmp[owner] = { assigned: 0, completed: 0 }
+      // Finished work counts wherever it happened. Unfinished work in the
+      // hour in progress is left out here and replaced by the live split,
+      // so the Command Center shows the same board the employee is looking
+      // at rather than a stale trail of who held what earlier.
+      if (done) { workByEmp[owner].assigned += 1; workByEmp[owner].completed += 1; return }
+      if (parseInt(hour) === currentHour) return
       workByEmp[owner].assigned += 1
-      if (done) workByEmp[owner].completed += 1
     })
+
+    // The hour in progress, worked out exactly as the employee's own board
+    // works it out — same pool, same locks, same vehicle-count balancing.
+    try {
+      const leaveMap   = await getLeaveMapForDate(today)
+      const vehicleMap = await fetchClientVehicleCounts()
+      // A night shift is logged under the day it began, so both days count
+      // as "clocked in right now".
+      const istNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+      const y = new Date(istNow.getTime() - 24 * 3600000)
+      const yesterday = `${String(y.getDate()).padStart(2,'0')}/${String(y.getMonth()+1).padStart(2,'0')}/${y.getFullYear()}`
+      const onShiftNames = getOnShiftNamesFromLog(shiftRows, [today, yesterday])
+      const { poolNames } = buildHourPool({ hour: currentHour, leaveMap, overridesMap, onShiftNames })
+      const locked = buildLockedAssignments(updateRows, today, currentHour)
+      const dist = distributeClientsForHour(currentHour, poolNames, vehicleMap, locked, true)
+      Object.entries(dist).forEach(([name, clients]) => {
+        if (!workByEmp[name]) workByEmp[name] = { assigned: 0, completed: 0 }
+        // Anything already finished is counted above; this adds what is
+        // still outstanding on their board right now.
+        const outstanding = clients.filter(c => locked[c.client] !== name).length
+        workByEmp[name].assigned += outstanding
+      })
+    } catch (e) {
+      // The live split is an improvement on the row trail, not a
+      // requirement — never take the whole Command Center down for it.
+      console.error('overview: live split failed', e.message)
+    }
 
     const empStatus = ALL_EMPLOYEES.map(emp => {
       const shiftLog   = todayShifts.find(r => r[1] === emp.name)

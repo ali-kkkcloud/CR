@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr } from '../../../lib/sheets'
 import { sweepAutoBreaks } from '../../../lib/attendance'
 
 // GET /api/admin/breaks?from=YYYY-MM-DD&to=YYYY-MM-DD  (both optional — defaults to today)
@@ -41,7 +41,7 @@ export default async function handler(req, res) {
       console.error('Auto-break sweep failed:', e.message)
     }
 
-    const rows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`)
+    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 5000)
     const inRange = rows.slice(1).filter(r => dateSet ? dateSet.has(r[2]) : r[2] === today)
 
     // One break, one line. If two requests ever manage to open the same break
