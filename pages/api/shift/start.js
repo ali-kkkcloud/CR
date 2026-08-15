@@ -1,6 +1,6 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
-import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
+import { appendRow, readSheet, readSheetCached, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
 import { getEmployeeShift, computeShiftWindow } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
@@ -20,7 +20,11 @@ export default async function handler(req, res) {
 
     const today = todayStr()
     const now   = nowStr()
-    const rows  = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
+    // Briefly cached. A shift change puts a dozen people through here inside
+    // a minute, and an uncached read each was most of Google's per-minute
+    // quota on its own. Clocking in appends to this tab, which drops the
+    // cache, so the next person always reads the row the last one wrote.
+    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 5000)
 
     // Already clocked in? Checked across yesterday too, so a night shift
     // running past midnight isn't handed a second, duplicate shift row
@@ -37,7 +41,7 @@ export default async function handler(req, res) {
     // marked Active is stale — and leaving even one behind would put the
     // employee straight back behind the break overlay and stop the idle
     // check ever firing again for the whole shift.
-    const breakRows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`)
+    const breakRows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`, 5000)
     for (let i = breakRows.length - 1; i >= 1; i--) {
       const r = breakRows[i]
       if ((r[0] || '').toString().trim() !== user.empId.toString().trim()) continue
@@ -72,7 +76,7 @@ export default async function handler(req, res) {
 
     if (earlyStart || lateStart) {
       const adj = earlyStart || lateStart
-      const overrideRows = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_OVERRIDES}!A:H`)
+      const overrideRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_OVERRIDES}!A:H`, 5000)
       let overrideRowIndex = -1
       for (let i = overrideRows.length - 1; i >= 1; i--) {
         if (overrideRows[i][0] === today && overrideRows[i][2] === user.name) { overrideRowIndex = i + 1; break }
@@ -107,7 +111,7 @@ export default async function handler(req, res) {
       // also makes this idempotent: a row already shortened to
       // "Week Off (returned)" is picked up again instead of being treated
       // as a different kind of leave and skipped.
-      const leaveRows = await readSheet(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`)
+      const leaveRows = await readSheetCached(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`, 5000)
       for (let i = leaveRows.length - 1; i >= 1; i--) {
         const r = leaveRows[i]
         if (r[1] === user.name && r[2] === today && (r[5] || '').toString().startsWith('Week Off')) {

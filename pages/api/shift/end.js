@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, appendRow, appendRows, updateRowCells,
+  readSheet, readSheetCached, appendRow, appendRows, updateRowCells,
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, findOpenShiftRow
 } from '../../../lib/sheets'
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     // ending such a shift silently failed to close it out, leaving the
     // employee "Active" forever.
     const yesterday = ddmmyyyyFromDate(new Date(nowTime.getTime() - 24*3600000))
-    const shiftRows = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
+    const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 5000)
     const open = findOpenShiftRow(shiftRows, user.empId, [today, yesterday])
     const shiftRowIndex = open ? open.rowNumber : -1
     const startTimeStr  = open ? open.row[3] : ''
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     // ── 1b. Auto-close any lingering Active break (including orphaned ones
     // from a previous day that were never resumed) — a shift ending should
     // never leave a break "ongoing" forever. ──
-    const breakRows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`)
+    const breakRows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`, 5000)
     // Every open row is closed, not just the newest. An employee should only
     // ever have one break running, but two writers landing together can leave
     // a duplicate behind, and any row still marked Active would block the
@@ -73,7 +73,7 @@ export default async function handler(req, res) {
     }
 
     // ── 2. Redistribute only THIS HOUR's unfilled clients ──
-    const updateRows = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`)
+    const updateRows = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 5000)
     const leaveMap = await getLeaveMapForDate(today)
     const overridesMap = await getShiftOverridesForDate(today)
     // Hand the leftovers to people who are actually still clocked in —
@@ -133,7 +133,7 @@ export default async function handler(req, res) {
     // ── 4. Footage summary ──
     // Issue Tracker layout: B=IssueId C=Client D=Vehicle E=RaisedAt H=RaisedBy
     // J=SubRequest K=Details R=Resolved(Y/N) S=ResolvedAt
-    const footageRows = await readSheet(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`)
+    const footageRows = await readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 20000)
     const myFootage = footageRows.slice(1).filter(r => {
       const sub = (r[9] || '').toString().toLowerCase()
       const by  = (r[7] || '').toString().trim().toLowerCase()
