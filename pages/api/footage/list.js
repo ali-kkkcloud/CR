@@ -35,7 +35,7 @@ export default async function handler(req, res) {
   try {
     // Cached — the Issue Tracker is the biggest sheet the app reads and this
     // list is polled from every dashboard.
-    const rows = await readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 20000)
+    const rows = await readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000)
     if (!rows || rows.length < 2) {
       return res.status(200).json({ pending: [], completed: [], followups: [] })
     }

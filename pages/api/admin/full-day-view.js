@@ -7,6 +7,11 @@ import {
 } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
+// "KA01AB1234, KA02CD5678" -> 2. Anything blank counts as none.
+function countListed(cell) {
+  return (cell || '').toString().split(/[,\n]+/).map(x => x.trim()).filter(Boolean).length
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
   const user = getUserFromReq(req)
@@ -42,6 +47,8 @@ export default async function handler(req, res) {
           updatedAt: hasData ? r[1] : '',
           misalignVehicles: r[6] || '',
           alertCount: r[7] || '',
+          fatigue: r[8] || '',
+          fatigueCount: r[9] || '',
         }
       })
 
@@ -138,7 +145,16 @@ export default async function handler(req, res) {
           status:            empHourData[c.client]?.status    || '',
           updatedAt:         empHourData[c.client]?.updatedAt || '',
           alertCount:        parseInt(empHourData[c.client]?.alertCount) || 0,
-          misalignVehicles:  parseInt(empHourData[c.client]?.misalignVehicles) || 0,
+          // The sheet holds a LIST of vehicle numbers here, not a number.
+          // parseInt("KA01AB1234, KA02CD5678") is NaN, so every misalignment
+          // an employee recorded was reported to the admin as zero. What the
+          // admin wants is how many vehicles were flagged.
+          misalignVehicles:  countListed(empHourData[c.client]?.misalignVehicles),
+          misalignList:      (empHourData[c.client]?.misalignVehicles || '').toString().trim(),
+          // Fatigue never reached the admin at all, though it is exactly the
+          // kind of thing they are watching for.
+          fatigue:           (empHourData[c.client]?.fatigue || '').toString().trim(),
+          fatigueCount:      parseInt(empHourData[c.client]?.fatigueCount) || 0,
         }))
 
         return {
@@ -170,7 +186,9 @@ export default async function handler(req, res) {
         totalAssigned:  hours.reduce((s,h) => s + h.totalClients,     0),
         totalCompleted: hours.reduce((s,h) => s + h.completedClients, 0),
         totalMissed:    hours.reduce((s,h) => s + h.missedClients,    0),
-        totalAlerts:    hours.reduce((s,h) => s + h.clients.reduce((a,c)=>a+(c.alertCount||0), 0), 0),
+        // Fatigue is an alert too — the admin is watching for exactly this.
+        totalAlerts:    hours.reduce((s,h) => s + h.clients.reduce((a,c)=>a+(c.alertCount||0)+(c.fatigueCount||0), 0), 0),
+        totalFatigue:   hours.reduce((s,h) => s + h.clients.reduce((a,c)=>a+(c.fatigueCount||0), 0), 0),
         totalMisalign:  hours.reduce((s,h) => s + h.clients.reduce((a,c)=>a+(c.misalignVehicles||0), 0), 0),
         totalRedistributed: hours.reduce((s,h) => s + h.clients.filter(c=>c.isRedistributed).length, 0),
       }
