@@ -1,6 +1,6 @@
 // pages/api/shift/status.js
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, CRM_SHEET_ID, TABS, todayStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -14,7 +14,11 @@ export default async function handler(req, res) {
   try {
     const today = todayStr()
     const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
-    const rows  = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
+    // Cached: every dashboard polls this on a loop, and an uncached read per
+    // poll per employee is most of Google's per-minute read quota on its own.
+    // Clocking in or out writes to this tab, which drops the cache, so the
+    // answer is never stale in a way the employee would notice.
+    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 10000)
 
     // A night shift that began yesterday evening is still running after
     // midnight, but its row is filed under yesterday's date. Looking only

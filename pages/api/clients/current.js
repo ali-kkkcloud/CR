@@ -4,6 +4,7 @@ import {
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog,
 } from '../../../lib/sheets'
 import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
+import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -127,48 +128,27 @@ export default async function handler(req, res) {
     // self-correcting: a lone employee covers the whole hour, and every
     // start or end reshuffles the remainder on the next refresh.
     //
-    // Somebody who is clocked in is, by definition, not absent. The
-    // no-show sweep writes "Week Off" rows automatically, and a stale one
-    // left over from before an employee arrived would otherwise keep them
-    // out of the split for the rest of their shift — clocked in, sitting
-    // on the dashboard, and handed no clients at all. Auto rows are
-    // ignored for anyone on shift; leave an admin marked by hand always
-    // stands.
-    const leaveMapForPool = {}
-    Object.entries(leaveMap).forEach(([name, entries]) => {
-      leaveMapForPool[name] = onShiftNames.has(name)
-        ? entries.filter(l => (l.markedBy || '') !== 'System')
-        : entries
+    // The pool is built by lib/distribution, shared with the Command Center,
+    // so the split an employee is shown and the split an admin is shown can
+    // never be worked out two different ways.
+    //
+    // Somebody who has clocked out is done for the day and must not be given
+    // work again. They were still being handed a full client list they could
+    // go on updating, which pinned those clients to a name that had gone home
+    // and took them off the board of whoever was still working.
+    const myShiftRows = shiftLogRows.slice(1).filter(r =>
+      (r[0] || '').toString().trim() === user.empId.toString().trim() &&
+      (r[2] === today || r[2] === yesterday)
+    )
+    const iHaveClockedOut = myShiftRows.length > 0 && !myShiftRows.some(r => r[6] === 'Active')
+
+    const { poolNames, scheduledNames } = buildHourPool({
+      hour, leaveMap, overridesMap, onShiftNames,
+      alwaysInclude: iHaveClockedOut ? null : user.name,
     })
 
-    const scheduledEmps  = getScheduledEmployeesAtHour(hour, leaveMapForPool, overridesMap)
-    const scheduledNames = scheduledEmps.map(e => e.name)
-
-    let poolNames = scheduledNames.filter(n => onShiftNames.has(n))
-    // Nobody clocked in yet (start of day, or everyone still to arrive):
-    // fall back to the roster so the hour still has owners and no client
-    // silently drops off the board.
-    if (poolNames.length === 0) poolNames = scheduledNames
-    // The caller is looking at this screen because they're working, so
-    // keep them in the pool even if their own Shift_Log row is a beat
-    // behind the read cache.
-    if (!poolNames.includes(user.name) && scheduledNames.includes(user.name)) {
-      poolNames = [...poolNames, user.name]
-    }
-
     const vehicleMap = await fetchClientVehicleCounts()
-
-    // ── Locked assignments ─────────────────────────────────────────────
-    // ONLY slots that already carry a real update stay pinned to whoever
-    // did that work — nobody's finished update should ever jump to
-    // another name. Empty placeholder rows are deliberately NOT locked:
-    // pinning those froze the hour's split to whoever happened to open
-    // the page first, which is what stopped the workload rebalancing
-    // when somebody else started or ended their shift.
-    const lockedAssignments = {}
-    updateRows.slice(1)
-      .filter(r => r[0] === myShiftDate && parseInt(r[4]) === hour && (r[5] || '').toString().trim())
-      .forEach(r => { lockedAssignments[r[3]] = r[2] })
+    const lockedAssignments = buildLockedAssignments(updateRows, myShiftDate, hour)
 
     // reserveOffShiftLocks=true: every lock here is finished work, so a
     // client someone completed before going home stays done instead of

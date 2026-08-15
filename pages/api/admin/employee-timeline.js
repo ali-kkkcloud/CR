@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -12,8 +12,8 @@ export default async function handler(req, res) {
     if (!employeeName) return res.status(400).json({ error: 'employee required' })
 
     const [updateRows, redistRows] = await Promise.all([
-      readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`),
-      readSheet(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 15000),
     ])
 
     const myUpdates  = updateRows.slice(1).filter(r => r[0] === date && r[2] === employeeName)

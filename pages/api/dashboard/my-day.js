@@ -98,6 +98,24 @@ export default async function handler(req, res) {
       .filter(r => r[0] === date && r[2] === user.name)
       .map(r => ({ hour: parseInt(r[5]), client: r[4], toEmployee: r[3] }))
 
+    // When each scheduled hour actually begins.
+    //
+    // scheduledHours is already in shift order, so walking it an hour at a
+    // time gives the right moments even for a night shift whose later hours
+    // fall on the next calendar day. This is what tells an hour that has
+    // finished apart from one still to come — without it every hour of the
+    // day was counted as "missed" from the moment the employee clocked in,
+    // so somebody starting an eight-hour shift was greeted with 351 misses
+    // for work that wasn't due yet.
+    const [dd, mm, yyyy] = date.split('/').map(n => parseInt(n, 10))
+    const hourStartsAt = {}
+    let cursor = new Date(yyyy, mm - 1, dd, effectiveEmp.start, 0, 0, 0)
+    scheduledHours.forEach(h => {
+      hourStartsAt[h] = cursor.getTime()
+      cursor = new Date(cursor.getTime() + 3600000)
+    })
+    const nowMs = nowIST().getTime()
+
     // Build timeline hour by hour
     const timeline = scheduledHours.map(hour => {
       // Check if on leave this hour
@@ -203,14 +221,24 @@ export default async function handler(req, res) {
 
       const realClients = clientsWithStatus.filter(c => !c.redistributedAway)
       const completed   = realClients.filter(c => c.filled).length
-      const missed      = realClients.filter(c => !c.filled).length
+      const outstanding = realClients.filter(c => !c.filled).length
+
+      // An hour that hasn't finished can't have been missed. Only once it is
+      // behind the employee does unfinished work become a miss; until then it
+      // is simply what's still to do.
+      const startedAt = hourStartsAt[hour]
+      const state = startedAt == null ? 'done'
+        : nowMs >= startedAt + 3600000 ? 'done'
+        : nowMs >= startedAt ? 'current' : 'upcoming'
 
       return {
         hour,
+        state,
         clients: clientsWithStatus,
         totalClients:     realClients.length,
         completedClients: completed,
-        missedClients:    missed,
+        missedClients:    state === 'done' ? outstanding : 0,
+        pendingClients:   state === 'done' ? 0 : outstanding,
       }
     })
 
@@ -220,6 +248,9 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       date, timeline, totalClients, totalCompleted, totalMissed,
+      // Still to do — hours in progress or yet to come. Kept separate from
+      // totalMissed so the day reads as work remaining, not work failed.
+      totalPending: timeline.reduce((s, t) => s + (t.pendingClients || 0), 0),
     })
 
   } catch (err) {

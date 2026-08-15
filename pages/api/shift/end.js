@@ -4,7 +4,8 @@ import {
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, findOpenShiftRow
 } from '../../../lib/sheets'
-import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution } from '../../../lib/schedule'
+import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, distributeClientsForHour } from '../../../lib/schedule'
+import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -68,12 +69,6 @@ export default async function handler(req, res) {
 
     // ── 2. Redistribute only THIS HOUR's unfilled clients ──
     const updateRows = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`)
-    const myHourRows = updateRows.slice(1)
-      .filter(r => r[0] === shiftDate && r[2] === user.name && parseInt(r[4]) === currentHour)
-    const unfilledClients = myHourRows
-      .filter(r => !(r[5] || '').toString().trim())
-      .map(r => r[3])
-
     const leaveMap = await getLeaveMapForDate(today)
     const overridesMap = await getShiftOverridesForDate(today)
     // Hand the leftovers to people who are actually still clocked in —
@@ -84,6 +79,24 @@ export default async function handler(req, res) {
       .map(e => e.name)
       .filter(n => n !== user.name && onShiftNames.has(n))
     const vehicleMap = await fetchClientVehicleCounts()
+
+    // What this employee is actually still holding, taken from the live
+    // split rather than from their CRM_Updates rows.
+    //
+    // Those rows are append-only and keep a placeholder for every client the
+    // employee held at any point in the hour — including ones handed on when
+    // somebody else clocked in. Counting them meant an employee who had been
+    // working alone and then shared the hour with two colleagues was reported
+    // as handing over 51 clients on the way out when they were holding 11,
+    // and the audit log grew by the same wrong number.
+    const { poolNames } = buildHourPool({
+      hour: currentHour, leaveMap, overridesMap, onShiftNames, alwaysInclude: user.name,
+    })
+    const locked = buildLockedAssignments(updateRows, shiftDate, currentHour)
+    const dist = distributeClientsForHour(currentHour, poolNames, vehicleMap, locked, true)
+    const unfilledClients = (dist[user.name] || [])
+      .map(c => c.client)
+      .filter(c => locked[c] !== user.name)   // already finished — stays theirs
 
     const redistribution = computeCurrentHourRedistribution(
       user.name, currentHour, unfilledClients, stillWorking, vehicleMap
@@ -102,7 +115,13 @@ export default async function handler(req, res) {
     }
 
     // ── 3. CRM summary ──
-    const myUpdates = updateRows.slice(1).filter(r => r[0] === shiftDate && r[2] === user.name)
+    // Only rows carrying a real status count as work done. CRM_Updates also
+    // holds a placeholder for every client that was ever on this employee's
+    // board, so counting every row told somebody who had completed two
+    // clients that they had handled thirty-four.
+    const myUpdates = updateRows.slice(1)
+      .filter(r => r[0] === shiftDate && r[2] === user.name)
+      .filter(r => (r[5] || '').toString().trim())
 
     // ── 4. Footage summary ──
     // Issue Tracker layout: B=IssueId C=Client D=Vehicle E=RaisedAt H=RaisedBy
