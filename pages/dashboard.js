@@ -399,7 +399,11 @@ export default function Dashboard() {
     try {
       const res  = await fetch('/api/break/end', { method:'POST' })
       const data = await res.json()
-      if (data.success) {
+      if (data.success || res.status === 404) {
+        // 404 means the break was already closed — by ending the shift, or by
+        // a second tab. There is nothing left to resume from, so refresh and
+        // let the overlay clear instead of warning about a problem that
+        // has already resolved itself.
         await loadBreakStatus()
       } else {
         alert(data.error || 'Could not resume — please try again.')
@@ -523,6 +527,7 @@ export default function Dashboard() {
       <Head><title>Cautio CRM — On Break</title></Head>
       <BreakOverlay
         startTime={breakStatus.startTime}
+        startDate={breakStatus.startDate}
         isAuto={breakStatus.isAuto}
         idleMinutes={breakStatus.idleMinutes}
         history={breakStatus.history}

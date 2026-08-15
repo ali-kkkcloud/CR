@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { readSheet, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr } from '../../../lib/sheets'
-import { sweepAutoBreaks, recordHeartbeat, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
+import { sweepAutoBreaks, recordHeartbeat, recentDates, findOpenBreaks, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -35,11 +35,17 @@ export default async function handler(req, res) {
 
     const rows = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`)
 
-    const myToday = rows.slice(1).filter(r =>
-      (r[0] || '').toString().trim() === user.empId.toString().trim() && r[2] === today
+    const mine = rows.slice(1).filter(r =>
+      (r[0] || '').toString().trim() === user.empId.toString().trim()
     )
+    const myToday = mine.filter(r => r[2] === today)
 
-    const active = myToday.find(r => r[6] === 'Active')
+    // An open break is looked for across both days. One started just before
+    // midnight still belongs to the shift in progress, and searching only
+    // today would leave the employee free to carry on while the row stayed
+    // open forever — which would also stop any further break being opened.
+    const dates  = recentDates()
+    const active = findOpenBreaks(rows, user.empId, dates)[0] || null
     const history = myToday.map(r => ({
       startTime: r[3] || '',
       endTime:   r[4] || '',
@@ -47,14 +53,30 @@ export default async function handler(req, res) {
       status:    r[6] || '',
       isAuto:    (r[7] || '') === 'Auto',
     }))
+    // A break that began before midnight is dated to the day it started, so
+    // it isn't in today's rows — but it is the break the employee is sitting
+    // in right now, and the list would otherwise say they were on a break
+    // while showing nothing at all.
+    if (active && active.startDate !== today) {
+      history.unshift({
+        startTime: active.startTime || '',
+        endTime:   '',
+        minutes:   calcDurationMinutes(active.startDate, active.startTime, today, nowStr()),
+        status:    'Active',
+        isAuto:    active.isAuto,
+      })
+    }
 
     const totalMinutesToday = history.reduce((s,h) => s + (h.minutes||0), 0)
 
     return res.status(200).json({
       onBreak: !!active,
-      startTime: active ? active[3] : null,
+      startTime: active ? active.startTime : null,
+      // The day the open break began, so the page can measure elapsed time
+      // correctly when it started before midnight.
+      startDate: active ? active.startDate : null,
       // Lets the overlay explain itself when the break wasn't asked for.
-      isAuto: active ? (active[7] || '') === 'Auto' : false,
+      isAuto: active ? active.isAuto : false,
       idleMinutes: AUTO_BREAK_IDLE_MINUTES,
       history,
       totalMinutesToday,
