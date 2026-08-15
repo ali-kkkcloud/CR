@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import Icon from '../Icons'
 import { C, Donut } from '../Widgets'
+import { Card, T, R, SP, SURF } from '../ui'
 
 const STATUS_OPTIONS  = ['', 'Updated', 'No New Misalignment', 'All Vehicles are Offline', 'No Misalignment']
 const FATIGUE_OPTIONS = ['No', 'Yes']
@@ -67,7 +68,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
       {/* Current hour hero + next hour */}
       <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:'12px', marginBottom:'14px' }}>
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'18px' }}>
-          <div style={{ color:C.muted, fontSize:'10px', fontWeight:700, letterSpacing:'0.5px', marginBottom:'6px' }}>CURRENT HOUR</div>
+          <div style={{ color:C.muted, fontSize:'10px', fontWeight:700, letterSpacing:'0.5px', marginBottom:'6px' }}>Current hour</div>
           <div style={{ color:C.text, fontSize:'22px', fontWeight:800, marginBottom:'14px' }}>{hourRangeLabel(currentHour)}</div>
           {!heroClient ? (
             <div style={{ color:C.muted, fontSize:'12px' }}>No clients assigned this hour.</div>
@@ -120,7 +121,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
       {myDay && (
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', marginBottom:'14px' }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'14px', flexWrap:'wrap', gap:'8px' }}>
-            <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700 }}>TODAY'S TIMELINE</div>
+            <div className="eyebrow">Today’s timeline</div>
             <div style={{ display:'flex', gap:'14px' }}>
               <LegendDot color={C.accent} label="Completed" />
               <LegendDot color={C.accent} label="Current" ring />
@@ -186,14 +187,15 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
                   const ov = overrides[c.client]
                   const done = ov ? !!(ov.status||'').trim() : c.filled
                   return (
-                    <div key={c.client} style={{ background: done?C.accentDark+'22':C.s2, border:`1px solid ${done?C.accent+'55':C.border2}`, borderRadius:'8px', padding:'10px' }}>
-                      <div style={{ color:C.text, fontSize:'11.5px', fontWeight:600 }}>{c.client}</div>
-                      <div style={{ color:C.muted, fontSize:'9.5px', marginBottom:'8px' }}>{c.vehicleCount||0} Vehicles{done && c.updatedAt ? ` · ${c.updatedAt}` : ''}</div>
-                      <button disabled={!canEdit} onClick={()=>canEdit && setEditTarget({client:c.client, hour:viewedHour})} style={{
-                        width:'100%', background: !canEdit?C.s2:done?'transparent':C.accent, border: done?`1px solid ${C.accent}55`:'none',
-                        borderRadius:'6px', color: !canEdit?C.muted:done?C.accent:'#06120a', fontSize:'10.5px', fontWeight:700, padding:'6px', cursor: canEdit?'pointer':'not-allowed',
-                      }}>{!canEdit ? (done?'Updated':'View Only') : done?'✓ Updated — Edit':'Update Now'}</button>
-                    </div>
+                    <ClientTile
+                      key={c.client}
+                      client={c.client}
+                      vehicles={c.vehicleCount}
+                      meta={done && c.updatedAt ? c.updatedAt : null}
+                      done={done}
+                      canEdit={canEdit}
+                      onClick={()=>setEditTarget({ client:c.client, hour:viewedHour })}
+                    />
                   )
                 })}
               </div>
@@ -205,7 +207,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
       {/* My clients today */}
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', marginBottom:'14px' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700 }}>MY CLIENTS THIS HOUR</div>
+          <div className="eyebrow">My clients this hour</div>
           <span style={{ color:C.muted, fontSize:'10px' }}>{currentClients.length} client(s)</span>
         </div>
         {currentClients.length===0 ? (
@@ -216,22 +218,16 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
               const f = filled[c.client] || {}
               const done = !!(f.status||'').trim()
               return (
-                <div key={c.client} style={{ background: done?C.accentDark+'22':C.s2, border:`1px solid ${done?C.accent+'55':C.border2}`, borderRadius:'10px', padding:'12px' }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
-                    <div style={{ width:'26px', height:'26px', borderRadius:'7px', background:C.s2, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-                      <Icon name="overview" size={12} color={C.text2} />
-                    </div>
-                    <div style={{ minWidth:0 }}>
-                      <div style={{ color:C.text, fontSize:'12px', fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.client}</div>
-                      <div style={{ color:C.muted, fontSize:'9.5px' }}>{c.vehicleCount||0} Vehicles</div>
-                    </div>
-                  </div>
-                  {c.isRedistributed && <div style={{ color:C.purple, fontSize:'9.5px', marginBottom:'6px' }}>↩ from {c.fromEmployee}</div>}
-                  <button disabled={!canEdit} onClick={()=>canEdit && setEditTarget({client:c.client, hour:currentHour})} style={{
-                    width:'100%', background: !canEdit?C.s2:done?'transparent':C.accent, border: done?`1px solid ${C.accent}55`:'none',
-                    borderRadius:'7px', color: !canEdit?C.muted:done?C.accent:'#06120a', fontSize:'11px', fontWeight:700, padding:'7px', cursor: canEdit?'pointer':'not-allowed',
-                  }}>{!canEdit ? (done?'Updated':'View Only') : done?'✓ Updated — Edit':'Update Now'}</button>
-                </div>
+                <ClientTile
+                  key={c.client}
+                  client={c.client}
+                  vehicles={c.vehicleCount}
+                  meta={c.isRedistributed ? `↩ from ${c.fromEmployee}` : null}
+                  metaColor={c.isRedistributed ? C.purple : undefined}
+                  done={done}
+                  canEdit={canEdit}
+                  onClick={()=>setEditTarget({ client:c.client, hour:currentHour })}
+                />
               )
             })}
           </div>
@@ -241,7 +237,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
       {/* Current task / progress / recent activity */}
       <div style={{ display:'grid', gridTemplateColumns:'1.4fr 1fr 1.2fr', gap:'12px', marginBottom:'14px' }}>
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'12px' }}>CURRENT TASK</div>
+          <div className="eyebrow" style={{ marginBottom:'12px' }}>Current task</div>
           {!currentTaskClient ? (
             <div style={{ color:C.accent, fontSize:'12px' }}>✓ All caught up for this hour.</div>
           ) : (
@@ -259,7 +255,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
         </div>
 
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', display:'flex', flexDirection:'column', alignItems:'center' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px', alignSelf:'flex-start' }}>TODAY'S PROGRESS</div>
+          <div className="eyebrow" style={{ marginBottom:'10px', alignSelf:'flex-start' }}>Today’s progress</div>
           <Donut segments={[{value:myDay?.totalCompleted||0,color:C.accent},{value:myDay?.totalMissed||0,color:C.border2}]} size={80} thickness={10} centerLabel={myDay&&myDay.totalClients>0?`${Math.round((myDay.totalCompleted/myDay.totalClients)*100)}%`:'0%'} centerSub="Done" />
           <div style={{ display:'flex', gap:'16px', marginTop:'10px' }}>
             <div style={{textAlign:'center'}}><div style={{color:C.text,fontSize:'13px',fontWeight:800}}>{myDay?.totalClients||0}</div><div style={{color:C.muted,fontSize:'8.5px'}}>TOTAL</div></div>
@@ -269,7 +265,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
         </div>
 
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>RECENT ACTIVITY</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>Recent activity</div>
           {recentUpdates.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No updates yet today.</div> : (
             <div style={{ display:'flex', flexDirection:'column', gap:'8px', maxHeight:'150px', overflowY:'auto' }}>
               {recentUpdates.map((e,i) => (
@@ -286,7 +282,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
       {/* Smart reminders */}
       {smartReminders.length>0 && (
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', marginBottom:'14px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>SMART REMINDERS</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>Smart reminders</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:'10px' }}>
             {smartReminders.map((r,i) => (
               <div key={i} onClick={()=>r.tab && onGoToTab(r.tab)} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.s2, borderRadius:'8px', padding:'10px', cursor:r.tab?'pointer':'default' }}>
@@ -305,7 +301,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
 
       {/* Quick actions */}
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
-        <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'12px' }}>QUICK ACTIONS</div>
+        <div className="eyebrow" style={{ marginBottom:'12px' }}>Quick actions</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'10px' }}>
           {[
             { icon:'progress', label:'Update Client', sub: canEdit?'Update Now':'View Only', onClick:()=> canEdit && currentTaskClient && setEditTarget({client:currentTaskClient.client, hour:currentHour}) },
@@ -402,3 +398,45 @@ function UpdateClientModal({ client, data, saving, onSave, onClose }) {
 const mlbl = { display:'block', color:C.accent, fontSize:'10px', letterSpacing:'1px', fontWeight:'600', marginBottom:'5px' }
 const msel = { width:'100%', background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, padding:'8px 10px', fontSize:'13px', marginBottom:'12px', boxSizing:'border-box' }
 const minp = { width:'100%', background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, padding:'8px 10px', fontSize:'13px', marginBottom:'12px', boxSizing:'border-box' }
+
+function ClientTile({ client, vehicles, meta, metaColor, done, canEdit, onClick }) {
+  return (
+    <button
+      disabled={!canEdit}
+      onClick={()=> canEdit && onClick()}
+      className={canEdit ? 'pressable' : undefined}
+      style={{
+        display:'block', width:'100%', textAlign:'left',
+        background: done ? C.accentSoft : SURF.sunken,
+        border:`1px solid ${done ? C.accent+'44' : C.border2}`,
+        borderRadius:R.md, padding:'11px',
+        cursor: canEdit ? 'pointer' : 'not-allowed',
+        opacity: canEdit ? 1 : 0.62,
+      }}
+    >
+      <span style={{ display:'flex', alignItems:'center', gap:'9px' }}>
+        <span style={{
+          width:'25px', height:'25px', borderRadius:R.sm, flexShrink:0,
+          background: done ? C.accent+'1f' : '#ffffff0a',
+          display:'flex', alignItems:'center', justifyContent:'center',
+        }}>
+          <Icon name={done ? 'check-circle' : 'overview'} size={13} color={done ? C.accent : C.muted} />
+        </span>
+        <span style={{ flex:1, minWidth:0 }}>
+          <span className="ellip" style={{ display:'block', color:C.text, fontSize:T.base, fontWeight:700 }}>{client}</span>
+          <span className="ellip" style={{ display:'block', color: metaColor || C.muted, fontSize:'9.5px', marginTop:'1px' }}>
+            {vehicles || 0} vehicles{meta ? ` · ${meta}` : ''}
+          </span>
+        </span>
+      </span>
+      <span style={{
+        display:'block', marginTop:'9px', paddingTop:'8px',
+        borderTop:`1px solid ${C.border2}`,
+        color: !canEdit ? C.muted : done ? C.accent : C.text2,
+        fontSize:T.xs, fontWeight:700,
+      }}>
+        {!canEdit ? (done ? 'Updated' : 'View only') : done ? '\u2713 Updated \u2014 edit' : 'Update \u2192'}
+      </span>
+    </button>
+  )
+}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Icon from '../Icons'
-import { C, Donut, KpiCard, LineChart, ScoreBadge } from '../Widgets'
+import { C, Donut, LineChart, ScoreBadge } from '../Widgets'
+import { Card, CardHead, Segmented, Meter, EmptyState, SkeletonCard, T, R, SP, SURF } from '../ui'
 
 function fmtMinutes(mins) {
   const h = Math.floor(mins/60), m = mins%60
@@ -15,7 +16,13 @@ const CAL_LABELS = {
 }
 
 export default function EmpDashboardTab({ summary, range, setRange, loading, onGoToTab, breakStatus }) {
-  if (loading || !summary) return <div style={{display:'flex',justifyContent:'center',padding:'4rem'}}><div className="spinner"></div></div>
+  // Skeletons that hold the real layout, rather than a lone spinner that
+  // makes the whole page jump when the data lands.
+  if (loading || !summary) return (
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(230px, 1fr))', gap:SP[3] }}>
+      {[0,1,2,3].map(i => <SkeletonCard key={i} lines={3} />)}
+    </div>
+  )
 
   const {
     performanceScore, performanceTier, clientsAssigned, vehiclesCovered,
@@ -33,41 +40,55 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
 
   return (
     <div>
-      <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'12px' }}>
-        <div style={{ display:'flex', gap:'4px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', padding:'4px' }}>
-          {[['today','Today'],['week','Weekly'],['month','Monthly'],['year','Yearly']].map(([k,l]) => (
-            <button key={k} onClick={()=>setRange(k)} style={{
-              background: range===k?C.accentDark:'transparent', border:'none', borderRadius:'6px', color: range===k?C.accent:C.muted,
-              fontSize:'11px', fontWeight:600, padding:'6px 12px', cursor:'pointer',
-            }}>{l}</button>
-          ))}
-        </div>
+      <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:SP[3] }}>
+        <Segmented
+          size="sm" value={range} onChange={setRange}
+          options={[
+            { value:'today', label:'Today' }, { value:'week', label:'Weekly' },
+            { value:'month', label:'Monthly' }, { value:'year', label:'Yearly' },
+          ]}
+        />
       </div>
 
-      {/* Performance hero row */}
-      <div style={{ display:'grid', gridTemplateColumns:'1.3fr 1fr 1fr 1fr 1fr', gap:'12px', marginBottom:'14px' }}>
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'18px', display:'flex', alignItems:'center', gap:'16px' }}>
-          <Donut segments={[{value:performanceScore,color:C.accent},{value:100-performanceScore,color:C.border2}]} size={90} thickness={11} centerLabel={`${performanceScore}%`} />
-          <div>
-            <div style={{ color:C.text, fontSize:'13px', fontWeight:700 }}>Performance Score</div>
-            <div style={{ marginTop:'6px' }}><ScoreBadge score={performanceScore} /></div>
-            <div style={{ color:C.muted, fontSize:'10.5px', marginTop:'6px' }}>{performanceTier} this period</div>
+      {/* Performance hero row.
+          Score and today's progress share one card. Five tiles never divide
+          evenly across a row — at every width one of them ended up alone with
+          a hole beside it — and the two are about the same thing anyway. */}
+      <div className="hero-grid" style={{ marginBottom:SP[4] }}>
+        <Card style={{ display:'flex', alignItems:'center', gap:SP[4], minWidth:0, flexWrap:'wrap' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:SP[3], minWidth:0, flex:1 }}>
+            <Donut segments={[{value:performanceScore,color:C.accent},{value:100-performanceScore,color:'#2a2a2a'}]} size={84} thickness={11} centerLabel={`${performanceScore}%`} />
+            <div style={{ minWidth:0 }}>
+              <div className="eyebrow">Performance score</div>
+              <div style={{ marginTop:'8px' }}><ScoreBadge score={performanceScore} /></div>
+              <div style={{ color:C.muted, fontSize:T.xs, marginTop:'8px' }} className="ellip">{performanceTier} this period</div>
+            </div>
           </div>
-        </div>
-
-        <div onClick={()=>onGoToTab('myday')} style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', display:'flex', flexDirection:'column', alignItems:'center', cursor:'pointer' }}>
-          <div style={{ color:C.muted, fontSize:'10px', fontWeight:700, marginBottom:'8px' }}>TODAY'S PROGRESS</div>
-          <Donut segments={[{value:completionPct,color:C.accent},{value:100-completionPct,color:C.border2}]} size={72} thickness={9} centerLabel={`${completionPct}%`} />
-        </div>
+          <button
+            onClick={()=>onGoToTab('myday')}
+            className="pressable"
+            style={{
+              display:'flex', alignItems:'center', gap:SP[3],
+              background:'transparent', border:'none',
+              borderLeft:`1px solid ${C.border2}`, paddingLeft:SP[4],
+            }}
+          >
+            <Donut segments={[{value:completionPct,color:C.accent},{value:100-completionPct,color:'#2a2a2a'}]} size={62} thickness={8} centerLabel={`${completionPct}%`} />
+            <span style={{ textAlign:'left' }}>
+              <span className="eyebrow" style={{ display:'block' }}>Today's progress</span>
+              <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'5px' }}>View my day →</span>
+            </span>
+          </button>
+        </Card>
 
         <MiniStatusCard icon="check-circle" label="Attendance" value={summary.attendanceStatus||'—'} sub={summary.loginTime||''} color={summary.attendanceStatus==='Late'?C.amber:C.accent} />
-        <MiniStatusCard icon="overview" label="Shift Status" value={breakStatus?.onBreak?'On Break':'Active'} sub={breakStatus?.onBreak?'':`${fmtMinutes(summary.workingMinutes||0)} worked`} color={breakStatus?.onBreak?C.amber:C.accent} />
-        <MiniStatusCard icon="clock" label="Break Time Today" value={fmtMinutes(breakStatus?.totalMinutesToday||0)} sub={breakStatus?.onBreak?'Currently on break':`${breakStatus?.history?.length||0} session(s)`} color={breakStatus?.onBreak?C.red:C.text} />
+        <MiniStatusCard icon="overview" label="Shift status" value={breakStatus?.onBreak?'On break':'Active'} sub={breakStatus?.onBreak?'':`${fmtMinutes(summary.workingMinutes||0)} worked`} color={breakStatus?.onBreak?C.amber:C.accent} />
+        <MiniStatusCard icon="clock" label="Break time today" value={fmtMinutes(breakStatus?.totalMinutesToday||0)} sub={breakStatus?.onBreak?'Currently on break':`${breakStatus?.history?.length||0} session${(breakStatus?.history?.length||0)===1?'':'s'}`} color={breakStatus?.onBreak?C.red:C.text} />
       </div>
 
       {/* Trend + calendar + notifications */}
-      <div style={{ display:'grid', gridTemplateColumns:'1.4fr 1.1fr 1fr', gap:'12px', marginBottom:'14px' }}>
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
+      <div className="three-grid" style={{ marginBottom:SP[4] }}>
+        <Card>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
             <div style={{ color:C.accent, fontSize:'11px', fontWeight:700 }}>UPDATES TREND (Completed vs Missed)</div>
           </div>
@@ -76,10 +97,10 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
             <div><span style={{color:C.red,fontSize:'18px',fontWeight:800}}>{updatesMissed}</span> <span style={{color:C.muted,fontSize:'10px'}}>MISSED</span></div>
           </div>
           <LineChart series={[{name:'Completed',color:C.accent,data:trend.completed},{name:'Missed',color:C.red,data:trend.missed}]} labels={trend.labels} height={180} />
-        </div>
+        </Card>
 
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'11px', fontWeight:700, marginBottom:'10px' }}>MONTHLY CALENDAR</div>
+        <Card>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>MONTHLY CALENDAR</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:'4px', marginBottom:'10px' }}>
             {calendar.map(d => (
               <div key={d.date} title={`${d.date} — ${CAL_LABELS[d.status]||d.status} (${d.completed}/${d.total})`} style={{
@@ -96,10 +117,10 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
               </div>
             ))}
           </div>
-        </div>
+        </Card>
 
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'11px', fontWeight:700, marginBottom:'10px' }}>NOTIFICATIONS</div>
+        <Card>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>NOTIFICATIONS</div>
           {notifications.length===0 ? (
             <div style={{ color:C.muted, fontSize:'11px', padding:'10px 0' }}>All clear — no action needed.</div>
           ) : (
@@ -117,12 +138,12 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
               ))}
             </div>
           )}
-        </div>
+        </Card>
       </div>
 
       {/* My Targets — always TODAY's numbers, independent of the trend range above */}
-      <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', marginBottom:'14px' }}>
-        <div style={{ color:C.accent, fontSize:'11px', fontWeight:700, marginBottom:'4px' }}>MY TARGETS — TODAY</div>
+      <Card style={{ marginBottom:SP[4] }}>
+        <div className="eyebrow" style={{ marginBottom:'4px' }}>MY TARGETS — TODAY</div>
         <div style={{ color:C.muted, fontSize:'10px', marginBottom:'12px' }}>What's assigned to you today vs. what's completed so far</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:'10px' }}>
           {[
@@ -134,38 +155,38 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
           ].map(t => {
             const pct = t.target>0 ? Math.round((t.done/t.target)*100) : (t.done>0 ? 100 : 0)
             return (
-              <div key={t.label} style={{ background:C.s2, borderRadius:'10px', padding:'12px' }}>
-                <div style={{ color:C.text2, fontSize:'10.5px', marginBottom:'6px' }}>{t.label}</div>
-                <div style={{ color:C.text, fontSize:'15px', fontWeight:800, marginBottom:'6px' }}>{t.done} / {t.target}</div>
-                <div style={{ height:'5px', background:C.border2, borderRadius:'3px', overflow:'hidden' }}>
-                  <div style={{ height:'100%', width:`${Math.min(100,pct)}%`, background: pct>=100?C.accent:pct>=70?C.amber:C.red, borderRadius:'3px' }}></div>
+              <div key={t.label} style={{ background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md, padding:'13px' }}>
+                <div style={{ color:C.muted, fontSize:T.xs, marginBottom:'7px' }} className="ellip">{t.label}</div>
+                <div style={{ color:C.text, fontSize:'17px', fontWeight:800, marginBottom:'9px', lineHeight:1 }}>
+                  {t.done} <span style={{ color:C.muted, fontSize:T.base, fontWeight:600 }}>/ {t.target}</span>
                 </div>
+                <Meter value={pct} color={pct>=100?C.accent:pct>=70?C.amber:C.red} height={5} />
               </div>
             )
           })}
         </div>
-      </div>
+      </Card>
 
       {/* Footage / Followup / Top clients / recent activity */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1.2fr 1.2fr', gap:'12px' }}>
-        <div onClick={()=>onGoToTab('footage')} style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', cursor:'pointer' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>FOOTAGE OVERVIEW</div>
+      <div className="four-grid">
+        <Card onClick={()=>onGoToTab('footage')} className="pressable" style={{ cursor:'pointer' }}>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>FOOTAGE OVERVIEW</div>
           <div style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
             <Donut segments={[{label:'Uploaded',value:footageTaken,color:C.accent},{label:'Pending',value:footagePending,color:C.amber}]} size={84} thickness={11} centerLabel={footageTaken+footagePending} centerSub="Total" />
           </div>
           <Legend items={[['Uploaded',footageTaken,C.accent],['Pending',footagePending,C.amber]]} />
-        </div>
+        </Card>
 
-        <div onClick={()=>onGoToTab('followup')} style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', cursor:'pointer' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>FOLLOW-UP OVERVIEW</div>
+        <Card onClick={()=>onGoToTab('followup')} className="pressable" style={{ cursor:'pointer' }}>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>FOLLOW-UP OVERVIEW</div>
           <div style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
             <Donut segments={[{label:'Closed',value:followupsClosed,color:C.accent},{label:'Pending',value:followupsPending,color:C.amber}]} size={84} thickness={11} centerLabel={followupsClosed+followupsPending} centerSub="Total" />
           </div>
           <Legend items={[['Closed',followupsClosed,C.accent],['Pending',followupsPending,C.amber]]} />
-        </div>
+        </Card>
 
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>TOP CLIENTS</div>
+        <Card>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>TOP CLIENTS</div>
           {topClients.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No data for this period.</div> : (
             <div style={{ display:'flex', flexDirection:'column', gap:'9px' }}>
               {topClients.map((c,i) => (
@@ -180,10 +201,10 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
               ))}
             </div>
           )}
-        </div>
+        </Card>
 
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>RECENT ACTIVITY</div>
+        <Card>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>RECENT ACTIVITY</div>
           {recentActivity.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>Nothing yet.</div> : (
             <div style={{ display:'flex', flexDirection:'column', gap:'9px', maxHeight:'220px', overflowY:'auto' }}>
               {recentActivity.map((a,i) => (
@@ -197,7 +218,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
               ))}
             </div>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   )
@@ -205,14 +226,17 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
 
 function MiniStatusCard({ icon, label, value, sub, color }) {
   return (
-    <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px', display:'flex', flexDirection:'column', alignItems:'center', textAlign:'center' }}>
-      <div style={{ color:C.muted, fontSize:'10px', fontWeight:700, marginBottom:'10px' }}>{label.toUpperCase()}</div>
-      <div style={{ width:'40px', height:'40px', borderRadius:'50%', background:color+'1a', display:'flex', alignItems:'center', justifyContent:'center', marginBottom:'8px' }}>
-        <Icon name={icon} size={18} color={color} />
+    <Card style={{ display:'flex', flexDirection:'column', alignItems:'center', textAlign:'center' }}>
+      <div className="eyebrow" style={{ marginBottom:'11px' }}>{label}</div>
+      <div style={{
+        width:'38px', height:'38px', borderRadius:'50%', background:color+'1a',
+        display:'flex', alignItems:'center', justifyContent:'center', marginBottom:'10px',
+      }}>
+        <Icon name={icon} size={17} color={color} />
       </div>
-      <div style={{ color, fontSize:'13px', fontWeight:800 }}>{value}</div>
-      {sub && <div style={{ color:C.muted, fontSize:'9.5px', marginTop:'2px' }}>{sub}</div>}
-    </div>
+      <div style={{ color, fontSize:T.md, fontWeight:800 }}>{value}</div>
+      {sub && <div style={{ color:C.muted, fontSize:T.xs, marginTop:'4px' }}>{sub}</div>}
+    </Card>
   )
 }
 

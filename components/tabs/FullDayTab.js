@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import Icon from '../Icons'
 import { C, MiniStat, ScoreBadge } from '../Widgets'
+import { Card, Button, SearchInput, Tag, T, R, SP, SURF } from '../ui'
 
 function hourLabel(h) {
   const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
@@ -227,42 +228,65 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
 
   return (
     <div>
-      {/* Control bar */}
-      <div style={{ display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'12px 16px', marginBottom:'10px' }}>
-        <button style={navBtnStyle} onClick={()=>{ const d=new Date(date); d.setDate(d.getDate()-1); setDate(d.toISOString().split('T')[0]) }}>‹</button>
-        <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={dateInpStyle} />
-        <button style={navBtnStyle} onClick={()=>{ const d=new Date(date); d.setDate(d.getDate()+1); setDate(d.toISOString().split('T')[0]) }}>›</button>
-        <button style={quickBtnStyle} onClick={()=>setDate(todayISO())}>Today</button>
-        <button style={quickBtnStyle} onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-1); setDate(d.toISOString().split('T')[0]) }}>Yesterday</button>
-        <select value={shiftFilter} onChange={e=>setShiftFilter(e.target.value)} style={selStyle}>
-          <option value="all">All Shifts</option><option value="day">Day Shift</option><option value="night">Night Shift</option>
-        </select>
-        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={selStyle}>
-          <option value="all">All Status</option><option value="working">Working</option><option value="ended">Shift Ended</option>
-          <option value="leave">On Leave</option><option value="not_started">Not Started</option>
-        </select>
-        <select value={clientFilter} onChange={e=>setClientFilter(e.target.value)} style={selStyle}>
-          <option value="all">All Clients</option>
-          {allClientsToday.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <input placeholder="🔍 Search employee or client (e.g. RedBus)..." value={search} onChange={e=>setSearch(e.target.value)} style={{...selStyle, flex:1, minWidth:'160px'}} />
-        <button style={{...outlineBtnStyle, ...(onlyPending?{background:C.accentDark,borderColor:C.accent,color:C.accent}:{})}} onClick={()=>setOnlyPending(v=>!v)}>Only Pending</button>
-        <button style={{...outlineBtnStyle, ...(onlyRedistributed?{background:C.accentDark,borderColor:C.accent,color:C.accent}:{})}} onClick={()=>setOnlyRedistributed(v=>!v)}>Only Redistributed</button>
-        <button style={outlineBtnStyle} onClick={exportReport}><Icon name="download" size={12} color={C.text2}/> Export</button>
-        {selectedEmp && (
-          <button style={leaveBtnStyle} onClick={()=>onMarkLeave(selectedEmp)}><Icon name="leaves" size={12} color={C.amber}/> Mark Leave — {selectedEmp.name}</button>
-        )}
-        {!playbackOn ? (
-          <button style={playBtnStyle} onClick={startPlayback}>▶ Replay Day</button>
-        ) : (
-          <div style={{ display:'flex', alignItems:'center', gap:'8px', background:C.bg, border:`1px solid ${C.accent}55`, borderRadius:'8px', padding:'6px 12px', width:'100%', marginTop:'4px' }}>
-            <button onClick={()=> isPlaying ? stopPlayback() : setIsPlaying(true)} style={{ background:'transparent', border:'none', color:C.accent, cursor:'pointer', fontSize:'14px' }}>{isPlaying?'⏸':'▶'}</button>
-            <span style={{ color:C.accent, fontSize:'11px', fontWeight:700, whiteSpace:'nowrap' }}>{hourLabel(playHour)}</span>
-            <input type="range" min={minHour} max={maxHour} value={playHour} onChange={e=>{ setIsPlaying(false); setPlayHour(parseInt(e.target.value)) }} style={{ flex:1 }} />
-            <button onClick={()=>{ setIsPlaying(false); setPlayHour(minHour) }} style={{ background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'6px', color:C.muted, fontSize:'10px', padding:'4px 8px', cursor:'pointer' }}>Exit Replay</button>
+      {/* ── Control bar ──
+          Two rows, not one wrapping mass of eleven controls: what you are
+          looking at on top, how you are narrowing it underneath. */}
+      <Card style={{ marginBottom:SP[3] }}>
+        <div style={{ display:'flex', gap:SP[2], alignItems:'center', flexWrap:'wrap', marginBottom:SP[3] }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
+            <Button size="sm" variant="ghost" title="Previous day"
+              onClick={()=>{ const d=new Date(date); d.setDate(d.getDate()-1); setDate(d.toISOString().split('T')[0]) }}>‹</Button>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{ width:'auto' }} />
+            <Button size="sm" variant="ghost" title="Next day"
+              onClick={()=>{ const d=new Date(date); d.setDate(d.getDate()+1); setDate(d.toISOString().split('T')[0]) }}>›</Button>
+          </div>
+          <Button size="sm" variant="subtle" onClick={()=>setDate(todayISO())}>Today</Button>
+          <Button size="sm" variant="subtle" onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-1); setDate(d.toISOString().split('T')[0]) }}>Yesterday</Button>
+
+          <div style={{ flex:1, minWidth:'180px' }}>
+            <SearchInput value={search} onChange={setSearch} placeholder="Search employee or client…" />
+          </div>
+
+          <Button size="sm" variant="ghost" icon="download" onClick={exportReport}>Export</Button>
+          {selectedEmp && (
+            <Button size="sm" variant="ghost" icon="leaves"
+              style={{ color:C.amber, borderColor:C.amber+'44', background:C.amber+'12' }}
+              onClick={()=>onMarkLeave(selectedEmp)}>Mark leave — {selectedEmp.name}</Button>
+          )}
+          {!playbackOn && <Button size="sm" variant="primary" onClick={startPlayback}>▶ Replay day</Button>}
+        </div>
+
+        <div style={{ display:'flex', gap:SP[2], alignItems:'center', flexWrap:'wrap' }}>
+          <select value={shiftFilter} onChange={e=>setShiftFilter(e.target.value)} style={{ width:'auto', fontSize:T.sm }}>
+            <option value="all">All shifts</option><option value="day">Day shift</option><option value="night">Night shift</option>
+          </select>
+          <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{ width:'auto', fontSize:T.sm }}>
+            <option value="all">All status</option><option value="working">Working</option><option value="ended">Shift ended</option>
+            <option value="leave">On leave</option><option value="not_started">Not started</option>
+          </select>
+          <select value={clientFilter} onChange={e=>setClientFilter(e.target.value)} style={{ width:'auto', maxWidth:'220px', fontSize:T.sm }}>
+            <option value="all">All clients</option>
+            {allClientsToday.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <Button size="sm" variant={onlyPending ? 'primary' : 'subtle'} onClick={()=>setOnlyPending(v=>!v)}>Only pending</Button>
+          <Button size="sm" variant={onlyRedistributed ? 'primary' : 'subtle'} onClick={()=>setOnlyRedistributed(v=>!v)}>Only redistributed</Button>
+        </div>
+
+        {playbackOn && (
+          <div style={{
+            display:'flex', alignItems:'center', gap:SP[3],
+            background:C.bg, border:`1px solid ${C.accent}55`, borderRadius:R.md,
+            padding:'9px 14px', marginTop:SP[3],
+          }}>
+            <button onClick={()=> isPlaying ? stopPlayback() : setIsPlaying(true)}
+              style={{ background:'transparent', border:'none', color:C.accent, fontSize:'15px' }}>{isPlaying?'⏸':'▶'}</button>
+            <span style={{ color:C.accent, fontSize:T.sm, fontWeight:700, whiteSpace:'nowrap', minWidth:'68px' }}>{hourLabel(playHour)}</span>
+            <input type="range" min={minHour} max={maxHour} value={playHour}
+              onChange={e=>{ setIsPlaying(false); setPlayHour(parseInt(e.target.value)) }} style={{ flex:1, padding:0, border:'none', background:'transparent' }} />
+            <Button size="sm" variant="subtle" onClick={()=>{ setIsPlaying(false); setPlayHour(minHour) }}>Exit replay</Button>
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Smart search result banner — client/employee first, footage/vehicle only as a fallback */}
       {search.trim() && (
@@ -365,7 +389,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
             {activeHourData && (!playbackOn || activeHourData.hour <= playHour) && (
               <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'12px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px' }}>
-                  <div style={{ color:C.accent, fontSize:'11px', fontWeight:700 }}>
+                  <div className="eyebrow">
                     {hourLabel(activeHourData.hour)} · {activeHourData.isOnLeave ? 'ON LEAVE' : `${activeHourData.totalClients} CLIENT(S) ASSIGNED`}
                   </div>
                   <label style={{ display:'flex', alignItems:'center', gap:'5px', color:C.muted, fontSize:'10px', cursor:'pointer' }}>
@@ -440,7 +464,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
 
             {/* Employee summary chips — compact, click to open full detail above */}
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'12px' }}>
-              <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'12px' }}>EMPLOYEES — {filtered.length}</div>
+              <div className="eyebrow" style={{ marginBottom:'12px' }}>EMPLOYEES — {filtered.length}</div>
               <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
                 {filtered.map(e => {
                   const es = statusOf(e)
@@ -517,7 +541,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
             </div>
 
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-              <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>RECENT ACTIVITIES{playbackOn?' (up to '+hourLabel(playHour)+')':''}</div>
+              <div className="eyebrow" style={{ marginBottom:'10px' }}>RECENT ACTIVITIES{playbackOn?' (up to '+hourLabel(playHour)+')':''}</div>
               {visibleActivities.length===0 ? <div style={{ color:C.muted, fontSize:'11px' }}>Nothing yet.</div> : (
                 <div style={{ display:'flex', flexDirection:'column', gap:'10px', maxHeight:'340px', overflowY:'auto' }}>
                   {visibleActivities.map((a,i) => (
@@ -592,7 +616,7 @@ function ClientDrawer({ client, employees, footageAll, date, matchDateFlexible, 
         <MiniBox label="PENDING" val={stats.pending} color={stats.pending>0?C.amber:C.muted} />
         <MiniBox label="ALERTS+MISALIGN" val={stats.alerts+stats.misalign} color={stats.alerts+stats.misalign>0?C.red:C.muted} />
       </div>
-      <div style={{ color:C.accent, fontSize:'10px', fontWeight:700, marginBottom:'8px' }}>HOUR-WISE TIMELINE</div>
+      <div className="eyebrow" style={{ marginBottom:'8px' }}>HOUR-WISE TIMELINE</div>
       <div style={{ display:'flex', flexDirection:'column', gap:'6px', marginBottom:'16px' }}>
         {stats.touches.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No activity today.</div> : stats.touches.map((t,i) => (
           <div key={i} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.s2, borderRadius:'7px', padding:'6px 10px' }}>
@@ -602,7 +626,7 @@ function ClientDrawer({ client, employees, footageAll, date, matchDateFlexible, 
           </div>
         ))}
       </div>
-      <div style={{ color:C.accent, fontSize:'10px', fontWeight:700, marginBottom:'8px' }}>FOOTAGE REQUESTS TODAY ({stats.footageForClient.length})</div>
+      <div className="eyebrow" style={{ marginBottom:'8px' }}>FOOTAGE REQUESTS TODAY ({stats.footageForClient.length})</div>
       {stats.footageForClient.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>None.</div> : stats.footageForClient.map(f => (
         <div key={f.issueId} style={{ display:'flex', justifyContent:'space-between', fontSize:'11px', color:C.text2, marginBottom:'5px' }}>
           <span>{f.vehicle} — {f.issueId}</span><span style={{color:f.resolved?C.accent:C.amber}}>{f.resolved?'Done':'Pending'}</span>
@@ -720,10 +744,4 @@ function MiniBox({ label, val, color }) {
   )
 }
 
-const navBtnStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'7px', color:C.text2, width:'28px', height:'32px', cursor:'pointer', fontSize:'14px' }
-const dateInpStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, fontSize:'12.5px', padding:'7px 10px' }
-const selStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, fontSize:'11.5px', padding:'8px 10px' }
-const outlineBtnStyle = { display:'flex', alignItems:'center', gap:'5px', background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'11px', fontWeight:600, padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' }
-const leaveBtnStyle = { display:'flex', alignItems:'center', gap:'5px', background:C.amberBg, border:`1px solid ${C.amber}33`, borderRadius:'8px', color:C.amber, fontSize:'11.5px', fontWeight:600, padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' }
-const quickBtnStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'11px', padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' }
-const playBtnStyle = { display:'flex', alignItems:'center', gap:'6px', background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12px', fontWeight:700, padding:'9px 16px', cursor:'pointer', whiteSpace:'nowrap' }
+const quickBtnStyle = { background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md, color:C.text2, fontSize:T.sm, fontWeight:600, padding:'7px 11px', cursor:'pointer', whiteSpace:'nowrap' }

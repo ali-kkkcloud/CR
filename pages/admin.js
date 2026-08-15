@@ -4,10 +4,16 @@ import Head from 'next/head'
 import Sidebar from '../components/Sidebar'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
-import { C, Donut, KpiCard, MiniStat, AttendanceDots, parseSheetDate } from '../components/Widgets'
+import { C, Donut, parseSheetDate } from '../components/Widgets'
+import { TopBar, PageBody, AccountButton, NotifyButton } from '../components/Shell'
+import {
+  Card, CardHead, Button, Pill, Tag, Field, Stat, Meter,
+  EmptyState, Modal, Table, T, R, SP, SURF, fmtRange,
+} from '../components/ui'
 import FullDayTab from '../components/tabs/FullDayTab'
 import ProgressTab from '../components/tabs/ProgressTab'
 import FootageTab from '../components/tabs/FootageTab'
+import BreaksTab, { liveBreakMinutes } from '../components/tabs/BreaksTab'
 
 function todayISO() {
   const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
@@ -15,38 +21,18 @@ function todayISO() {
 }
 
 const TAB_META = {
-  overview:       { title: 'Overview',           tag: 'Command Center', sub: "Real-time visibility of your entire fleet operations" },
-  fullday:        { title: 'Full Day View',       tag: 'Command Center', sub: 'Hour-by-hour visibility for every employee' },
-  progress:       { title: 'Employee Progress',   tag: 'Command Center', sub: 'Attendance and output across a date range' },
-  footage:        { title: 'Footage Requests',    tag: 'Command Center', sub: 'Pending and completed footage requests' },
-  followups:      { title: 'Follow-ups',          tag: 'Command Center', sub: 'Open follow-ups awaiting resolution' },
-  redistribution: { title: 'Redistribution Log',  tag: 'Command Center', sub: "Today's workload redistribution across employees" },
-  leaves:         { title: 'Leaves',              tag: 'Command Center', sub: 'Leave calendar — coming soon' },
-  reports:        { title: 'Reports',             tag: 'Command Center', sub: 'Scheduled and downloadable reports — coming soon' },
-  analytics:      { title: 'Analytics',           tag: 'Command Center', sub: 'Deeper trends across your fleet — coming soon' },
-  alerts:         { title: 'Alerts',              tag: 'Command Center', sub: 'All system and AI alerts in one place — coming soon' },
-  settings:       { title: 'Settings',            tag: 'Command Center', sub: 'Workspace and account preferences — coming soon' },
-}
-
-// An employee's break time as of this second. The server's figure is a
-// snapshot; if they are still on a break it has to keep climbing on screen,
-// otherwise a break that started three minutes ago sits reading one minute
-// until the next refresh lands.
-function liveBreakMinutes(e) {
-  if (!e.currentlyOnBreak || !e.activeSince) return e.totalMinutes || 0
-  const m = e.activeSince.toString().match(/(\d+):(\d+):(\d+)\s*(am|pm)/i)
-  if (!m) return e.totalMinutes || 0
-  let [, h, mi, se, ap] = m
-  h = parseInt(h, 10)
-  if (ap.toLowerCase() === 'pm' && h !== 12) h += 12
-  if (ap.toLowerCase() === 'am' && h === 12) h = 0
-  const start = new Date(); start.setHours(h, parseInt(mi,10), parseInt(se,10), 0)
-  let ms = Date.now() - start.getTime()
-  if (ms < 0) ms += 24 * 3600000        // started before midnight
-  const running = Math.floor(ms / 60000)
-  // Closed sessions plus the one still running. The server counts the open
-  // one too, so take whichever is larger rather than adding them twice.
-  return Math.max(e.totalMinutes || 0, running)
+  overview:       { title: 'Overview',            sub: 'What the whole floor is doing, right now' },
+  fullday:        { title: 'Full Day View',       sub: 'Hour by hour, for every employee' },
+  breaks:         { title: 'Breaks',               sub: 'Who is away, for how long, and how often' },
+  progress:       { title: 'Employee Progress',   sub: 'Attendance and output across a date range' },
+  footage:        { title: 'Footage Requests',    sub: 'Pending and completed footage requests' },
+  followups:      { title: 'Follow-ups',          sub: 'Open follow-ups awaiting resolution' },
+  redistribution: { title: 'Redistribution Log',  sub: "Today's workload moves between employees" },
+  leaves:         { title: 'Leaves',              sub: 'Leave calendar — coming soon' },
+  reports:        { title: 'Reports',             sub: 'Scheduled and downloadable reports — coming soon' },
+  analytics:      { title: 'Analytics',           sub: 'Deeper trends across your fleet — coming soon' },
+  alerts:         { title: 'Alerts',              sub: 'All system and AI alerts in one place — coming soon' },
+  settings:       { title: 'Settings',            sub: 'Workspace and account preferences — coming soon' },
 }
 
 export default function Admin() {
@@ -400,11 +386,16 @@ export default function Admin() {
   const topPerformers = [...employees].sort((a,b)=>(b.totalUpdates||0)-(a.totalUpdates||0)).slice(0,5)
   const maxUpdates = Math.max(1, ...topPerformers.map(e=>e.totalUpdates||0))
 
+  // Each one carries the tab it is about, so the row itself is the way in
+  // rather than a separate "View details" button at the bottom of the card
+  // that only ever pointed at one of them.
   const aiAlerts = []
-  if (kpis.notStarted>0) aiAlerts.push({ sev:'high', icon:'alerts', title:'Not Started', desc:`${kpis.notStarted} employee(s) have not started their shift yet` })
-  if (footage.followups.length>0) aiAlerts.push({ sev:'warn', icon:'followups', title:'Follow-up Pending', desc:`${footage.followups.length} follow-up(s) require attention` })
-  if (footage.pending.length>0) aiAlerts.push({ sev:'info', icon:'footage', title:'Footage Requests', desc:`${footage.pending.length} pending footage request(s)` })
-  if (redistribution.length>0) aiAlerts.push({ sev:'success', icon:'shuffle', title:'Redistribution Done', desc:`${redistribution.length} slot(s) redistributed across employees today` })
+  if (kpis.notStarted>0) aiAlerts.push({ sev:'high', icon:'offline', title:'Not started', desc:`${kpis.notStarted} employee${kpis.notStarted===1?' has':'s have'} not clocked in yet`, tab:'fullday' })
+  if (breaks?.onBreakNow>0) aiAlerts.push({ sev:'warn', icon:'clock', title:'On break', desc:`${breaks.onBreakNow} employee${breaks.onBreakNow===1?' is':'s are'} away right now`, tab:'breaks' })
+  if (footage.followups.length>0) aiAlerts.push({ sev:'warn', icon:'followups', title:'Follow-ups open', desc:`${footage.followups.length} follow-up${footage.followups.length===1?'':'s'} waiting to be closed`, tab:'followups' })
+  if (footage.pending.length>0) aiAlerts.push({ sev:'info', icon:'footage', title:'Footage queue', desc:`${footage.pending.length} request${footage.pending.length===1?'':'s'} still open`, tab:'footage' })
+  if (totalPendingToday>0) aiAlerts.push({ sev:'info', icon:'clock', title:'Updates outstanding', desc:`${totalPendingToday} client slot${totalPendingToday===1?'':'s'} not yet updated today`, tab:'fullday' })
+  if (redistribution.length>0) aiAlerts.push({ sev:'success', icon:'shuffle', title:'Work moved', desc:`${redistribution.length} slot${redistribution.length===1?'':'s'} redistributed today`, tab:'redistribution' })
 
   const tabMeta = TAB_META[activeTab] || TAB_META.overview
   const notifCount = footage.pending.length + footage.followups.length
@@ -417,311 +408,237 @@ export default function Admin() {
         <Sidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          counts={{ footage: footage.pending.length, followups: footage.followups.length, redistribution: redistribution.length }}
+          counts={{ footage: footage.pending.length, followups: footage.followups.length, redistribution: redistribution.length, breaks: breaks?.onBreakNow }}
           employeesMonitored={kpis.total}
         />
 
         <div style={{flex:1, minWidth:0}}>
 
-          {/* ══════════ TOPBAR ══════════ */}
-          <div style={s.topbar}>
-            <div>
-              <div style={{display:'flex', alignItems:'baseline', gap:'10px'}}>
-                <span style={s.topTitle}>{tabMeta.title}</span>
-                <span style={s.topTag}>{tabMeta.tag}</span>
-              </div>
-              <div style={s.topSub}>{tabMeta.sub}</div>
-            </div>
-            <div style={s.topRight}>
-              <div style={s.pill}><Icon name="calendar" size={13} color={C.muted}/> {new Date().toLocaleDateString('en-GB',{ day:'2-digit', month:'short', year:'numeric' })}</div>
-              <div style={s.pill}><Icon name="clock" size={13} color={C.muted}/> {clock} <span style={{color:C.dim, marginLeft:2}}>IST</span></div>
-              <button style={s.bellBtn} onClick={()=>setActiveTab('overview')}>
-                <Icon name="bell" size={16} color={C.text2}/>
-                {notifCount>0 && <span style={s.bellBadge}>{notifCount>9?'9+':notifCount}</span>}
-              </button>
-              <button style={s.profilePill} onClick={()=>setShowLogout(true)}>
-                <div style={s.avatar}>{(user?.name||'U').slice(0,2).toUpperCase()}</div>
-                <div style={{textAlign:'left'}}>
-                  <div style={s.profileName}>{user?.name||'Admin User'}</div>
-                  <div style={s.profileRole}>Super Admin</div>
-                </div>
-                <Icon name="chevron-down" size={13} color={C.muted}/>
-              </button>
-            </div>
-          </div>
+          <TopBar
+            title={tabMeta.title}
+            sub={tabMeta.sub}
+            right={
+              <>
+                <Pill icon="calendar">{new Date().toLocaleDateString('en-GB',{ day:'2-digit', month:'short', year:'numeric' })}</Pill>
+                <Pill icon="clock">{clock} <span style={{ color:C.dim }}>IST</span></Pill>
+                <NotifyButton count={notifCount} onClick={()=>setActiveTab('footage')} />
+                <AccountButton name={user?.name || 'Admin'} sub="Super Admin" onClick={()=>setShowLogout(true)} />
+              </>
+            }
+          />
 
-          {activeTab === 'overview' && (
-            <div style={{padding:'0 24px 8px'}}>
-              <div style={s.actionRow}>
-                <button style={s.outlineBtn} onClick={downloadDailyReport}><Icon name="download" size={13} color={C.text2}/> Download Daily Report</button>
-                <button style={s.accentBtn} onClick={()=>setActiveTab('fullday')}>View Full Day <Icon name="arrow-right" size={13} color="#06120a"/></button>
-              </div>
-            </div>
-          )}
-
-          <div style={s.body}>
+          <PageBody>
 
           {/* ══════════ OVERVIEW ══════════ */}
           {activeTab === 'overview' && (
             <>
-              <div style={s.sectionLabel}>WORKFORCE &amp; WORKLOAD — TODAY</div>
-              <div style={s.kpiGrid}>
-                <KpiCard icon="shield" label="Command Center Health" value={`${commandHealthPct}%`} sub={`${activeNowCnt}/${onDutyNow.length} on duty this hour`} />
-                <KpiCard
-                  icon="users" label="Active Employees" value={kpis.active} sub={`${activePct}% of total`} progress={activePct}
-                  onClick={()=>setRosterModal({ title:'Active Employees', empty:'Nobody is clocked in right now.', rows:activeEmployees })}
+              {/* Right now — the four numbers a supervisor opens this page for */}
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:SP[3], flexWrap:'wrap', marginBottom:SP[3] }}>
+                <div className="eyebrow">Right now</div>
+                <div style={{ display:'flex', gap:SP[2], flexWrap:'wrap' }}>
+                  <Button size="sm" variant="ghost" icon="download" onClick={downloadDailyReport}>Daily report</Button>
+                  <Button size="sm" variant="primary" iconRight="arrow-right" onClick={()=>setActiveTab('fullday')}>Full day</Button>
+                </div>
+              </div>
+
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(190px, 1fr))', gap:SP[3], marginBottom:SP[5] }}>
+                <Stat
+                  icon="shield" label="On duty this hour"
+                  value={`${activeNowCnt}/${onDutyNow.length}`}
+                  sub={`${commandHealthPct}% of who should be here`}
+                  subColor={commandHealthPct < 80 ? C.amber : C.muted}
+                  accent={commandHealthPct < 80 ? C.amber : C.accent}
+                  progress={commandHealthPct}
                 />
-                <KpiCard icon="check-circle" label="Updates Completed" value={totalUpdatesToday} sub="Across all employees today" />
-                <KpiCard icon="clock" label="Pending Updates" value={totalPendingToday} sub="Awaiting completion" subColor={totalPendingToday>0?C.amber:C.muted} />
-                <KpiCard icon="leaves" label="Week Off" value={kpis.weekOff} sub="Scheduled off today" />
-                <KpiCard
-                  icon="offline" label="Not Started" value={kpis.notStarted} sub="Should be active by now" subColor={kpis.notStarted>0?C.red:C.muted}
+                <Stat
+                  icon="check-circle" label="Updates completed" value={totalUpdatesToday}
+                  // With nothing assigned yet, completionPct is 100 by
+                  // definition — reporting "100% of today's work" against a
+                  // zero reads as a finished day rather than one that has
+                  // not begun.
+                  sub={totalUpdatesToday + totalPendingToday === 0 ? 'Nothing recorded yet today' : `${completionPct}% of today's work`}
+                  progress={totalUpdatesToday + totalPendingToday === 0 ? 0 : completionPct}
+                />
+                <Stat
+                  icon="clock" label="Pending updates" value={totalPendingToday}
+                  sub={totalPendingToday > 0 ? 'Awaiting completion' : 'Nothing outstanding'}
+                  subColor={totalPendingToday > 0 ? C.amber : C.accent}
+                  accent={totalPendingToday > 0 ? C.amber : C.accent}
+                />
+                <Stat
+                  icon="offline" label="Not started" value={kpis.notStarted}
+                  sub={kpis.notStarted > 0 ? 'Should be active by now' : 'Everyone scheduled is in'}
+                  subColor={kpis.notStarted > 0 ? C.red : C.accent}
+                  accent={kpis.notStarted > 0 ? C.red : C.accent}
                   onClick={()=>setRosterModal({ title:'Not Started', empty:'Everyone scheduled has clocked in.', rows:notStartedEmployees })}
                 />
-                <KpiCard icon="camera" label="Footage Queue" value={footage.pending.length} sub={`${footage.followups.length} follow-up(s) open`} subColor={footage.pending.length>0?C.amber:C.muted} />
-                <KpiCard icon="shuffle" label="Redistribution Today" value={redistribution.length} sub="Slots reassigned" />
               </div>
 
-              <div style={s.row1}>
-                {/* Employee Status donut */}
-                <div style={s.card}>
-                  <div style={s.cardHeadRow}>
-                    <div style={s.cardHead}>EMPLOYEE STATUS <span style={{color:C.muted, fontWeight:400}}>(Live)</span></div>
-                  </div>
-                  <div style={{display:'flex', alignItems:'center', gap:'14px', marginBottom:'14px'}}>
-                    <Donut segments={statusDonutSegs} size={110} thickness={15} centerLabel={kpis.total} centerSub="Employees" />
-                    <div style={{display:'flex', flexDirection:'column', gap:'7px', flex:1}}>
+              <div className="eyebrow" style={{ marginBottom:SP[3] }}>Workforce</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(190px, 1fr))', gap:SP[3], marginBottom:SP[5] }}>
+                <Stat
+                  icon="users" label="Clocked in" value={kpis.active} sub={`${activePct}% of ${kpis.total} employees`} progress={activePct}
+                  onClick={()=>setRosterModal({ title:'Clocked in', empty:'Nobody is clocked in right now.', rows:activeEmployees })}
+                />
+                <Stat icon="leaves" label="Week off" value={kpis.weekOff} sub="Scheduled off today" />
+                <Stat
+                  icon="clock" label="On break now" value={breaks?.onBreakNow || 0}
+                  sub={breaks?.onBreakNow ? 'Tap to see who' : 'Nobody is away'}
+                  subColor={breaks?.onBreakNow ? C.red : C.muted}
+                  accent={breaks?.onBreakNow ? C.red : C.accent}
+                  onClick={()=>setActiveTab('breaks')}
+                />
+                <Stat icon="shuffle" label="Redistributed today" value={redistribution.length} sub="Slots that changed hands"
+                  onClick={redistribution.length ? ()=>setActiveTab('redistribution') : undefined} />
+              </div>
+
+              {/* Attention + status */}
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(320px, 1fr))', gap:SP[3], marginBottom:SP[5] }}>
+                <Card>
+                  <CardHead title="Needs attention" icon="alerts" />
+                  {aiAlerts.length === 0 ? (
+                    <div style={{ display:'flex', alignItems:'center', gap:SP[2], padding:'14px 0', color:C.accent, fontSize:T.base, fontWeight:600 }}>
+                      <Icon name="check-circle" size={16} color={C.accent} /> All clear — nothing needs you right now.
+                    </div>
+                  ) : (
+                    <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
+                      {aiAlerts.map((a,i) => <AlertRow key={i} alert={a} onClick={()=>setActiveTab(a.tab)} />)}
+                    </div>
+                  )}
+                </Card>
+
+                <Card>
+                  <CardHead title="Employee status" icon="users" right={<Tag color={C.accent} dot>LIVE</Tag>} />
+                  <div style={{ display:'flex', alignItems:'center', gap:SP[4] }}>
+                    <Donut segments={statusDonutSegs} size={104} thickness={14} centerLabel={kpis.total} centerSub="Employees" />
+                    <div style={{ display:'flex', flexDirection:'column', gap:'8px', flex:1, minWidth:0 }}>
                       {statusDonutSegs.map(seg => (
-                        <div key={seg.label} style={{display:'flex', alignItems:'center', gap:'7px'}}>
-                          <span style={{width:8,height:8,borderRadius:'50%',background:seg.color,flexShrink:0}}></span>
-                          <span style={{color:C.text2, fontSize:'11px', flex:1}}>{seg.label}</span>
-                          <span style={{color:C.text, fontSize:'11px', fontWeight:600}}>{seg.value}</span>
+                        <div key={seg.label} style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+                          <span style={{ width:8, height:8, borderRadius:'50%', background:seg.color, flexShrink:0 }} />
+                          <span className="ellip" style={{ color:C.text2, fontSize:T.base, flex:1 }}>{seg.label}</span>
+                          <span style={{ color:C.text, fontSize:T.base, fontWeight:700 }}>{seg.value}</span>
                         </div>
                       ))}
                     </div>
                   </div>
-                  <div style={{borderTop:`1px solid ${C.border}`, paddingTop:'12px'}}>
-                    <div style={{...s.cardHead, marginBottom:'8px'}}>TOP PERFORMERS <span style={{color:C.muted, fontWeight:400}}>(Today)</span></div>
-                    {topPerformers.length===0 ? (
-                      <div style={{color:C.muted, fontSize:'11px'}}>No updates recorded yet.</div>
-                    ) : topPerformers.map((e,i) => (
-                      <div key={e.name} style={{display:'flex', alignItems:'center', gap:'8px', marginBottom:'6px'}}>
-                        <span style={{color:C.muted, fontSize:'10px', width:'12px'}}>{i+1}</span>
-                        <span style={{color:C.text, fontSize:'11px', width:'80px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{e.name}</span>
-                        <div style={{flex:1, height:'5px', background:C.border2, borderRadius:'3px', overflow:'hidden'}}>
-                          <div style={{height:'100%', width:`${Math.round((e.totalUpdates/maxUpdates)*100)}%`, background:C.accent, borderRadius:'3px'}}></div>
-                        </div>
-                        <span style={{color:C.muted, fontSize:'10px', width:'26px', textAlign:'right'}}>{e.totalUpdates}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* AI Alerts */}
-                <div style={s.card}>
-                  <div style={s.cardHeadRow}>
-                    <div style={s.cardHead}>AI ALERTS &amp; NOTIFICATIONS</div>
-                  </div>
-                  <div style={{display:'flex', flexDirection:'column', gap:'10px', marginBottom:'12px'}}>
-                    {aiAlerts.length===0 ? (
-                      <div style={{color:C.muted, fontSize:'11px', padding:'8px 0'}}>All clear — no active alerts.</div>
-                    ) : aiAlerts.map((a,i) => <AlertRow key={i} alert={a} />)}
-                  </div>
-                  {aiAlerts.length>0 && (
-                    <div style={s.aiRecBox}>
-                      <div style={{flex:1}}>
-                        <div style={{color:C.text, fontSize:'11px', fontWeight:600, marginBottom:'2px'}}>AI Recommendation</div>
-                        <div style={{color:C.muted, fontSize:'10.5px'}}>
-                          {kpis.notStarted>0
-                            ? `Follow up with employees who haven't started their shift.`
-                            : `Clear the ${footage.pending.length} pending footage request(s) to keep response time low.`}
-                        </div>
-                      </div>
-                      <button style={s.miniAccentBtn} onClick={()=>setActiveTab(kpis.notStarted>0?'fullday':'footage')}>View Details</button>
-                    </div>
-                  )}
-                </div>
+                </Card>
               </div>
 
-              <div style={{...s.sectionLabel, marginTop:'4px'}}>BREAKDOWN</div>
-              <div style={s.row2}>
-                {/* Client distribution */}
-                <div style={s.card}>
-                  <div style={s.cardHead}>CLIENT DISTRIBUTION <span style={{color:C.muted, fontWeight:400}}>(Footage Requests)</span></div>
-                  {clientDistribution.length===0 ? (
-                    <div style={{color:C.muted, fontSize:'11px', padding:'20px 0', textAlign:'center'}}>No footage requests yet.</div>
-                  ) : (
-                    <div style={{display:'flex', alignItems:'center', gap:'12px', marginTop:'10px'}}>
-                      <Donut segments={clientDistribution} size={92} thickness={13} centerLabel={clientDistribution.reduce((s,x)=>s+x.value,0)} centerSub="Total" small/>
-                      <div style={{display:'flex', flexDirection:'column', gap:'5px', flex:1}}>
-                        {clientDistribution.map(seg => (
-                          <div key={seg.label} style={{display:'flex', alignItems:'center', gap:'6px'}}>
-                            <span style={{width:7,height:7,borderRadius:'50%',background:seg.color,flexShrink:0}}></span>
-                            <span style={{color:C.text2, fontSize:'10.5px', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{seg.label}</span>
-                            <span style={{color:C.text, fontSize:'10.5px', fontWeight:600}}>{seg.value}</span>
-                          </div>
-                        ))}
+              {/* Output */}
+              <div className="eyebrow" style={{ marginBottom:SP[3] }}>Today's output</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(260px, 1fr))', gap:SP[3], marginBottom:SP[5] }}>
+                <Card>
+                  <CardHead title="Top performers" icon="trend-up" />
+                  {/* maxUpdates is floored at 1 so the bar maths can't divide
+                      by zero, so it can never be the "nothing yet" signal —
+                      the totals themselves are. */}
+                  {totalUpdatesToday === 0 ? (
+                    <div style={{ color:C.muted, fontSize:T.base, padding:'14px 0' }}>No updates recorded yet today.</div>
+                  ) : topPerformers.filter(e => e.totalUpdates > 0).map((e,i) => (
+                    <div key={e.name} style={{ display:'flex', alignItems:'center', gap:'9px', marginBottom:'9px' }}>
+                      <span style={{ color:C.dim, fontSize:T.xs, width:'11px', fontWeight:700 }}>{i+1}</span>
+                      <span className="ellip" style={{ color:C.text2, fontSize:T.base, width:'92px' }}>{e.name}</span>
+                      <div style={{ flex:1 }}><Meter value={(e.totalUpdates/maxUpdates)*100} /></div>
+                      <span style={{ color:C.text, fontSize:T.base, fontWeight:700, width:'26px', textAlign:'right' }}>{e.totalUpdates}</span>
+                    </div>
+                  ))}
+                </Card>
+
+                <Card>
+                  <CardHead title="Completion" icon="check-circle" />
+                  <div style={{ display:'flex', alignItems:'center', gap:SP[4] }}>
+                    <Donut
+                      segments={[{value:totalUpdatesToday||0,color:C.accent},{value:totalPendingToday||0,color:'#2a2a2a'}]}
+                      size={98} thickness={13} centerLabel={`${completionPct}%`} centerSub="Done"
+                    />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ marginBottom:'12px' }}>
+                        <div style={{ color:C.accent, fontSize:'21px', fontWeight:800, lineHeight:1 }}>{totalUpdatesToday}</div>
+                        <div style={{ color:C.muted, fontSize:T.xs, marginTop:'3px' }}>COMPLETED</div>
+                      </div>
+                      <div>
+                        <div style={{ color: totalPendingToday ? C.amber : C.muted, fontSize:'21px', fontWeight:800, lineHeight:1 }}>{totalPendingToday}</div>
+                        <div style={{ color:C.muted, fontSize:T.xs, marginTop:'3px' }}>PENDING</div>
                       </div>
                     </div>
-                  )}
-                </div>
-
-                {/* Today's progress */}
-                <div style={s.card}>
-                  <div style={s.cardHead}>TODAY'S PROGRESS</div>
-                  <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'10px 0'}}>
-                    <Donut segments={[{label:'Completed',value:totalUpdatesToday||0,color:C.accent},{label:'Pending',value:totalPendingToday||0,color:C.border2}]} size={100} thickness={14} centerLabel={`${completionPct}%`} centerSub="Done" />
                   </div>
-                  <div style={{display:'flex', justifyContent:'space-around', marginTop:'8px'}}>
-                    <div style={{textAlign:'center'}}>
-                      <div style={{color:C.accent, fontSize:'15px', fontWeight:700}}>{totalUpdatesToday}</div>
-                      <div style={{color:C.muted, fontSize:'9px'}}>COMPLETED</div>
-                    </div>
-                    <div style={{textAlign:'center'}}>
-                      <div style={{color:C.amber, fontSize:'15px', fontWeight:700}}>{totalPendingToday}</div>
-                      <div style={{color:C.muted, fontSize:'9px'}}>PENDING</div>
-                    </div>
-                  </div>
-                </div>
+                </Card>
 
-                {/* Redistribution summary */}
-                <div style={s.card}>
-                  <div style={s.cardHead}>REDISTRIBUTION SUMMARY</div>
-                  {redistribution.length===0 ? (
-                    <div style={{color:C.muted, fontSize:'11px', padding:'20px 0', textAlign:'center'}}>No redistribution today.</div>
+                <Card>
+                  <CardHead
+                    title="Footage queue" icon="camera"
+                    right={footage.pending.length > 0 ? <Tag color={C.amber}>{footage.pending.length} OPEN</Tag> : <Tag color={C.accent}>CLEAR</Tag>}
+                  />
+                  {recentPendingFootage.length === 0 ? (
+                    <div style={{ color:C.muted, fontSize:T.base, padding:'14px 0' }}>No pending requests.</div>
                   ) : (
-                    <div style={{display:'flex', flexDirection:'column', gap:'8px', marginTop:'10px'}}>
-                      {redistribution.slice(0,4).map((r,i) => (
-                        <div key={i} style={{display:'flex', alignItems:'center', gap:'6px', fontSize:'11px'}}>
-                          <span style={{color:C.red}}>{r.from}</span>
-                          <Icon name="arrow-right" size={11} color={C.muted}/>
-                          <span style={{color:C.accent}}>{r.to}</span>
-                          <span style={{color:C.muted, marginLeft:'auto'}}>{r.hour}:00</span>
-                        </div>
-                      ))}
-                      <button style={{...s.outlineBtn, marginTop:'4px', justifyContent:'center'}} onClick={()=>setActiveTab('redistribution')}>View all →</button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Recent footage requests */}
-                <div style={s.card}>
-                  <div style={s.cardHead}>RECENT FOOTAGE REQUESTS</div>
-                  {recentPendingFootage.length===0 ? (
-                    <div style={{color:C.muted, fontSize:'11px', padding:'20px 0', textAlign:'center'}}>No pending requests.</div>
-                  ) : (
-                    <div style={{display:'flex', flexDirection:'column', gap:'8px', marginTop:'10px'}}>
+                    <>
                       {recentPendingFootage.slice(0,4).map(item => (
-                        <div key={item.issueId} style={{display:'flex', alignItems:'center', gap:'8px'}}>
-                          <div style={{flex:1, minWidth:0}}>
-                            <div style={{color:C.text, fontSize:'11px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{item.vehicle}</div>
-                            <div style={{color:C.muted, fontSize:'9.5px'}}>{item.client}</div>
+                        <div key={item.issueId} style={{ display:'flex', alignItems:'center', gap:SP[2], marginBottom:'9px' }}>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div className="ellip" style={{ color:C.text, fontSize:T.base, fontWeight:600 }}>{item.vehicle}</div>
+                            <div className="ellip" style={{ color:C.muted, fontSize:T.xs }}>{item.client}</div>
                           </div>
-                          <span className="badge badge-amber">PENDING</span>
+                          <Tag color={C.amber}>PENDING</Tag>
                         </div>
                       ))}
-                      <button style={{...s.outlineBtn, marginTop:'4px', justifyContent:'center'}} onClick={()=>setActiveTab('footage')}>View all →</button>
-                    </div>
+                      <Button size="sm" variant="subtle" full onClick={()=>setActiveTab('footage')}>View all →</Button>
+                    </>
                   )}
-                </div>
+                </Card>
+
+                <Card>
+                  <CardHead title="Redistribution" icon="shuffle" />
+                  {redistribution.length === 0 ? (
+                    <div style={{ color:C.muted, fontSize:T.base, padding:'14px 0' }}>No redistribution today.</div>
+                  ) : (
+                    <>
+                      {redistribution.slice(0,4).map((r,i) => (
+                        <div key={i} style={{ display:'flex', alignItems:'center', gap:'7px', fontSize:T.base, marginBottom:'9px' }}>
+                          <span className="ellip" style={{ color:C.red, maxWidth:'80px' }}>{r.from}</span>
+                          <Icon name="arrow-right" size={12} color={C.dim} />
+                          <span className="ellip" style={{ color:C.accent, maxWidth:'80px' }}>{r.to}</span>
+                          <span style={{ color:C.muted, marginLeft:'auto', fontSize:T.xs }}>{r.hour}:00</span>
+                        </div>
+                      ))}
+                      <Button size="sm" variant="subtle" full onClick={()=>setActiveTab('redistribution')}>View all →</Button>
+                    </>
+                  )}
+                </Card>
               </div>
 
-              {/* Live activity feed */}
-              <div style={{...s.card, marginTop:'14px'}}>
-                <div style={s.cardHeadRow}>
-                  <div style={s.cardHead}>LIVE ACTIVITY FEED</div>
-                </div>
-                {activityFeed.length===0 ? (
-                  <div style={{color:C.muted, fontSize:'11px', padding:'12px 0'}}>No activity recorded yet today.</div>
+              {/* Activity */}
+              <Card>
+                <CardHead title="Live activity" icon="clock" right={<Tag color={C.accent} dot>LIVE</Tag>} />
+                {activityFeed.length === 0 ? (
+                  <div style={{ color:C.muted, fontSize:T.base, padding:'10px 0' }}>No activity recorded yet today.</div>
                 ) : (
-                  <div style={{display:'flex', gap:'18px', overflowX:'auto', paddingBottom:'4px'}}>
+                  <div style={{ display:'flex', gap:SP[4], overflowX:'auto', paddingBottom:'6px' }}>
                     {activityFeed.map((a,i) => (
-                      <div key={i} style={{display:'flex', gap:'8px', minWidth:'190px', flexShrink:0}}>
-                        <div style={{width:'26px', height:'26px', borderRadius:'50%', background:C.s2, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0}}>
+                      <div key={i} style={{ display:'flex', gap:'9px', minWidth:'196px', flexShrink:0 }}>
+                        <div style={{ width:'28px', height:'28px', borderRadius:R.md, background:a.color+'1a', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
                           <Icon name={a.icon} size={13} color={a.color} />
                         </div>
-                        <div>
-                          <div style={{color:C.text, fontSize:'11px', fontWeight:600}}>{a.name}</div>
-                          <div style={{color:C.muted, fontSize:'10px'}}>{a.action}</div>
-                          {a.time && <div style={{color:C.dim, fontSize:'9.5px', marginTop:'2px'}}>{a.time}</div>}
+                        <div style={{ minWidth:0 }}>
+                          <div className="ellip" style={{ color:C.text, fontSize:T.base, fontWeight:600 }}>{a.name}</div>
+                          <div style={{ color:C.muted, fontSize:T.xs, lineHeight:1.5 }}>{a.action}</div>
+                          {a.time && <div style={{ color:C.dim, fontSize:'9.5px', marginTop:'2px' }}>{a.time}</div>}
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
-              </div>
-
-              {/* Break analytics */}
-              <div style={{...s.card, marginTop:'14px'}}>
-                <div style={{...s.cardHeadRow, flexWrap:'wrap', gap:'10px'}}>
-                  <div style={s.cardHead}>
-                    <Icon name="clock" size={13} color={C.accent}/> BREAK ANALYTICS
-                    {breaks?.onBreakNow>0 && <span style={{background:C.red+'22', color:C.red, borderRadius:'20px', padding:'2px 8px', fontSize:'9.5px', fontWeight:700, marginLeft:'8px'}}>{breaks.onBreakNow} on break now</span>}
-                  </div>
-                  <div style={{ display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap' }}>
-                    {['today','all','custom'].map(r => (
-                      <button key={r} onClick={()=>setBreakRange(r)} style={{
-                        background: breakRange===r?C.accentDark:C.s2, border:`1px solid ${breakRange===r?C.accent:C.border2}`,
-                        borderRadius:'7px', color: breakRange===r?C.accent:C.text2, fontSize:'10.5px', fontWeight:600, padding:'6px 11px', cursor:'pointer',
-                      }}>{r==='today'?'Today':r==='all'?'All Time':'Custom'}</button>
-                    ))}
-                    {breakRange==='custom' && (
-                      <>
-                        <input type="date" value={breakFrom} onChange={e=>setBreakFrom(e.target.value)} style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'7px',color:C.text,fontSize:'11px',padding:'6px 8px'}} />
-                        <span style={{color:C.muted,fontSize:'11px'}}>to</span>
-                        <input type="date" value={breakTo} onChange={e=>setBreakTo(e.target.value)} style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'7px',color:C.text,fontSize:'11px',padding:'6px 8px'}} />
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {!breaks ? (
-                  <div style={{display:'flex',justifyContent:'center',padding:'2rem'}}><div className="spinner"></div></div>
-                ) : breaks.employees.length===0 ? (
-                  <div style={{color:C.muted, fontSize:'11px', padding:'12px 0'}}>No breaks recorded in this range.</div>
-                ) : (
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))', gap:'10px', marginTop:'6px', alignItems:'start' }}>
-                    {breaks.employees.map(e => {
-                      const isOpen = expandedBreakEmp === e.name
-                      const mySessions = breaks.sessions.filter(s => s.name === e.name)
-                      return (
-                        <div key={e.name} style={{ background:C.s2, border:`1px solid ${e.currentlyOnBreak?C.red+'55':C.border2}`, borderRadius:'10px', padding:'12px' }}>
-                          <div onClick={()=>setExpandedBreakEmp(isOpen?null:e.name)} style={{ cursor:'pointer' }}>
-                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
-                              <span style={{ color:C.text, fontSize:'12px', fontWeight:600 }}>{e.name}</span>
-                              {e.currentlyOnBreak && <span style={{ color:C.red, fontSize:'9px', fontWeight:700, display:'flex', alignItems:'center', gap:'4px' }}><span className="live-dot" style={{width:5,height:5,background:C.red}}></span>ON BREAK</span>}
-                            </div>
-                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
-                              <span key={liveTick} style={{ color:C.accent, fontSize:'18px', fontWeight:800 }}>{(() => {
-                                const m = liveBreakMinutes(e)
-                                return `${Math.floor(m/60)}h ${m%60}m`
-                              })()}</span>
-                              <span style={{ color:C.muted, fontSize:'10px', display:'flex', alignItems:'center', gap:'4px' }}>{e.sessions} session{e.sessions!==1?'s':''} <Icon name="chevron-down" size={10} color={C.muted}/></span>
-                            </div>
-                            {e.currentlyOnBreak && <div style={{ color:C.muted, fontSize:'9.5px', marginTop:'3px' }}>Since {e.activeSince}</div>}
-                          </div>
-                          {isOpen && (
-                            <div style={{ borderTop:`1px solid ${C.border2}`, marginTop:'10px', paddingTop:'10px', display:'flex', flexDirection:'column', gap:'6px' }}>
-                              {mySessions.map((sess,i) => (
-                                <div key={i} style={{ background:C.bg, borderRadius:'7px', padding:'7px 9px' }}>
-                                  <div style={{ display:'flex', justifyContent:'space-between' }}>
-                                    <span style={{ color:C.text2, fontSize:'10px' }}>{sess.date}</span>
-                                    <span style={{ color: sess.status==='Active'?C.red:C.accent, fontSize:'10px', fontWeight:700 }}>{sess.minutes}m</span>
-                                  </div>
-                                  <div style={{ color:C.muted, fontSize:'10px', marginTop:'2px' }}>
-                                    {sess.startTime} → {sess.endTime || (sess.status==='Active'?'ongoing':'—')}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
+              </Card>
             </>
+          )}
+
+          {/* ══════════ BREAKS ══════════ */}
+          {activeTab === 'breaks' && (
+            <BreaksTab
+              breaks={breaks} liveTick={liveTick}
+              range={breakRange} setRange={setBreakRange}
+              from={breakFrom} to={breakTo} setFrom={setBreakFrom} setTo={setBreakTo}
+            />
           )}
 
           {/* ══════════ FULL DAY VIEW ══════════ */}
@@ -767,180 +684,167 @@ export default function Admin() {
 
           {/* ══════════ FOLLOW-UPS ══════════ */}
           {activeTab === 'followups' && (
-            <div style={{maxWidth:'900px'}}>
-              <div style={s.sectionHd}>OPEN FOLLOW-UPS — Admin can close these</div>
-              {footage.followups.length===0 ? (
-                <div style={{color:C.muted,textAlign:'center',padding:'3rem'}}>No open follow-ups.</div>
+            <div style={{ maxWidth:'940px' }}>
+              {footage.followups.length === 0 ? (
+                <Card pad={false}>
+                  <EmptyState icon="followups" tone="good" title="No open follow-ups." detail="A follow-up appears here when an employee hands a footage request to a colleague at the end of their shift." />
+                </Card>
               ) : (
-                footage.followups.map(item => (
-                  <div key={item.issueId} style={{...s.footCard,borderColor:C.amber+'33'}}>
-                    <div style={{display:'flex',justifyContent:'space-between',gap:'12px',flexWrap:'wrap'}}>
-                      <div style={{flex:1,minWidth:'200px'}}>
-                        <div style={{color:C.text,fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}>
-                          <span style={{color:C.amber,marginRight:'6px'}}>↩</span>
-                          {item.client} · <span style={{color:C.accent}}>{item.vehicle}</span>
+                <div style={{ display:'flex', flexDirection:'column', gap:SP[2] }}>
+                  {footage.followups.map(item => (
+                    <Card key={item.issueId} style={{ borderColor:C.amber+'33' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', gap:SP[4], flexWrap:'wrap' }}>
+                        <div style={{ flex:1, minWidth:'220px' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap', marginBottom:'7px' }}>
+                            <span style={{ color:C.text, fontSize:T.md, fontWeight:700 }}>{item.client}</span>
+                            <span style={{ color:C.accent, fontSize:T.md, fontWeight:700 }}>{item.vehicle}</span>
+                            <Tag color={C.amber}>FOLLOW-UP</Tag>
+                          </div>
+                          <div style={{ display:'flex', gap:SP[4], flexWrap:'wrap', color:C.muted, fontSize:T.sm }}>
+                            <span>ID <span style={{ color:C.text2 }}>{item.issueId}</span></span>
+                            <span>From <span style={{ color:C.text2 }}>{item.originalEmployee}</span></span>
+                            <span>To <span style={{ color:C.text, fontWeight:600 }}>{item.forwardedTo}</span></span>
+                            <span>At <span style={{ color:C.text2 }}>{item.forwardedAt}</span></span>
+                          </div>
+                          {item.details && (
+                            <div style={{ color:C.text2, fontSize:T.sm, marginTop:'7px', fontStyle:'italic' }}>{item.details}</div>
+                          )}
                         </div>
-                        <div style={{color:C.muted,fontSize:'11px',lineHeight:'1.6'}}>
-                          <span style={{color:C.text2}}>ID:</span> {item.issueId} &nbsp;·&nbsp;
-                          <span style={{color:C.text2}}>Original:</span> {item.originalEmployee} &nbsp;·&nbsp;
-                          <span style={{color:C.text2}}>Forwarded to:</span> <strong style={{color:C.text}}>{item.forwardedTo}</strong> &nbsp;·&nbsp;
-                          <span style={{color:C.text2}}>At:</span> {item.forwardedAt}
-                        </div>
-                        {item.details&&<div style={{color:C.text2,fontSize:'11px',marginTop:'4px',fontStyle:'italic'}}>{item.details}</div>}
-                      </div>
-                      <div style={{display:'flex',flexDirection:'column',gap:'6px',alignItems:'flex-end'}}>
-                        <span className="badge badge-amber">FOLLOW-UP</span>
-                        <button
-                          style={{background:C.redBg,border:'1px solid #3a1515',borderRadius:'6px',color:C.red,fontSize:'10px',padding:'5px 10px',cursor:'pointer'}}
+                        <Button
+                          variant="danger" size="sm"
                           onClick={()=>{ setCloseFollowupModal(item); setCloseReason('') }}
-                        >
-                          Close follow-up
-                        </button>
+                        >Close follow-up</Button>
                       </div>
-                    </div>
-                  </div>
-                ))
+                    </Card>
+                  ))}
+                </div>
               )}
             </div>
           )}
 
           {/* ══════════ REDISTRIBUTION ══════════ */}
           {activeTab === 'redistribution' && (
-            <div style={{maxWidth:'900px'}}>
-              <div style={s.sectionHd}>TODAY'S REDISTRIBUTION LOG</div>
-              {redistribution.length===0 ? (
-                <div style={{color:C.muted,textAlign:'center',padding:'3rem'}}>No redistributions today.</div>
-              ) : (
-                <table style={s.table}>
-                  <thead>
-                    <tr style={{background:C.s2}}>
-                      {['From','To','Client','Hour','Reason'].map(h=><th key={h} style={s.tableHd}>{h}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {redistribution.map((r,i)=>(
-                      <tr key={i} style={{borderBottom:`1px solid ${C.borderRow}`}}>
-                        <td style={{...s.tableTd,color:C.red}}>{r.from}</td>
-                        <td style={{...s.tableTd,color:C.accent}}>{r.to}</td>
-                        <td style={s.tableTd}>{r.client}</td>
-                        <td style={s.tableTd}>{r.hour}:00</td>
-                        <td style={{...s.tableTd,color:C.muted}}>Early End</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+            <div style={{ maxWidth:'940px' }}>
+              <Card pad={false} style={{ overflow:'hidden' }}>
+                <Table
+                  cols={[
+                    { key:'from',   label:'From',   render:r => <span style={{ color:C.red, fontWeight:600 }}>{r.from}</span> },
+                    { key:'to',     label:'To',     render:r => <span style={{ color:C.accent, fontWeight:600 }}>{r.to}</span> },
+                    { key:'client', label:'Client', render:r => <span style={{ color:C.text }}>{r.client}</span> },
+                    { key:'hour',   label:'Hour',   width:'90px', render:r => `${r.hour}:00` },
+                    { key:'reason', label:'Reason', width:'120px', render:() => <span style={{ color:C.muted }}>Early end</span> },
+                  ]}
+                  rows={redistribution}
+                  rowKey={(r,i)=>i}
+                  empty={<EmptyState icon="shuffle" title="No redistributions today." detail="Work moves between people when somebody ends their shift with clients unfinished, or an admin marks leave." />}
+                />
+              </Card>
             </div>
           )}
 
-          {/* ══════════ PLACEHOLDER TABS (coming soon) ══════════ */}
+          {/* ══════════ NOT YET LIVE ══════════ */}
           {['leaves','reports','analytics','alerts','settings'].includes(activeTab) && (
-            <div style={{...s.card, maxWidth:'560px', margin:'40px auto', textAlign:'center', padding:'40px 24px'}}>
-              <div style={{width:'44px',height:'44px',borderRadius:'12px',background:C.accentDark,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 14px'}}>
-                <Icon name={activeTab} size={20} color={C.accent}/>
-              </div>
-              <div style={{color:C.text,fontSize:'15px',fontWeight:700,marginBottom:'6px'}}>{tabMeta.title} — coming soon</div>
-              <div style={{color:C.muted,fontSize:'12px',lineHeight:1.6}}>
-                This module isn't wired up to live data yet. It'll be built out in the next Design Bible chapter.
-              </div>
-            </div>
+            <Card pad={false} style={{ maxWidth:'560px', margin:'40px auto' }}>
+              <EmptyState
+                icon={activeTab}
+                title={`${tabMeta.title} — coming soon`}
+                detail="This module isn't wired up to live data yet."
+              />
+            </Card>
           )}
 
-          </div>
+          </PageBody>
         </div>
       </div>
 
-      {/* ══════════ MARK LEAVE MODAL ══════════ */}
-      {markLeaveModal && (
-        <div style={modal.overlay} onClick={()=>setMarkLeaveModal(null)}>
-          <div style={modal.box} onClick={e=>e.stopPropagation()}>
-            <div style={modal.title}>Mark Leave — {markLeaveModal.name}</div>
-            <div style={modal.row}>
-              <div style={{flex:1}}>
-                <label style={modal.lbl}>FROM HOUR</label>
-                <select style={modal.sel} value={leaveFromHour} onChange={e=>setLeaveFromHour(parseInt(e.target.value))}>
-                  {hours.map(h=><option key={h} value={h}>{h}:00</option>)}
-                </select>
-              </div>
-              <div style={{flex:1}}>
-                <label style={modal.lbl}>TO HOUR</label>
-                <select style={modal.sel} value={leaveToHour} onChange={e=>setLeaveToHour(parseInt(e.target.value))}>
-                  {hours.map(h=><option key={h} value={h}>{h}:00</option>)}
-                </select>
-              </div>
-            </div>
-            <label style={modal.lbl}>REASON</label>
-            <input style={modal.inp} placeholder="Optional reason" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/>
-            <div style={modal.btnRow}>
-              <button style={modal.cancelBtn} onClick={()=>setMarkLeaveModal(null)}>Cancel</button>
-              <button style={modal.confirmBtn} onClick={handleMarkLeave} disabled={markingLeave}>
-                {markingLeave?'Marking...':'Mark Leave'}
-              </button>
-            </div>
-          </div>
+      {/* ══════════ MARK LEAVE ══════════ */}
+      <Modal
+        open={!!markLeaveModal}
+        onClose={()=>setMarkLeaveModal(null)}
+        icon="leaves" iconColor={C.amber}
+        title={markLeaveModal ? `Mark leave — ${markLeaveModal.name}` : ''}
+        sub="Their clients for these hours move to whoever else is on shift, straight away."
+        footer={
+          <>
+            <Button variant="ghost" full onClick={()=>setMarkLeaveModal(null)}>Cancel</Button>
+            <Button variant="primary" full loading={markingLeave} onClick={handleMarkLeave}>Mark leave</Button>
+          </>
+        }
+      >
+        <div style={{ display:'flex', gap:SP[3], marginBottom:SP[4] }}>
+          <Field label="From hour" style={{ flex:1 }}>
+            <select value={leaveFromHour} onChange={e=>setLeaveFromHour(parseInt(e.target.value))}>
+              {hours.map(h=><option key={h} value={h}>{h}:00</option>)}
+            </select>
+          </Field>
+          <Field label="To hour" style={{ flex:1 }}>
+            <select value={leaveToHour} onChange={e=>setLeaveToHour(parseInt(e.target.value))}>
+              {hours.map(h=><option key={h} value={h}>{h}:00</option>)}
+            </select>
+          </Field>
         </div>
-      )}
+        <Field label="Reason" hint="Optional — shown in the Leaves tab.">
+          <input placeholder="e.g. Medical, personal" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)} />
+        </Field>
+      </Modal>
 
-      {/* ══════════ CLOSE FOLLOW-UP MODAL ══════════ */}
-      {closeFollowupModal && (
-        <div style={modal.overlay} onClick={()=>setCloseFollowupModal(null)}>
-          <div style={modal.box} onClick={e=>e.stopPropagation()}>
-            <div style={modal.title}>Close Follow-up</div>
-            <div style={{color:C.muted,fontSize:'13px',marginBottom:'16px'}}>
-              Issue ID: <strong style={{color:C.text}}>{closeFollowupModal.issueId}</strong> · {closeFollowupModal.client} · {closeFollowupModal.vehicle}
-            </div>
-            <label style={modal.lbl}>REASON FOR CLOSING</label>
-            <input style={modal.inp} placeholder="e.g. Footage not available, already resolved..." value={closeReason} onChange={e=>setCloseReason(e.target.value)}/>
-            <div style={modal.btnRow}>
-              <button style={modal.cancelBtn} onClick={()=>setCloseFollowupModal(null)}>Cancel</button>
-              <button style={{...modal.confirmBtn,background:C.red}} onClick={handleCloseFollowup} disabled={closingFollowup}>
-                {closingFollowup?'Closing...':'Close Follow-up'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ══════════ CLOSE FOLLOW-UP ══════════ */}
+      <Modal
+        open={!!closeFollowupModal}
+        onClose={()=>setCloseFollowupModal(null)}
+        icon="followups" iconColor={C.red}
+        title="Close follow-up"
+        sub={closeFollowupModal
+          ? `${closeFollowupModal.issueId} · ${closeFollowupModal.client} · ${closeFollowupModal.vehicle}`
+          : ''}
+        footer={
+          <>
+            <Button variant="ghost" full onClick={()=>setCloseFollowupModal(null)}>Cancel</Button>
+            <Button variant="danger" full loading={closingFollowup} onClick={handleCloseFollowup}>Close follow-up</Button>
+          </>
+        }
+      >
+        <Field label="Reason for closing">
+          <input placeholder="e.g. Footage not available, already resolved" value={closeReason} onChange={e=>setCloseReason(e.target.value)} />
+        </Field>
+      </Modal>
 
-      {/* Roster drill-down — opened from the Active / Not Started KPI cards */}
-      {rosterModal && (
-        <div style={modal.overlay} onClick={()=>setRosterModal(null)}>
-          <div style={{...modal.box, maxWidth:'460px'}} onClick={e=>e.stopPropagation()}>
-            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'4px'}}>
-              <div style={modal.title}>{rosterModal.title}</div>
-              <button onClick={()=>setRosterModal(null)} style={{background:'transparent',border:'none',color:C.muted,fontSize:'20px',cursor:'pointer',lineHeight:1}}>×</button>
-            </div>
-            <div style={{color:C.muted, fontSize:'12px', marginBottom:'14px'}}>
-              {rosterModal.rows.length} employee(s) · shift timings shown in IST
-            </div>
-            {rosterModal.rows.length === 0 ? (
-              <div style={{color:C.muted, fontSize:'12.5px', padding:'18px 0', textAlign:'center'}}>{rosterModal.empty}</div>
-            ) : (
-              <div style={{maxHeight:'50vh', overflowY:'auto'}}>
-                {rosterModal.rows.map(e => (
-                  <div key={e.name} style={{display:'flex', alignItems:'center', gap:'10px', padding:'10px 0', borderBottom:`1px solid ${C.borderRow}`}}>
-                    <div style={{width:'30px', height:'30px', borderRadius:'50%', background:C.accentDark, color:C.accent, fontSize:'11px', fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0}}>
-                      {e.name.slice(0,2).toUpperCase()}
-                    </div>
-                    <div style={{flex:1, minWidth:0}}>
-                      <div style={{color:C.text, fontSize:'12.5px', fontWeight:600}}>{e.name}</div>
-                      <div style={{color:C.muted, fontSize:'10.5px'}}>
-                        {shiftLabel(e)}
-                        {e.isAdjusted && <span style={{color:C.amber, marginLeft:'6px'}}>· adjusted today</span>}
-                      </div>
-                    </div>
-                    <div style={{textAlign:'right', flexShrink:0}}>
-                      {e.startTime
-                        ? <div style={{color:C.accent, fontSize:'10.5px', fontWeight:600}}>In {e.startTime}</div>
-                        : <div style={{color:C.red, fontSize:'10.5px', fontWeight:600}}>Not clocked in</div>}
-                      {e.endTime && <div style={{color:C.muted, fontSize:'9.5px'}}>Out {e.endTime}</div>}
-                    </div>
+      {/* ══════════ ROSTER DRILL-DOWN ══════════ */}
+      <Modal
+        open={!!rosterModal}
+        onClose={()=>setRosterModal(null)}
+        width={460}
+        title={rosterModal?.title}
+        sub={rosterModal ? `${rosterModal.rows.length} employee${rosterModal.rows.length===1?'':'s'} · timings in IST` : ''}
+      >
+        {rosterModal && (rosterModal.rows.length === 0 ? (
+          <div style={{ color:C.muted, fontSize:T.base, padding:'18px 0', textAlign:'center' }}>{rosterModal.empty}</div>
+        ) : (
+          <div style={{ maxHeight:'52vh', overflowY:'auto' }}>
+            {rosterModal.rows.map(e => (
+              <div key={e.name} style={{ display:'flex', alignItems:'center', gap:'11px', padding:'11px 0', borderBottom:`1px solid ${C.border}` }}>
+                <div style={{
+                  width:'32px', height:'32px', borderRadius:'50%', background:C.accentDark, color:C.accent,
+                  fontSize:'11px', fontWeight:800, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+                }}>{e.name.slice(0,2).toUpperCase()}</div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div className="ellip" style={{ color:C.text, fontSize:T.base, fontWeight:700 }}>{e.name}</div>
+                  <div className="ellip" style={{ color:C.muted, fontSize:T.xs, marginTop:'2px' }}>
+                    {shiftLabel(e)}
+                    {e.isAdjusted && <span style={{ color:C.amber }}> · adjusted today</span>}
                   </div>
-                ))}
+                </div>
+                <div style={{ textAlign:'right', flexShrink:0 }}>
+                  {e.startTime
+                    ? <div style={{ color:C.accent, fontSize:T.xs, fontWeight:700 }}>In {e.startTime}</div>
+                    : <div style={{ color:C.red, fontSize:T.xs, fontWeight:700 }}>Not clocked in</div>}
+                  {e.endTime && <div style={{ color:C.muted, fontSize:'9.5px', marginTop:'2px' }}>Out {e.endTime}</div>}
+                </div>
               </div>
-            )}
+            ))}
           </div>
-        </div>
-      )}
+        ))}
+      </Modal>
 
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
     </>
@@ -951,115 +855,30 @@ export default function Admin() {
 // Presentational helpers (Overview-tab specific — shared ones live in Widgets.js)
 // ─────────────────────────────────────────────────────────────────────────
 
-function AlertRow({ alert }) {
+function AlertRow({ alert, onClick }) {
   const sevColor = { high:C.red, warn:C.amber, info:C.blue, success:C.accent }[alert.sev] || C.muted
   return (
-    <div style={{ display:'flex', gap:'10px', alignItems:'flex-start' }}>
-      <div style={{ width:'26px', height:'26px', borderRadius:'8px', background:sevColor+'1a', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-        <Icon name={alert.icon} size={13} color={sevColor} />
-      </div>
-      <div style={{flex:1}}>
-        <div style={{ color:sevColor, fontSize:'11.5px', fontWeight:700 }}>{alert.title}</div>
-        <div style={{ color:C.muted, fontSize:'10.5px', marginTop:'1px' }}>{alert.desc}</div>
-      </div>
-    </div>
+    <button
+      onClick={onClick}
+      className="row-hover"
+      style={{
+        display:'flex', gap:'11px', alignItems:'center', width:'100%',
+        background:'transparent', border:'none', borderRadius:R.md,
+        padding:'9px 8px', textAlign:'left',
+      }}
+    >
+      <span style={{
+        width:'28px', height:'28px', borderRadius:R.md, background:sevColor+'1a',
+        display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+      }}>
+        <Icon name={alert.icon} size={14} color={sevColor} />
+      </span>
+      <span style={{ flex:1, minWidth:0 }}>
+        <span className="ellip" style={{ display:'block', color:sevColor, fontSize:T.base, fontWeight:700 }}>{alert.title}</span>
+        <span className="ellip" style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'1px' }}>{alert.desc}</span>
+      </span>
+      <Icon name="arrow-right" size={14} color={C.dim} />
+    </button>
   )
 }
 
-function MapIllustration() {
-  // Decorative static illustration — replace with a real map once vehicle
-  // GPS coordinates are exposed by a backend API.
-  const dots = [
-    [60,40,C.accent],[110,70,C.accent],[150,50,C.amber],[190,90,C.accent],[230,60,C.red],
-    [90,120,C.accent],[140,140,C.accent],[200,130,C.amber],[250,110,C.accent],[120,180,C.accent],
-    [170,190,C.red],[220,170,C.accent],[70,160,C.amber],[260,150,C.accent],
-  ]
-  return (
-    <svg viewBox="0 0 300 220" width="100%" height="100%" style={{maxHeight:'220px'}}>
-      <rect x="0" y="0" width="300" height="220" fill="none" />
-      {dots.map(([x,y,c],i) => (
-        <circle key={i} cx={x} cy={y} r={i%3===0?4:3} fill={c} opacity={0.85}>
-          {c===C.accent && <animate attributeName="opacity" values="0.85;0.3;0.85" dur="2s" repeatCount="indefinite" begin={`${i*0.15}s`} />}
-        </circle>
-      ))}
-    </svg>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Styles
-// ─────────────────────────────────────────────────────────────────────────
-
-const s = {
-  topbar: { display:'flex', alignItems:'flex-start', justifyContent:'space-between', padding:'20px 24px 14px', flexWrap:'wrap', gap:'12px' },
-  topTitle: { color:C.text, fontSize:'24px', fontWeight:800 },
-  topTag: { color:C.accent, fontSize:'12px', fontWeight:600 },
-  topSub: { color:C.muted, fontSize:'12px', marginTop:'4px' },
-  topRight: { display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' },
-  pill: { display:'flex', alignItems:'center', gap:'6px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', padding:'7px 12px', color:C.text2, fontSize:'12px', whiteSpace:'nowrap' },
-  bellBtn: { position:'relative', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', width:'34px', height:'34px', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' },
-  bellBadge: { position:'absolute', top:'-4px', right:'-4px', background:C.red, color:'#fff', fontSize:'9px', fontWeight:700, borderRadius:'10px', minWidth:'16px', height:'16px', display:'flex', alignItems:'center', justifyContent:'center', padding:'0 3px' },
-  profilePill: { display:'flex', alignItems:'center', gap:'8px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'5px 10px 5px 5px', cursor:'pointer' },
-  avatar: { width:'28px', height:'28px', borderRadius:'50%', background:C.accent, color:'#06120a', fontSize:'11px', fontWeight:'700', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 },
-  profileName: { color:C.text, fontSize:'12px', fontWeight:600, lineHeight:1.3 },
-  profileRole: { color:C.muted, fontSize:'10px', lineHeight:1.3 },
-  actionRow: { display:'flex', gap:'10px', justifyContent:'flex-end', flexWrap:'wrap' },
-  outlineBtn: { display:'flex', alignItems:'center', gap:'6px', background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'12px', fontWeight:600, padding:'9px 14px', cursor:'pointer' },
-  accentBtn: { display:'flex', alignItems:'center', gap:'6px', background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12px', fontWeight:700, padding:'9px 14px', cursor:'pointer' },
-  miniAccentBtn: { background:'transparent', border:`1px solid ${C.accent}55`, borderRadius:'7px', color:C.accent, fontSize:'10.5px', fontWeight:600, padding:'7px 10px', cursor:'pointer', whiteSpace:'nowrap' },
-
-  body: { padding:'8px 24px 32px' },
-
-  sectionLabel: { color:C.muted, fontSize:'10px', fontWeight:700, letterSpacing:'1.2px', marginBottom:'10px' },
-  kpiGrid: { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap:'10px', marginBottom:'16px' },
-  kpiCard: { background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'14px' },
-  kpiIconWrap: { width:'28px', height:'28px', borderRadius:'8px', background:C.accentSoft, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:'10px' },
-  kpiLabel: { color:C.muted, fontSize:'10.5px', marginBottom:'4px' },
-  kpiValue: { color:C.text, fontSize:'22px', fontWeight:800, lineHeight:1 },
-
-  row1: { display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'14px' },
-  row2: { display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:'12px' },
-
-  card: { background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' },
-  cardHeadRow: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'12px' },
-  cardHead: { color:C.accent, fontSize:'10.5px', letterSpacing:'1px', fontWeight:'700', display:'flex', alignItems:'center', gap:'6px' },
-  previewTag: { background:C.border2, color:C.muted, fontSize:'8.5px', fontWeight:700, letterSpacing:'0.5px', borderRadius:'4px', padding:'2px 6px' },
-  mapArea: { position:'relative', height:'250px', background:C.bg, borderRadius:'8px', border:`1px solid ${C.border}`, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', overflow:'hidden' },
-  mapOverlayNote: { position:'absolute', bottom:0, left:0, right:0, background:'linear-gradient(0deg, rgba(0,0,0,0.9), transparent)', color:C.muted, fontSize:'10.5px', padding:'22px 14px 10px', textAlign:'center', lineHeight:1.5 },
-  aiRecBox: { display:'flex', alignItems:'center', gap:'10px', background:C.accentSoft, border:`1px solid ${C.accent}33`, borderRadius:'8px', padding:'10px 12px' },
-
-  tabs: { display:'flex', gap:'4px', borderBottom:`1px solid ${C.border}`, marginBottom:'20px', overflowX:'auto' },
-  empListCard: { background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', overflow:'hidden' },
-  empRow: { display:'flex', alignItems:'center', gap:'12px', padding:'12px 16px', borderBottom:`1px solid ${C.borderRow}`, flexWrap:'wrap' },
-  empDot: { width:'8px', height:'8px', borderRadius:'50%', flexShrink:0 },
-  empNameCol: { minWidth:'140px' },
-  empDuration: { color:C.muted, fontSize:'12px', minWidth:'70px', textAlign:'center' },
-  viewBtn: { background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'6px', color:C.muted, fontSize:'11px', padding:'6px 12px', cursor:'pointer', whiteSpace:'nowrap', marginLeft:'auto' },
-  filterBar: { display:'flex', gap:'10px', alignItems:'center', marginBottom:'16px', flexWrap:'wrap', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'12px 16px' },
-  filterLbl: { color:C.muted, fontSize:'10px', letterSpacing:'0.5px', fontWeight:'600' },
-  dateInp: { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, fontSize:'13px', padding:'8px 10px' },
-  quickBtn: { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'11px', padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' },
-  fdEmpCard: { background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'12px 16px' },
-  fdEmpHeader: { display:'flex', alignItems:'center', gap:'12px', cursor:'pointer', flexWrap:'wrap' },
-  progRow: { display:'flex', alignItems:'center', gap:'12px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'12px 16px', flexWrap:'wrap' },
-  sectionHd: { color:C.accent, fontSize:'10px', letterSpacing:'1.5px', fontWeight:'600', marginBottom:'12px' },
-  footSumCard: { background:C.s2, borderRadius:'8px', padding:'8px 14px', display:'flex', flexDirection:'column', alignItems:'center', gap:'2px' },
-  footCard: { background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'14px', marginBottom:'8px' },
-  searchInp: { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, fontSize:'13px', padding:'9px 12px', boxSizing:'border-box' },
-  table: { width:'100%', borderCollapse:'collapse', background:C.card, borderRadius:'10px', overflow:'hidden', border:`1px solid ${C.border}` },
-  tableHd: { color:C.muted, fontSize:'10px', letterSpacing:'0.5px', padding:'10px 14px', textAlign:'left', fontWeight:'600' },
-  tableTd: { color:C.text, fontSize:'12px', padding:'10px 14px' },
-}
-
-const modal = {
-  overlay: { position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, backdropFilter:'blur(2px)' },
-  box: { background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'1.5rem', width:'360px', maxWidth:'90vw' },
-  title: { color:C.text, fontSize:'16px', fontWeight:'700', marginBottom:'16px' },
-  row: { display:'flex', gap:'10px', marginBottom:'14px' },
-  lbl: { display:'block', color:C.accent, fontSize:'10px', letterSpacing:'1px', fontWeight:'600', marginBottom:'5px' },
-  sel: { width:'100%', background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, padding:'8px 10px', fontSize:'13px' },
-  inp: { width:'100%', background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, padding:'9px 12px', fontSize:'13px', marginBottom:'16px', boxSizing:'border-box' },
-  btnRow: { display:'flex', gap:'8px' },
-  cancelBtn: { flex:1, background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.muted, fontSize:'13px', padding:'10px', cursor:'pointer' },
-  confirmBtn: { flex:1, background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'13px', fontWeight:'700', padding:'10px', cursor:'pointer' },
-}

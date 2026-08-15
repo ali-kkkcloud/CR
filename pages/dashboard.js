@@ -6,6 +6,8 @@ import BreakOverlay from '../components/BreakOverlay'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C, parseSheetDate } from '../components/Widgets'
+import { TopBar, PageBody, AccountButton, NotifyButton } from '../components/Shell'
+import { Card, Button, Pill, Tag, Field, Banner, EmptyState, Modal, T, R, SP, SURF } from '../components/ui'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
 import MyDayTab from '../components/tabs/MyDayTab'
 import MyClientsTab from '../components/tabs/MyClientsTab'
@@ -26,6 +28,10 @@ function sameDayAsShift(raisedAt, shiftDateStr) {
   if (!raisedD) return false
   const [d, m, y] = shiftDateStr.split('/').map(Number)
   return raisedD.getFullYear() === y && raisedD.getMonth() === m - 1 && raisedD.getDate() === d
+}
+function greeting() {
+  const h = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Kolkata' })).getHours()
+  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
 }
 function fmtShift(startHour, endHour) {
   if (startHour==null || endHour==null) return '—'
@@ -370,6 +376,48 @@ export default function Dashboard() {
     return data
   }
 
+  // Save a client's whole record in ONE request.
+  //
+  // saveUpdate above fires per field, and the grid it was written for called
+  // it on every onChange — so typing a vehicle number into the misalignment
+  // box was one Google Sheets write per letter. That is what made the
+  // platform feel slow, and it spent quota the whole team shares on work
+  // that was thrown away a keystroke later. The client screen now holds a
+  // draft and posts it once.
+  //
+  // /api/crm/update rewrites the entire row, so the record passed in must
+  // carry every field — which is exactly what the draft is.
+  const saveClient = useCallback(async (client, record, hourOverride) => {
+    const targetHour = hourOverride ?? currentHour
+    const isCurrentHourEdit = targetHour === currentHour
+    editingRef.current[client] = Date.now()   // protect from background refresh
+    try {
+      const res = await fetch('/api/crm/update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client, slot: targetHour, ...record }),
+      })
+      const data = await res.json()
+      // Only accept the new values once the server has them. Applying them
+      // optimistically would make a failed save look identical to a
+      // successful one, because the draft is compared against exactly this.
+      if (!res.ok || !data.success) return false
+      if (isCurrentHourEdit) {
+        setFilled(p => ({ ...p, [client]: { ...(p[client] || {}), ...record, updatedAt: data.updatedAt || '' } }))
+      }
+      // "status" is what actually marks a client done — refresh the summary
+      // shortly after so My Targets and the trend don't sit stale until the
+      // next 30s poll.
+      if ((record.status || '').toString().trim()) {
+        clearTimeout(summaryRefreshRef.current)
+        summaryRefreshRef.current = setTimeout(() => { loadSummary(summaryRangeRef.current); loadMyDay() }, 1200)
+      }
+      return true
+    } catch (err) {
+      console.error('saveClient failed:', err)
+      return false
+    }
+  }, [currentHour, loadSummary, loadMyDay])
+
   async function startBreak() {
     setBreakActionLoading(true)
     try {
@@ -444,40 +492,67 @@ export default function Dashboard() {
   if (endShiftStep === 'footage') return (
     <>
       <Head><title>Cautio CRM — End Shift</title></Head>
-      <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
-        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'16px',padding:'2rem',maxWidth:'600px',width:'100%'}}>
-          <div style={{color:C.amber,fontSize:'20px',fontWeight:'700',marginBottom:'8px'}}>⚠ Pending Footage Requests</div>
-          <div style={{color:C.muted,fontSize:'13px',marginBottom:'24px'}}>
-            You have {todaysPendingFootage.length} pending footage request(s) from today's shift. Forward them to another employee before ending shift, or skip forwarding.
-          </div>
-          {todaysPendingFootage.map(item => (
-            <div key={item.issueId} style={{background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'10px',padding:'14px',marginBottom:'10px'}}>
-              <div style={{color:C.text,fontSize:'13px',fontWeight:'600',marginBottom:'4px'}}>
-                <span style={{color:C.blue,marginRight:'6px'}}>▶</span>{item.client} · {item.vehicle}
-              </div>
-              <div style={{color:C.muted,fontSize:'11px',marginBottom:'10px'}}>ID: {item.issueId} &nbsp;·&nbsp; Raised: {item.raisedAt}</div>
-              <label style={{color:C.accent,fontSize:'10px',letterSpacing:'1px',fontWeight:'600',display:'block',marginBottom:'5px'}}>FORWARD TO</label>
-              <select
-                style={{width:'100%',background:C.bg,border:`1px solid ${C.border2}`,borderRadius:'8px',color:C.text,padding:'8px 10px',fontSize:'13px'}}
-                value={forwardSelections[item.issueId] || ''}
-                onChange={e => setForwardSelections(p => ({...p, [item.issueId]: e.target.value}))}
-              >
-                <option value="">— Skip (don't forward) —</option>
-                {forwardOptions.active.length > 0 && (
-                  <optgroup label="Currently Active">{forwardOptions.active.map(e => <option key={e.name} value={e.name}>{e.name} (active)</option>)}</optgroup>
-                )}
-                {forwardOptions.others.length > 0 && (
-                  <optgroup label="Other Employees">{forwardOptions.others.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}</optgroup>
-                )}
-              </select>
+      <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:SP[5] }}>
+        <Card style={{ maxWidth:'620px', width:'100%', padding:SP[6] }}>
+          <div style={{ display:'flex', alignItems:'center', gap:SP[3], marginBottom:SP[3] }}>
+            <div style={{
+              width:'42px', height:'42px', borderRadius:R.lg, background:C.amber+'18',
+              display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+            }}>
+              <Icon name="footage" size={20} color={C.amber} />
             </div>
-          ))}
-          <div style={{display:'flex',gap:'10px',marginTop:'20px'}}>
-            <button onClick={() => setEndShiftStep(null)} style={{flex:1,background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'8px',color:C.muted,fontSize:'13px',padding:'12px',cursor:'pointer'}}>Cancel</button>
-            <button onClick={handleForwardAndEnd} disabled={forwarding} style={{flex:2,background:C.accent,border:'none',borderRadius:'8px',color:'#06120a',fontSize:'13px',fontWeight:'700',padding:'12px',cursor:'pointer'}}>{forwarding ? 'Forwarding...' : 'Forward & End Shift'}</button>
-            <button onClick={doEndShift} style={{flex:1,background:C.red,border:'none',borderRadius:'8px',color:'#fff',fontSize:'13px',fontWeight:'700',padding:'12px',cursor:'pointer'}}>End Without Forwarding</button>
+            <div>
+              <div style={{ color:C.text, fontSize:T.lg, fontWeight:800 }}>
+                {todaysPendingFootage.length} footage request{todaysPendingFootage.length===1?'':'s'} still open
+              </div>
+              <div style={{ color:C.muted, fontSize:T.base, marginTop:'3px' }}>
+                Raised during this shift. Hand each one to a colleague, or leave it in your own queue.
+              </div>
+            </div>
           </div>
-        </div>
+
+          <div style={{ maxHeight:'46vh', overflowY:'auto', display:'flex', flexDirection:'column', gap:SP[2], margin:`${SP[4]} 0` }}>
+            {todaysPendingFootage.map(item => (
+              <div key={item.issueId} style={{
+                background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md, padding:SP[3],
+              }}>
+                <div style={{ display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap', marginBottom:'4px' }}>
+                  <span style={{ color:C.text, fontSize:T.md, fontWeight:700 }}>{item.vehicle}</span>
+                  <span style={{ color:C.muted, fontSize:T.base }}>{item.client}</span>
+                </div>
+                <div style={{ color:C.muted, fontSize:T.xs, marginBottom:'10px' }}>
+                  {item.issueId} · raised {item.raisedAt}
+                </div>
+                <Field label="Forward to">
+                  <select
+                    value={forwardSelections[item.issueId] || ''}
+                    onChange={e => setForwardSelections(p => ({ ...p, [item.issueId]: e.target.value }))}
+                  >
+                    <option value="">— Keep it with me —</option>
+                    {forwardOptions.active.length > 0 && (
+                      <optgroup label="On shift now">
+                        {forwardOptions.active.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}
+                      </optgroup>
+                    )}
+                    {forwardOptions.others.length > 0 && (
+                      <optgroup label="Everyone else">
+                        {forwardOptions.others.map(e => <option key={e.name} value={e.name}>{e.name}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                </Field>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display:'flex', gap:SP[2], flexWrap:'wrap' }}>
+            <Button variant="subtle" onClick={() => setEndShiftStep(null)}>Cancel</Button>
+            <Button variant="primary" style={{ flex:2, minWidth:'180px' }} loading={forwarding} onClick={handleForwardAndEnd}>
+              Forward &amp; end shift
+            </Button>
+            <Button variant="danger" style={{ flex:1, minWidth:'140px' }} onClick={doEndShift}>End without forwarding</Button>
+          </div>
+        </Card>
       </div>
     </>
   )
@@ -486,31 +561,46 @@ export default function Dashboard() {
   if (shiftStatus === 'ended' && showReport && report) return (
     <>
       <Head><title>Cautio CRM — Shift Report</title></Head>
-      <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
-        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:'16px',padding:'2.5rem',maxWidth:'520px',width:'100%'}}>
-          <img src="/cautio_shield.webp" alt="Cautio" style={{width:'40px',height:'40px',objectFit:'contain',display:'block',margin:'0 auto 8px'}} onError={e=>e.target.style.display='none'}/>
-          <h2 style={{color:C.text,textAlign:'center',marginBottom:'4px'}}>Shift Complete</h2>
-          <p style={{color:C.muted,textAlign:'center',fontSize:'13px',marginBottom:'2rem'}}>{report.date} · {report.shiftStart} → {report.shiftEnd} · {report.duration}</p>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',marginBottom:'10px'}}>
+      <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:SP[5] }}>
+        <Card style={{ maxWidth:'540px', width:'100%', padding:SP[6] }}>
+          <div style={{ textAlign:'center', marginBottom:SP[5] }}>
+            <img
+              src="/cautio_shield.webp" alt="Cautio"
+              style={{ width:'38px', height:'38px', objectFit:'contain', display:'block', margin:'0 auto 12px' }}
+              onError={e=>e.target.style.display='none'}
+            />
+            <div style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px' }}>Shift complete</div>
+            <div style={{ color:C.muted, fontSize:T.base, marginTop:'6px' }}>
+              {report.date} · {report.shiftStart} → {report.shiftEnd} · {report.duration}
+            </div>
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:SP[2], marginBottom:SP[2] }}>
             <RepStat val={report.clientsHandled} label="CLIENTS" color={C.accent}/>
             <RepStat val={report.totalUpdates} label="UPDATES" color={C.accent}/>
             <RepStat val={report.misalignCount} label="MISALIGNS" color={C.amber}/>
             <RepStat val={report.alertTotal} label="ALERTS" color={C.red}/>
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px',marginBottom:'20px'}}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:SP[2], marginBottom:SP[5] }}>
             <RepStat val={report.fatigueCount} label="FATIGUE" color={C.purple}/>
             <RepStat val={report.footageCompletedToday} label="FOOTAGE DONE" color={C.accent}/>
-            <RepStat val={report.footagePending} label="FOOTAGE PENDING" color={C.amber}/>
-            <RepStat val={report.redistributed} label="REDISTRIBUTED" color={C.text}/>
+            <RepStat val={report.footagePending} label="FOOTAGE OPEN" color={C.amber}/>
+            <RepStat val={report.redistributed} label="HANDED ON" color={C.text}/>
           </div>
+
           {report.redistributed > 0 && (
-            <div style={{background:C.s2,borderRadius:'8px',padding:'10px 14px',fontSize:'11.5px',color:C.text2,marginBottom:'16px'}}>
-              ↩ {report.redistributed} clients redistributed to: {[...new Set(report.redistributedTo)].join(', ')}
+            <div style={{ marginBottom:SP[4] }}>
+              <Banner tone="info" icon="shuffle">
+                {report.redistributed} client{report.redistributed===1?'':'s'} handed to {[...new Set(report.redistributedTo)].join(', ')}
+              </Banner>
             </div>
           )}
-          <button onClick={downloadReport} style={{width:'100%',background:C.s2,border:`1px solid ${C.border2}`,borderRadius:'8px',color:C.text2,fontSize:'13px',padding:'12px',cursor:'pointer',marginBottom:'10px'}}>⬇ Download CSV Report</button>
-          <button onClick={()=>{fetch('/api/auth/logout',{method:'POST'});router.push('/login')}} style={{width:'100%',background:'transparent',border:`1px solid ${C.border2}`,borderRadius:'8px',color:C.muted,fontSize:'13px',padding:'12px',cursor:'pointer'}}>Logout</button>
-        </div>
+
+          <div style={{ display:'flex', flexDirection:'column', gap:SP[2] }}>
+            <Button variant="ghost" full icon="download" onClick={downloadReport}>Download CSV report</Button>
+            <Button variant="subtle" full onClick={()=>{ fetch('/api/auth/logout',{method:'POST'}); router.push('/login') }}>Log out</Button>
+          </div>
+        </Card>
       </div>
     </>
   )
@@ -554,69 +644,58 @@ export default function Dashboard() {
         />
 
         <div style={{flex:1, minWidth:0}}>
-          {/* Not-active banner */}
-          {!isActive && (
-            <div style={{ display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap', background:C.amberBg||'#1a1200', borderBottom:`1px solid ${C.amber}33`, padding:'12px 24px' }}>
-              <Icon name="clock" size={16} color={C.amber} />
-              <span style={{ color:C.amber, fontSize:'12.5px', fontWeight:600, flex:1 }}>
-                {shiftStatus==='ended' ? "Your shift has ended for today — you're viewing everything in read-only mode." : "Your shift hasn't started yet — you're viewing today's assignments in read-only mode."}
-              </span>
-              {shiftStatus==='not_started' && (
-                <button onClick={handleStartShiftClick} disabled={startingShift} style={{ background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'8px 16px', cursor:'pointer' }}>
-                  {startingShift ? 'Starting...' : '▶ Start Shift'}
-                </button>
-              )}
-            </div>
-          )}
 
-          {/* Topbar */}
-          <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', padding:'20px 24px 14px', flexWrap:'wrap', gap:'12px' }}>
-            <div>
-              <div style={{ color:C.text, fontSize:'22px', fontWeight:800 }}>
-                Good {new Date().getHours() < 12 ? 'Morning' : new Date().getHours() < 17 ? 'Afternoon' : 'Evening'}, {user?.name} 👋
-              </div>
-              <div style={{ color:C.muted, fontSize:'12px', marginTop:'4px' }}>Stay focused and keep up the great work.</div>
-            </div>
-            <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
-              <TopPill icon="calendar" text={new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})} />
-              <TopPill icon="clock" text={`Shift: ${fmtShift(summary?.shiftStart, summary?.shiftEnd)}`} />
-              {isActive && <TopPill icon="check-circle" text={`In: ${startTime}`} color={summary?.attendanceStatus==='Late'?C.amber:C.accent} />}
-              <button onClick={()=>setActiveTab('notifications')} style={{ position:'relative', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', width:'36px', height:'36px', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer' }}>
-                <Icon name="bell" size={16} color={C.text2}/>
-                {(footage.pending.length+footage.followups.length)>0 && (
-                  <span style={{ position:'absolute', top:'-4px', right:'-4px', background:C.red, color:'#fff', fontSize:'9px', fontWeight:700, borderRadius:'10px', minWidth:'16px', height:'16px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                    {footage.pending.length+footage.followups.length}
-                  </span>
+          <TopBar
+            title={`${greeting()}, ${user?.name || ''}`}
+            sub={isActive
+              ? 'You’re clocked in. Your board updates itself every hour.'
+              : shiftStatus === 'ended'
+                ? 'Your shift has ended for today.'
+                : 'Start your shift to begin working.'}
+            right={
+              <>
+                <Pill icon="calendar">{new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</Pill>
+                <Pill icon="clock">{fmtShift(summary?.shiftStart, summary?.shiftEnd)}</Pill>
+                {isActive && (
+                  <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>
+                    In {startTime}
+                  </Pill>
                 )}
-              </button>
-              {isActive && (
-                <>
-                  <button onClick={startBreak} disabled={breakActionLoading} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.red, border:'none', borderRadius:'10px', color:'#fff', fontSize:'13px', fontWeight:800, padding:'9px 18px', cursor:'pointer' }}>
-                    <Icon name="clock" size={15} color="#fff"/> BREAK
-                  </button>
-                  <button
-                    onClick={()=>setShowOTConfirm(true)}
-                    disabled={summary?.usedOT}
-                    title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
-                    style={{ display:'flex', alignItems:'center', gap:'6px', background: summary?.usedOT?C.s2:C.accentDark, border:`1px solid ${summary?.usedOT?C.border2:C.accent}55`, borderRadius:'10px', color: summary?.usedOT?C.muted:C.accent, fontSize:'12.5px', fontWeight:700, padding:'9px 14px', cursor: summary?.usedOT?'not-allowed':'pointer', opacity: summary?.usedOT?0.6:1 }}
-                  >
-                    <Icon name="clock" size={14} color={summary?.usedOT?C.muted:C.accent}/> OT
-                  </button>
-                  <button onClick={handleEndShiftClick} style={{ background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'10px', color:C.muted, fontSize:'12px', fontWeight:600, padding:'9px 14px', cursor:'pointer' }}>End Shift</button>
-                </>
-              )}
-              <button onClick={()=>setShowLogout(true)} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'5px 10px 5px 5px', cursor:'pointer' }}>
-                <div style={{ width:'28px', height:'28px', borderRadius:'50%', background:C.accent, color:'#06120a', fontSize:'11px', fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{(user?.name||'U').slice(0,2).toUpperCase()}</div>
-                <div style={{ textAlign:'left' }}>
-                  <div style={{ color:C.text, fontSize:'12px', fontWeight:600, lineHeight:1.3 }}>{user?.name||'Employee'}</div>
-                  <div style={{ color:C.muted, fontSize:'10px', lineHeight:1.3 }}>EMP-{user?.empId||'—'}</div>
-                </div>
-                <Icon name="chevron-down" size={13} color={C.muted}/>
-              </button>
-            </div>
-          </div>
+                <NotifyButton
+                  count={footage.pending.length + footage.followups.length}
+                  onClick={()=>setActiveTab('footage')}
+                />
+                {isActive ? (
+                  <>
+                    <Button variant="danger" icon="clock" onClick={startBreak} disabled={breakActionLoading}>Break</Button>
+                    <Button
+                      variant="ghost" icon="clock"
+                      onClick={()=>setShowOTConfirm(true)}
+                      disabled={summary?.usedOT}
+                      title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
+                      style={summary?.usedOT ? undefined : { color:C.accent, borderColor:C.accent+'55', background:C.accentSoft }}
+                    >OT</Button>
+                    <Button variant="subtle" onClick={handleEndShiftClick}>End shift</Button>
+                  </>
+                ) : shiftStatus === 'not_started' ? (
+                  <Button variant="primary" onClick={handleStartShiftClick} loading={startingShift}>▶ Start shift</Button>
+                ) : null}
+                <AccountButton name={user?.name} sub={user?.empId || '—'} onClick={()=>setShowLogout(true)} />
+              </>
+            }
+          />
 
-          <div style={{ padding:'0 24px 32px' }}>
+          <PageBody>
+            {!isActive && (
+              <div style={{ marginBottom:SP[4] }}>
+                <Banner tone="warn" icon="clock">
+                  {shiftStatus === 'ended'
+                    ? 'Your shift has ended for today — everything below is read-only.'
+                    : 'Your shift hasn’t started yet — you’re viewing today’s assignments in read-only mode.'}
+                </Banner>
+              </div>
+            )}
+
             {activeTab === 'dashboard' && (
               <EmpDashboardTab summary={summary} range={summaryRange} setRange={setSummaryRange} loading={summaryLoading} onGoToTab={setActiveTab} breakStatus={breakStatus} />
             )}
@@ -629,96 +708,109 @@ export default function Dashboard() {
               />
             )}
             {activeTab === 'clients' && (
-              <MyClientsTab clients={clients} filled={filled} saveUpdate={saveUpdate} saving={saving} currentHour={currentHour} canEdit={isActive} {...clientContext} />
+              <MyClientsTab clients={clients} filled={filled} saveClient={saveClient} saving={saving} currentHour={currentHour} canEdit={isActive} {...clientContext} />
             )}
             {activeTab === 'footage' && <EmpFootageTab footage={footage} />}
             {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
 
             {['performance','notifications','help','settings'].includes(activeTab) && (
-              <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', maxWidth:'520px', margin:'40px auto', textAlign:'center', padding:'40px 24px' }}>
-                <div style={{ width:'44px', height:'44px', borderRadius:'12px', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
-                  <Icon name={activeTab==='performance'?'analytics':activeTab==='notifications'?'alerts':activeTab==='help'?'sparkles':'settings'} size={20} color={C.accent}/>
-                </div>
-                <div style={{ color:C.text, fontSize:'15px', fontWeight:700, marginBottom:'6px' }}>{tabTitle} — coming soon</div>
-                <div style={{ color:C.muted, fontSize:'12px', lineHeight:1.6 }}>This module isn't wired up to live data yet.</div>
-              </div>
+              <Card pad={false} style={{ maxWidth:'520px', margin:'40px auto' }}>
+                <EmptyState
+                  icon={activeTab==='performance'?'analytics':activeTab==='notifications'?'alerts':activeTab==='help'?'sparkles':'settings'}
+                  title={`${tabTitle} — coming soon`}
+                  detail="This module isn't wired up to live data yet."
+                />
+              </Card>
             )}
-          </div>
+          </PageBody>
         </div>
       </div>
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
 
-      {/* Shift started (normal, non-early) confirmation */}
-      {shiftStartedInfo && (() => {
+      {/* Shift started — a statement of the window now in force, never a question */}
+      {(() => {
+        if (!shiftStartedInfo) return null
         const isAdj    = !!shiftStartedInfo.isAdjusted
         const isEarly  = !!shiftStartedInfo.isEarlyAdjustment
         const isLate   = isAdj && !isEarly
         const moved    = isLate && (shiftStartedInfo.hoursShifted || 0) > 0
         const owesHour = shiftStartedInfo.extraHour === 1
+        const accent   = isLate ? C.amber : C.accent
         return (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={()=>setShiftStartedInfo(null)}>
-          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'1.75rem', width:'380px', maxWidth:'90vw', textAlign:'center' }} onClick={e=>e.stopPropagation()}>
-            <div style={{ width:'52px', height:'52px', borderRadius:'50%', background: isLate?C.amberBg:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
-              <Icon name="check-circle" size={22} color={isLate?C.amber:C.accent} />
+          <Modal
+            open onClose={()=>setShiftStartedInfo(null)}
+            icon="check-circle" iconColor={accent}
+            title="Shift started"
+            footer={<Button variant="primary" full onClick={()=>setShiftStartedInfo(null)}>Got it</Button>}
+          >
+            <div style={{ color:C.muted, fontSize:T.base, lineHeight:1.7 }}>
+              You clocked in at <strong style={{ color:accent }}>{shiftStartedInfo.actualStart}</strong>.
             </div>
-            <div style={{ color:C.text, fontSize:'16px', fontWeight:700, marginBottom:'8px' }}>Shift started ✓</div>
-            <div style={{ color:C.muted, fontSize:'12.5px', lineHeight:1.6, marginBottom:'18px' }}>
-              You clocked in at <strong style={{color:isLate?C.amber:C.accent}}>{shiftStartedInfo.actualStart}</strong>.<br/>
-              {isEarly
-                ? 'You arrived before your rostered hour, so your shift now runs'
-                : isLate
-                  ? (moved
-                      ? 'Your shift has been moved to'
-                      : 'You clocked in after the half hour, so your shift runs to')
-                  : 'Your scheduled shift is'}<br/>
-              <strong style={{ color: isLate?C.amber:isEarly?C.accent:C.text2, fontSize:'14px' }}>{fmtShift(shiftStartedInfo.start, shiftStartedInfo.end)}</strong>
-              {isEarly && <><br/><span style={{color:C.muted}}>Your clients for this hour are on your board now.</span></>}
-              {owesHour && <><br/><span style={{color:C.muted}}>That includes one extra hour at the end, because you clocked in past the half hour.</span></>}
-              {moved && <><br/><span style={{color:C.muted}}>The hours before you arrived are marked Week Off and won't be counted.</span></>}
+            <div style={{
+              background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md,
+              padding:'13px 15px', margin:`${SP[3]} 0`,
+            }}>
+              <div className="eyebrow" style={{ marginBottom:'5px' }}>
+                {isEarly ? 'Your shift now runs' : isLate ? (moved ? 'Moved to' : 'Runs to') : 'Your shift'}
+              </div>
+              <div style={{ color:accent, fontSize:T.lg, fontWeight:800 }}>
+                {fmtShift(shiftStartedInfo.start, shiftStartedInfo.end)}
+              </div>
             </div>
-            <button onClick={()=>setShiftStartedInfo(null)} style={{ width:'100%', background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'11px', cursor:'pointer' }}>Got it</button>
-          </div>
-        </div>
+            <div style={{ color:C.muted, fontSize:T.sm, lineHeight:1.7 }}>
+              {isEarly && <div>Your clients for this hour are on your board now.</div>}
+              {owesHour && <div>That includes one extra hour at the end, because you clocked in past the half hour.</div>}
+              {moved && <div>The hours before you arrived are marked Week Off and won’t be counted.</div>}
+            </div>
+          </Modal>
         )
       })()}
 
       {/* OT confirmation */}
-      {showOTConfirm && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={()=>setShowOTConfirm(false)}>
-          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'1.75rem', width:'380px', maxWidth:'90vw', textAlign:'center' }} onClick={e=>e.stopPropagation()}>
-            <div style={{ width:'52px', height:'52px', borderRadius:'50%', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
-              <Icon name="clock" size={22} color={C.accent} />
+      <Modal
+        open={showOTConfirm}
+        onClose={()=>setShowOTConfirm(false)}
+        icon="clock"
+        title="Extend shift by 3 hours?"
+        sub="This can only be used once per day."
+        footer={
+          <>
+            <Button variant="ghost" full onClick={()=>setShowOTConfirm(false)}>Cancel</Button>
+            <Button variant="primary" full loading={otLoading} onClick={confirmOT}>Confirm OT</Button>
+          </>
+        }
+      >
+        <div style={{
+          display:'flex', alignItems:'center', justifyContent:'center', gap:SP[4],
+          background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md, padding:'15px',
+        }}>
+          <div style={{ textAlign:'center' }}>
+            <div className="eyebrow" style={{ marginBottom:'5px' }}>Now ends</div>
+            <div style={{ color:C.text2, fontSize:T.md, fontWeight:700 }}>
+              {summary?.shiftEnd != null ? fmtShift(summary.shiftStart, summary.shiftEnd).split(' - ')[1] : '—'}
             </div>
-            <div style={{ color:C.text, fontSize:'16px', fontWeight:700, marginBottom:'8px' }}>Extend shift by 3 hours?</div>
-            <div style={{ color:C.muted, fontSize:'12.5px', lineHeight:1.6, marginBottom:'16px' }}>
-              Your shift end will move from <strong style={{color:C.text2}}>{summary?.shiftEnd!=null ? fmtShift(summary.shiftStart, summary.shiftEnd).split(' - ')[1] : '—'}</strong> to{' '}
-              <strong style={{ color:C.accent }}>{summary?.shiftEnd!=null ? fmtShift(summary.shiftStart, (summary.shiftEnd+3)%24).split(' - ')[1] : '—'}</strong>.
-              <br/>This can only be used once per day.
-            </div>
-            <div style={{ display:'flex', gap:'10px' }}>
-              <button onClick={()=>setShowOTConfirm(false)} style={{ flex:1, background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'12.5px', fontWeight:600, padding:'11px', cursor:'pointer' }}>Cancel</button>
-              <button onClick={confirmOT} disabled={otLoading} style={{ flex:1, background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'11px', cursor:'pointer' }}>{otLoading?'Applying...':'Confirm OT'}</button>
+          </div>
+          <Icon name="arrow-right" size={16} color={C.dim} />
+          <div style={{ textAlign:'center' }}>
+            <div className="eyebrow" style={{ marginBottom:'5px' }}>Will end</div>
+            <div style={{ color:C.accent, fontSize:T.md, fontWeight:800 }}>
+              {summary?.shiftEnd != null ? fmtShift(summary.shiftStart, (summary.shiftEnd+3)%24).split(' - ')[1] : '—'}
             </div>
           </div>
         </div>
-      )}
+      </Modal>
     </>
-  )
-}
-
-function TopPill({ icon, text, color }) {
-  return (
-    <div style={{ display:'flex', alignItems:'center', gap:'6px', background:C.card, border:`1px solid ${C.border}`, borderRadius:'8px', padding:'7px 12px', color: color||C.text2, fontSize:'12px', whiteSpace:'nowrap' }}>
-      <Icon name={icon} size={13} color={color||C.muted}/> {text}
-    </div>
   )
 }
 
 function RepStat({ val, label, color }) {
   return (
-    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', background:C.s2, borderRadius:'8px', padding:'10px' }}>
-      <span style={{ color, fontSize:'20px', fontWeight:700 }}>{val}</span>
-      <span style={{ color:C.muted, fontSize:'9px', marginTop:'2px' }}>{label}</span>
+    <div style={{
+      display:'flex', flexDirection:'column', alignItems:'center',
+      background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md, padding:'12px 8px',
+    }}>
+      <span style={{ color, fontSize:'21px', fontWeight:800, lineHeight:1 }}>{val}</span>
+      <span style={{ color:C.muted, fontSize:'9px', marginTop:'5px', letterSpacing:'0.4px', textAlign:'center' }}>{label}</span>
     </div>
   )
 }

@@ -1,5 +1,12 @@
+/* ══════════════════════════════════════════════════════════════════════
+   CAUTIO COMMAND CENTER — design system
+   Brand colours are LOCKED. Everything else here exists so the app has one
+   scale for type, spacing, radius and motion instead of a different number
+   invented at every call site.
+   ══════════════════════════════════════════════════════════════════════ */
+
 :root {
-  /* CAUTIO Command Center brand tokens — LOCKED, do not change */
+  /* ── Brand tokens — LOCKED, do not change ── */
   --bg:       #000000;
   --surface:  #1E1E1E;
   --s2:       #262626;
@@ -16,6 +23,38 @@
   --red:      #FF4D4D;
   --blue:     #3b82f6;
   --purple:   #a78bfa;
+
+  /* ── Derived surfaces ──
+     Raised sits above the page, sunken sits below it. Two levels, no more —
+     the old UI nested cards three deep and everything read as the same grey. */
+  --raised:   #1E1E1E;
+  --sunken:   #131313;
+  --hover:    #232323;
+  --dim:      #3f3f3f;
+
+  /* ── Type scale ── */
+  --t-xs:   10.5px;
+  --t-sm:   11.5px;
+  --t-base: 12.5px;
+  --t-md:   13.5px;
+  --t-lg:   15px;
+  --t-xl:   19px;
+  --t-2xl:  25px;
+
+  /* ── Radius scale ── */
+  --r-sm:  6px;   /* inputs, small chips  */
+  --r-md:  9px;   /* buttons, list rows   */
+  --r-lg:  13px;  /* cards, panels        */
+  --r-full: 999px;
+
+  /* ── Motion ──
+     One duration for state changes, one for things that move on screen. */
+  --fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --slow: 240ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Layout ── */
+  --sidebar-w: 246px;
+  --topbar-h:  62px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -27,37 +66,115 @@ html, body {
   font-size: 14px;
   line-height: 1.5;
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
+/* Tabular figures everywhere a number can change while you look at it —
+   a running break timer that shifts sideways every second reads as broken. */
+body { font-variant-numeric: tabular-nums; }
+
 a { color: var(--green); text-decoration: none; }
-button { cursor: pointer; font-family: inherit; }
+button { cursor: pointer; font-family: inherit; color: inherit; }
+button:disabled { cursor: not-allowed; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   FORM CONTROLS
+   ══════════════════════════════════════════════════════════════════════ */
 
 input, select, textarea {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--t-base);
   background: var(--s2);
   border: 1px solid var(--border2);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   color: var(--text);
-  padding: 8px 12px;
+  padding: 8px 11px;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--fast), box-shadow var(--fast), background var(--fast);
+}
+
+/* Controls fill their column only inside a Field or a search box. Forcing
+   width:100% globally collapsed every inline filter bar in the app — a date
+   picker and three selects that used to sit in a row each took a line of
+   their own. */
+.field > input, .field > select, .field > textarea,
+.search-box > input {
+  width: 100%;
+}
+input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) {
+  border-color: #3a3a3a;
 }
 input:focus, select:focus, textarea:focus {
   border-color: var(--green);
   box-shadow: 0 0 0 3px var(--glow);
+  background: var(--s3);
 }
-select option { background: var(--s2); }
+input:disabled, select:disabled, textarea:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+input::placeholder, textarea::placeholder { color: #5c5c5c; }
+select option { background: var(--s2); color: var(--text); }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+/* The browser's own arrow sits at a different offset in every engine.
+   One caret, drawn by us, in the same place everywhere. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239E9E9E' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 15px;
+  padding-right: 28px;
+}
 
-.badge { display: inline-block; border-radius: 4px; padding: 2px 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
-.badge-green  { background: #94EC8E22; color: #94EC8E; border: 1px solid #94EC8E33; }
-.badge-red    { background: #FF4D4D22; color: #FF4D4D; border: 1px solid #FF4D4D33; }
-.badge-amber  { background: #FFC10722; color: #FFC107; border: 1px solid #FFC10733; }
-.badge-blue   { background: #3b82f622; color: #60a5fa; border: 1px solid #3b82f633; }
+/* Number inputs: the spinner arrows are a mis-click waiting to happen on a
+   field where the value is typed, and they steal 16px of a narrow column. */
+input[type=number] { -moz-appearance: textfield; }
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+input[type=date] { color-scheme: dark; }
+
+/* Keyboard users get a visible ring; mouse users never see it. */
+:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+:focus:not(:focus-visible) { outline: none; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCROLLBARS
+   ══════════════════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #2e2e2e;
+  border-radius: var(--r-full);
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: #3d3d3d; }
+* { scrollbar-width: thin; scrollbar-color: #2e2e2e transparent; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   BADGES
+   ══════════════════════════════════════════════════════════════════════ */
+
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  border-radius: var(--r-full); padding: 2px 9px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.badge-green  { background: #94EC8E1a; color: #94EC8E; border: 1px solid #94EC8E33; }
+.badge-red    { background: #FF4D4D1a; color: #FF4D4D; border: 1px solid #FF4D4D33; }
+.badge-amber  { background: #FFC1071a; color: #FFC107; border: 1px solid #FFC10733; }
+.badge-blue   { background: #3b82f61a; color: #60a5fa; border: 1px solid #3b82f633; }
+.badge-purple { background: #a78bfa1a; color: #a78bfa; border: 1px solid #a78bfa33; }
+.badge-grey   { background: #ffffff0d; color: var(--muted); border: 1px solid var(--border2); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOTION
+   ══════════════════════════════════════════════════════════════════════ */
 
 .spinner {
   width: 20px; height: 20px;
@@ -66,14 +183,119 @@ select option { background: var(--s2); }
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
   display: inline-block;
+  flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .live-dot {
   display: inline-block;
-  width: 8px; height: 8px;
+  width: 7px; height: 7px;
   border-radius: 50%;
   background: var(--green);
-  animation: pulse 1.5s ease-in-out infinite;
+  animation: pulse 2s ease-in-out infinite;
+  flex-shrink: 0;
 }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Panels arriving after a fetch, rather than snapping in. */
+.fade-in { animation: fadeIn var(--slow) both; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* A row that just saved. Confirmation you can see without reading anything. */
+.flash-ok { animation: flashOk 1s ease-out; }
+@keyframes flashOk {
+  0%   { background: #94EC8E24; }
+  100% { background: transparent; }
+}
+
+/* Loading placeholders that hold the shape of the thing being loaded, so
+   the page doesn't jump when it arrives. */
+.skeleton {
+  background: linear-gradient(90deg, #1c1c1c 25%, #242424 50%, #1c1c1c 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--r-sm);
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   INTERACTION HELPERS
+   Applied by the shared components in components/ui.js.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.pressable { transition: background var(--fast), border-color var(--fast), transform var(--fast), opacity var(--fast); }
+.pressable:hover:not(:disabled) { background: var(--hover); }
+.pressable:active:not(:disabled) { transform: translateY(1px); }
+.pressable:disabled { opacity: 0.5; }
+
+.row-hover { transition: background var(--fast); }
+.row-hover:hover { background: #ffffff08; }
+
+.lift { transition: border-color var(--fast), background var(--fast); }
+.lift:hover { border-color: #2e2e2e; }
+
+/* Truncate to one line — used in every list where a client name can be long. */
+.ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* Section heading above a group of cards. */
+.eyebrow {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   GRIDS
+   auto-fit cannot express "one wide card then four narrow ones" — it sized
+   six columns for seven slots and dropped the last card onto a row of its
+   own with a hole beside it. These are explicit instead.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Four tiles: one wide, three narrow. Divides cleanly at every width. */
+.hero-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  align-items: stretch;
+}
+@media (max-width: 1280px) { .hero-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 660px)  { .hero-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1280px) { .hero-grid > :first-child { grid-column: 1 / -1; } }
+
+/* Trend / calendar / notifications */
+.three-grid { display: grid; gap: 12px; grid-template-columns: 1.5fr 1.1fr 1fr; }
+@media (max-width: 1240px) { .three-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 780px)  { .three-grid { grid-template-columns: 1fr; } }
+
+/* Footage / follow-up / top clients / recent activity */
+.four-grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr 1.2fr 1.2fr; }
+@media (max-width: 1240px) { .four-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px)  { .four-grid { grid-template-columns: 1fr; } }
+
+/* ══════════════════════════════════════════════════════════════════════
+   RESPONSIVE
+   The sidebar collapses to icons before it disappears, so navigation never
+   becomes unreachable on a laptop screen.
+   ══════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1100px) {
+  :root { --sidebar-w: 68px; }
+  .sidebar-label, .sidebar-foot { display: none !important; }
+  .sidebar-nav-btn { justify-content: center; }
+  .sidebar-brand-text { display: none !important; }
+}
+
+@media (max-width: 720px) {
+  :root { --sidebar-w: 0px; }
+  .sidebar { display: none !important; }
+}

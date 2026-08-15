@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import Icon from '../Icons'
 import { C, slaBadge, parseSheetDate } from '../Widgets'
+import { Card, Button, SearchInput, Segmented, T, R, SP, SURF } from '../ui'
 
 const PAGE_SIZE = 10
 
@@ -120,15 +121,26 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
   return (
     <div>
       {/* Control bar */}
-      <div style={{ display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'12px 16px', marginBottom:'14px' }}>
-        {['all','today','yesterday','7d','30d'].map(r => (
-          <button key={r} onClick={()=>{setQuickRange(r);setPage(1)}} style={{
-            ...quickBtnStyle, ...(quickRange===r ? { background:C.accentDark, borderColor:C.accent, color:C.accent } : {}),
-          }}>{{all:'All Time',today:'Today',yesterday:'Yesterday','7d':'Last 7 Days','30d':'Last 30 Days'}[r]}</button>
-        ))}
-        <input placeholder="🔍 Search Issue ID, Vehicle, Client, Employee..." value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}} style={{ ...dateInpStyle, flex:1, minWidth:'220px' }} />
-        <button style={outlineBtnStyle} onClick={exportFiltered}><Icon name="download" size={12} color={C.text2}/> Export</button>
-      </div>
+      <Card style={{ marginBottom:SP[4] }}>
+        <div style={{ display:'flex', gap:SP[3], alignItems:'center', flexWrap:'wrap' }}>
+          <Segmented
+            size="sm"
+            value={quickRange}
+            onChange={(v)=>{ setQuickRange(v); setPage(1) }}
+            options={[
+              { value:'all',       label:'All time' },
+              { value:'today',     label:'Today' },
+              { value:'yesterday', label:'Yesterday' },
+              { value:'7d',        label:'Last 7 days' },
+              { value:'30d',       label:'Last 30 days' },
+            ]}
+          />
+          <div style={{ flex:1, minWidth:'220px' }}>
+            <SearchInput value={search} onChange={(v)=>{ setSearch(v); setPage(1) }} placeholder="Search issue ID, vehicle, client or employee…" />
+          </div>
+          <Button size="sm" variant="ghost" icon="download" onClick={exportFiltered}>Export</Button>
+        </div>
+      </Card>
 
       {/* Two headline cards — click either to filter the table below */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'12px' }}>
@@ -276,8 +288,6 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
   )
 }
 
-const dateInpStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, fontSize:'12.5px', padding:'7px 10px' }
-const quickBtnStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'11px', padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' }
-const outlineBtnStyle = { display:'flex', alignItems:'center', gap:'5px', background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'11.5px', fontWeight:600, padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' }
+const quickBtnStyle = { background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md, color:C.text2, fontSize:T.sm, fontWeight:600, padding:'7px 11px', cursor:'pointer', whiteSpace:'nowrap' }
 const chipStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'20px', color:C.text2, fontSize:'10.5px', fontWeight:600, padding:'6px 12px', cursor:'pointer', whiteSpace:'nowrap' }
 const tdStyle = { color:C.text, fontSize:'11.5px', padding:'10px 14px', verticalAlign:'top' }

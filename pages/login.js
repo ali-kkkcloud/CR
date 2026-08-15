@@ -33,13 +33,13 @@ export default function Login() {
         <meta name="viewport" content="width=device-width, initial-scale=1"/>
         <style>{`
           *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-          html, body { height: 100%; background: #020704; overflow: hidden; }
+          html, body { height: 100%; background: #000000; overflow: hidden; }
 
           .page {
             width: 100vw;
             height: 100vh;
             display: flex;
-            background: #020704;
+            background: #000000;
             overflow: hidden;
           }
 
@@ -48,7 +48,7 @@ export default function Login() {
             flex: 1;
             position: relative;
             overflow: hidden;
-            background: #020704;
+            background: #000000;
           }
 
           .left-video {
@@ -79,8 +79,8 @@ export default function Login() {
           .right-panel {
             width: 520px;
             min-width: 520px;
-            background: rgba(2,10,5,0.96);
-            border-left: 1px solid rgba(34,197,94,0.12);
+            background: rgba(10,10,10,0.96);
+            border-left: 1px solid rgba(148,236,142,0.12);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -98,7 +98,7 @@ export default function Login() {
             top: 20%;
             height: 60%;
             width: 1px;
-            background: linear-gradient(to bottom, transparent, rgba(34,197,94,0.5), transparent);
+            background: linear-gradient(to bottom, transparent, rgba(148,236,142,0.45), transparent);
           }
 
           .card-inner { width: 100%; }
@@ -114,7 +114,7 @@ export default function Login() {
             width: 56px;
             height: 56px;
             object-fit: contain;
-            filter: drop-shadow(0 0 14px rgba(34,197,94,0.5));
+            filter: drop-shadow(0 0 14px rgba(148,236,142,0.45));
           }
           .brand-name {
             font-size: 30px;
@@ -125,7 +125,7 @@ export default function Login() {
           .brand-sub {
             font-size: 9px;
             letter-spacing: 2.5px;
-            color: rgba(34,197,94,0.45);
+            color: rgba(148,236,142,0.55);
             margin-top: 4px;
           }
 
@@ -151,14 +151,14 @@ export default function Login() {
             font-size: 10px;
             font-weight: 700;
             letter-spacing: 1.8px;
-            color: #22c55e;
+            color: #94EC8E;
             margin-bottom: 8px;
           }
           .field-input {
             display: block;
             width: 100%;
             background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(34,197,94,0.2);
+            border: 1px solid rgba(148,236,142,0.20);
             border-radius: 12px;
             color: #fff;
             padding: 16px 18px;
@@ -169,22 +169,22 @@ export default function Login() {
             font-family: inherit;
           }
           .field-input:focus {
-            border-color: rgba(34,197,94,0.6);
-            background: rgba(34,197,94,0.04);
-            box-shadow: 0 0 0 3px rgba(34,197,94,0.08);
+            border-color: rgba(148,236,142,0.65);
+            background: rgba(148,236,142,0.05);
+            box-shadow: 0 0 0 3px rgba(148,236,142,0.12);
           }
           .field-input::placeholder { color: rgba(255,255,255,0.18); }
           input:-webkit-autofill {
-            -webkit-box-shadow: 0 0 0 30px rgba(2,10,5,0.98) inset !important;
+            -webkit-box-shadow: 0 0 0 30px rgba(10,10,10,0.98) inset !important;
             -webkit-text-fill-color: #fff !important;
           }
 
           /* Error */
           .error-box {
-            background: rgba(239,68,68,0.08);
-            border: 1px solid rgba(239,68,68,0.25);
+            background: rgba(255,77,77,0.09);
+            border: 1px solid rgba(255,77,77,0.28);
             border-radius: 10px;
-            color: #f87171;
+            color: #FF4D4D;
             font-size: 13px;
             padding: 12px 16px;
             margin-bottom: 16px;
@@ -193,7 +193,7 @@ export default function Login() {
           /* Button */
           .submit-btn {
             width: 100%;
-            background: #22c55e;
+            background: #94EC8E;
             border: none;
             border-radius: 12px;
             color: #000;
@@ -206,16 +206,16 @@ export default function Login() {
             justify-content: center;
             gap: 10px;
             letter-spacing: 0.3px;
-            box-shadow: 0 0 36px rgba(34,197,94,0.3), 0 4px 20px rgba(0,0,0,0.5);
+            box-shadow: 0 0 36px rgba(148,236,142,0.22), 0 4px 20px rgba(0,0,0,0.5);
             transition: all 0.2s;
             font-family: inherit;
           }
           .submit-btn:hover:not(:disabled) {
-            background: #4ade80;
+            background: #a8f0a3;
             transform: translateY(-1px);
-            box-shadow: 0 0 52px rgba(34,197,94,0.45), 0 6px 24px rgba(0,0,0,0.5);
+            box-shadow: 0 0 52px rgba(148,236,142,0.55), 0 6px 24px rgba(0,0,0,0.5);
           }
-          .submit-btn:disabled { background: #166534; cursor: wait; }
+          .submit-btn:disabled { background: #215B3B; cursor: wait; }
 
           .version-txt {
             color: rgba(255,255,255,0.14);
