@@ -1,6 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
-import { ALL_EMPLOYEES } from '../../../lib/schedule'
+import { employees } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 import { collapseSlotOwners } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -32,6 +33,10 @@ export default async function handler(req, res) {
   if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today = todayStr()
     let fromDate = req.query.from || ''
     let toDate   = req.query.to   || ''
@@ -62,7 +67,7 @@ export default async function handler(req, res) {
     const rowsByOwner = {}
     ownedSlots.forEach(s => { (rowsByOwner[s.owner] ||= []).push(s.row) })
 
-    const progress = ALL_EMPLOYEES.map(emp => {
+    const progress = employees().map(emp => {
       const attendance = rangeDates.map(date => {
         const rowsForDate = shiftRows.slice(1).filter(r => r[1] === emp.name && r[2] === date)
         if (rowsForDate.length === 0) {

@@ -2,9 +2,10 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, appendRow, appendRows, updateRowCells,
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, findOpenShiftRow
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, findOpenShiftRow
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, distributeClientsForHour } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -19,6 +20,10 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today       = todayStr()
     const now         = nowStr()
     const nowTime     = nowIST()
@@ -90,7 +95,9 @@ export default async function handler(req, res) {
     // as handing over 51 clients on the way out when they were holding 11,
     // and the audit log grew by the same wrong number.
     const { poolNames } = buildHourPool({
-      hour: currentHour, leaveMap, overridesMap, onShiftNames, alwaysInclude: user.name,
+      hour: currentHour, leaveMap, overridesMap, onShiftNames,
+      clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterday]),
+      alwaysInclude: user.name,
     })
     const locked = buildLockedAssignments(updateRows, shiftDate, currentHour)
     const dist = distributeClientsForHour(currentHour, poolNames, vehicleMap, locked, true)

@@ -2,6 +2,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { appendRow, readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
 import { getEmployeeShift, computeShiftWindow } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -13,6 +14,10 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today = todayStr()
     const now   = nowStr()
     const rows  = await readSheet(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`)
@@ -50,13 +55,20 @@ export default async function handler(req, res) {
     const emp = getEmployeeShift(user.name)
     const arrival = emp ? computeShiftWindow(emp, nowIST()) : null
 
-    // Arriving EARLY pulls the shift forward, which means finishing earlier,
-    // so it stays opt-in. Everything else — on time or late — is applied
-    // automatically, including the extra hour owed for arriving past the
-    // half hour.
+    // One rule, whichever end of the roster you arrive at: the shift starts
+    // at the hour you turned up, runs its usual length, and owes an extra
+    // hour at the end if you arrived past the half hour.
+    //
+    // Arriving early used to be opt-in, on the reasoning that pulling the
+    // shift forward also pulls the finish forward. That was the wrong call:
+    // an employee who has logged in wants to work, and holding their board
+    // empty until their rostered hour leaves them sitting idle with nothing
+    // on screen — which is exactly what nobody would do. The choice is gone;
+    // the window is applied and the employee is told what it now is.
     const isEarly    = !!arrival?.isEarly
-    const earlyStart = isEarly && req.body?.confirmEarlyStart ? arrival : null
-    const lateStart  = !isEarly && arrival && !arrival.unchanged ? arrival : null
+    const adjusted   = arrival && !arrival.unchanged ? arrival : null
+    const earlyStart = adjusted && isEarly  ? adjusted : null
+    const lateStart  = adjusted && !isEarly ? adjusted : null
 
     if (earlyStart || lateStart) {
       const adj = earlyStart || lateStart
@@ -78,7 +90,7 @@ export default async function handler(req, res) {
       }
     }
 
-    if (lateStart) {
+    if (adjusted) {
       // Shorten (or fully cancel) the auto "Week Off" leave the no-show
       // sweep marked while this employee was absent — from their actual
       // arrival hour onward, they're working again.
@@ -99,7 +111,7 @@ export default async function handler(req, res) {
       for (let i = leaveRows.length - 1; i >= 1; i--) {
         const r = leaveRows[i]
         if (r[1] === user.name && r[2] === today && (r[5] || '').toString().startsWith('Week Off')) {
-          await updateRowCells(CRM_SHEET_ID, TABS.LEAVES, i + 1, 5, [lateStart.start, 'Week Off (returned)'])
+          await updateRowCells(CRM_SHEET_ID, TABS.LEAVES, i + 1, 5, [adjusted.start, 'Week Off (returned)'])
         }
       }
     }

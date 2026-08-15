@@ -6,7 +6,6 @@ import BreakOverlay from '../components/BreakOverlay'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C, parseSheetDate } from '../components/Widgets'
-import { computeEarlyStart } from '../lib/schedule'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
 import MyDayTab from '../components/tabs/MyDayTab'
 import MyClientsTab from '../components/tabs/MyClientsTab'
@@ -44,6 +43,7 @@ export default function Dashboard() {
   const [currentHour, setCurrentHour] = useState(new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours())
   const [clients, setClients] = useState([])
   const [filled, setFilled] = useState({})
+  const [clientContext, setClientContext] = useState({})
   const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
   const [myDay, setMyDay] = useState(null)
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -66,11 +66,10 @@ export default function Dashboard() {
   const [breakStatus, setBreakStatus] = useState({ onBreak:false, startTime:null, history:[], totalMinutesToday:0, isAuto:false, idleMinutes:10 })
   const [breakActionLoading, setBreakActionLoading] = useState(false)
 
-  const [earlyStartPreview, setEarlyStartPreview] = useState(null) // { start, end, hoursShifted } | null
   const [startingShift, setStartingShift] = useState(false)
   const [showOTConfirm, setShowOTConfirm] = useState(false)
   const [otLoading, setOtLoading] = useState(false)
-  const [shiftStartedInfo, setShiftStartedInfo] = useState(null) // { start, end } | null — shown after a normal (non-early) start
+  const [shiftStartedInfo, setShiftStartedInfo] = useState(null) // { start, end } | null — what the window became, shown after clocking in
 
   const hourRef = useRef(currentHour)
   const autoRef = useRef(null)
@@ -124,6 +123,12 @@ export default function Dashboard() {
       const data = await res.json()
       if (!res.ok || data.error) return   // keep last good state, retry on next poll
       if (data.clients) setClients(data.clients)
+      // Why the list looks the way it does — an empty one needs explaining.
+      setClientContext({
+        scheduledThisHour: data.scheduledThisHour,
+        clockedOut: data.clockedOut,
+        myWindow: data.myWindow || null,
+      })
       if (data.filled) {
         // Merge, don't clobber: a background refresh must never wipe out
         // what the employee is part-way through typing. Any client they've
@@ -224,47 +229,36 @@ export default function Dashboard() {
 
   function handleStartShiftClick() {
     if (startingShift) return
-    const empSchedule = summary && summary.scheduledStart != null
-      ? { start: summary.scheduledStart, end: summary.scheduledEnd, isNight: summary.isNight }
-      : null
-    if (empSchedule) {
-      const preview = computeEarlyStart(empSchedule, new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })))
-      if (preview) { setEarlyStartPreview(preview); return }
-    }
-    doStartShift(false)
+    doStartShift()
   }
 
-  async function doStartShift(confirmEarly) {
+  async function doStartShift() {
     setStartingShift(true)
     try {
       const res  = await fetch('/api/shift/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmEarlyStart: confirmEarly }),
+        body: JSON.stringify({}),
       })
       const data = await res.json()
       if (data.success) {
         setShiftStatus('active')
         setStartTime(data.startTime)
         setShiftDate(data.shiftDate || '')
-        setEarlyStartPreview(null)
         loadClients(); loadMyDay(); loadSummary(summaryRangeRef.current)
-        // Normal (non-early) start — the early-start path already showed its
-        // own confirmation before this call, so only pop this up here.
-        // If the server auto-applied a Late Start adjustment, show THAT
-        // (the actual, now-effective shift) instead of the static schedule.
-        if (!confirmEarly) {
-          const adjusted = data.lateStart
-          const empSchedule = adjusted
-            ? {
-                start: adjusted.start, end: adjusted.end, actualStart: data.startTime,
-                isLateAdjustment: true,
-                hoursShifted: adjusted.hoursShifted, extraHour: adjusted.extraHour,
-              }
-            : (summary && summary.scheduledStart != null
-                ? { start: summary.scheduledStart, end: summary.scheduledEnd, actualStart: data.startTime }
-                : null)
-          if (empSchedule) setShiftStartedInfo(empSchedule)
-        }
+        // Tell them the window that is actually in force now. The server
+        // applies it either way — arriving early or late — so this is a
+        // statement of what happened, never a question.
+        const adjusted = data.earlyStart || data.lateStart
+        const empSchedule = adjusted
+          ? {
+              start: adjusted.start, end: adjusted.end, actualStart: data.startTime,
+              isAdjusted: true, isEarlyAdjustment: !!data.earlyStart,
+              hoursShifted: adjusted.hoursShifted, extraHour: adjusted.extraHour,
+            }
+          : (summary && summary.scheduledStart != null
+              ? { start: summary.scheduledStart, end: summary.scheduledEnd, actualStart: data.startTime }
+              : null)
+        if (empSchedule) setShiftStartedInfo(empSchedule)
       } else {
         alert(data.error || 'Could not start shift. Please try again.')
       }
@@ -635,7 +629,7 @@ export default function Dashboard() {
               />
             )}
             {activeTab === 'clients' && (
-              <MyClientsTab clients={clients} filled={filled} saveUpdate={saveUpdate} saving={saving} currentHour={currentHour} canEdit={isActive} />
+              <MyClientsTab clients={clients} filled={filled} saveUpdate={saveUpdate} saving={saving} currentHour={currentHour} canEdit={isActive} {...clientContext} />
             )}
             {activeTab === 'footage' && <EmpFootageTab footage={footage} />}
             {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
@@ -656,8 +650,10 @@ export default function Dashboard() {
 
       {/* Shift started (normal, non-early) confirmation */}
       {shiftStartedInfo && (() => {
-        const isLate  = !!shiftStartedInfo.isLateAdjustment
-        const moved   = (shiftStartedInfo.hoursShifted || 0) > 0
+        const isAdj    = !!shiftStartedInfo.isAdjusted
+        const isEarly  = !!shiftStartedInfo.isEarlyAdjustment
+        const isLate   = isAdj && !isEarly
+        const moved    = isLate && (shiftStartedInfo.hoursShifted || 0) > 0
         const owesHour = shiftStartedInfo.extraHour === 1
         return (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={()=>setShiftStartedInfo(null)}>
@@ -668,12 +664,15 @@ export default function Dashboard() {
             <div style={{ color:C.text, fontSize:'16px', fontWeight:700, marginBottom:'8px' }}>Shift started ✓</div>
             <div style={{ color:C.muted, fontSize:'12.5px', lineHeight:1.6, marginBottom:'18px' }}>
               You clocked in at <strong style={{color:isLate?C.amber:C.accent}}>{shiftStartedInfo.actualStart}</strong>.<br/>
-              {isLate
-                ? (moved
-                    ? 'Your shift has been moved to'
-                    : 'You clocked in after the half hour, so your shift runs to')
-                : 'Your scheduled shift is'}<br/>
-              <strong style={{ color: isLate?C.amber:C.text2, fontSize:'14px' }}>{fmtShift(shiftStartedInfo.start, shiftStartedInfo.end)}</strong>
+              {isEarly
+                ? 'You arrived before your rostered hour, so your shift now runs'
+                : isLate
+                  ? (moved
+                      ? 'Your shift has been moved to'
+                      : 'You clocked in after the half hour, so your shift runs to')
+                  : 'Your scheduled shift is'}<br/>
+              <strong style={{ color: isLate?C.amber:isEarly?C.accent:C.text2, fontSize:'14px' }}>{fmtShift(shiftStartedInfo.start, shiftStartedInfo.end)}</strong>
+              {isEarly && <><br/><span style={{color:C.muted}}>Your clients for this hour are on your board now.</span></>}
               {owesHour && <><br/><span style={{color:C.muted}}>That includes one extra hour at the end, because you clocked in past the half hour.</span></>}
               {moved && <><br/><span style={{color:C.muted}}>The hours before you arrived are marked Week Off and won't be counted.</span></>}
             </div>
@@ -682,30 +681,6 @@ export default function Dashboard() {
         </div>
         )
       })()}
-
-      {/* Early Start confirmation */}
-      {earlyStartPreview && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }} onClick={()=>setEarlyStartPreview(null)}>
-          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'1.75rem', width:'380px', maxWidth:'90vw', textAlign:'center' }} onClick={e=>e.stopPropagation()}>
-            <div style={{ width:'52px', height:'52px', borderRadius:'50%', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 14px' }}>
-              <Icon name="clock" size={22} color={C.accent} />
-            </div>
-            <div style={{ color:C.text, fontSize:'16px', fontWeight:700, marginBottom:'8px' }}>Start shift early?</div>
-            <div style={{ color:C.muted, fontSize:'12.5px', lineHeight:1.6, marginBottom:'16px' }}>
-              You're early — your shift will be updated to<br/>
-              <strong style={{ color:C.accent, fontSize:'14px' }}>{fmtShift(earlyStartPreview.start, earlyStartPreview.end)}</strong>
-              <br/>instead of {fmtShift(summary?.scheduledStart, summary?.scheduledEnd)}.
-              {earlyStartPreview.extraHour === 1 && (
-                <><br/><span style={{ color:C.amber }}>You're past the half hour, so this includes one extra hour at the end.</span></>
-              )}
-            </div>
-            <div style={{ display:'flex', gap:'10px' }}>
-              <button onClick={()=>{ setEarlyStartPreview(null); doStartShift(false) }} style={{ flex:1, background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'12.5px', fontWeight:600, padding:'11px', cursor:'pointer' }}>Keep Normal Time</button>
-              <button onClick={()=>doStartShift(true)} disabled={startingShift} style={{ flex:1, background:C.accent, border:'none', borderRadius:'8px', color:'#06120a', fontSize:'12.5px', fontWeight:700, padding:'11px', cursor:'pointer' }}>{startingShift?'Starting...':'Confirm'}</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* OT confirmation */}
       {showOTConfirm && (

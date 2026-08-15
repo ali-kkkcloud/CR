@@ -1,6 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { readSheetCached, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
-import { ALL_EMPLOYEES } from '../../../lib/schedule'
+import { employees } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -8,6 +9,10 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const today = todayStr()
     const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
     const statusMap = {}
@@ -16,11 +21,11 @@ export default async function handler(req, res) {
       if (r[2] === today) statusMap[r[1]] = r[6]
     }
 
-    const active = ALL_EMPLOYEES
+    const active = employees()
       .filter(e => statusMap[e.name] === 'Active' && e.name !== user.name)
       .map(e => ({ name: e.name, isNight: e.isNight, status: 'active' }))
 
-    const others = ALL_EMPLOYEES
+    const others = employees()
       .filter(e => statusMap[e.name] !== 'Active' && e.name !== user.name)
       .map(e => ({ name: e.name, isNight: e.isNight, status: statusMap[e.name] === 'Ended' ? 'ended' : 'not_started' }))
 

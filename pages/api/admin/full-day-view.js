@@ -3,8 +3,9 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
 } from '../../../lib/sheets'
 import {
-  ALL_EMPLOYEES, getScheduledEmployeesAtHour, distributeClientsForHour, EMPLOYEE_CUSTOM_TEXT
+  employees, getScheduledEmployeesAtHour, distributeClientsForHour, customTextFor
 } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -12,6 +13,10 @@ export default async function handler(req, res) {
   if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const date = (req.query.date || todayStr()).toString()
 
     const [updateRows, shiftRows, leaveMap, redistRows, vehicleMap, overridesMap] = await Promise.all([
@@ -56,7 +61,7 @@ export default async function handler(req, res) {
       .filter(r => r[2] === date)
       .forEach(r => { loginMap[r[1]] = { startTime:r[3], endTime:r[4], duration:r[5], status:r[6] } })
 
-    const empData = ALL_EMPLOYEES.map(emp => {
+    const empData = employees().map(emp => {
       const shiftLog = loginMap[emp.name] || null
       const leaves   = leaveMap[emp.name] || []
       const empOverride = overridesMap[emp.name]
@@ -84,7 +89,7 @@ export default async function handler(req, res) {
           return hour >= l.fromHour || hour < l.toHour
         })
 
-        const customText = EMPLOYEE_CUSTOM_TEXT[emp.name]?.[hour]
+        const customText = customTextFor(emp.name, hour)
         if (customText) {
           return { hour, isOnLeave: false, isCustom: true, customText, clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
         }

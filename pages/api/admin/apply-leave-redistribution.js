@@ -3,7 +3,8 @@ import {
   readSheet, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, getLeaveMapForDate
 } from '../../../lib/sheets'
-import { getScheduledEmployeesAtHour, distributeClientsForHour, ALL_EMPLOYEES } from '../../../lib/schedule'
+import { getScheduledEmployeesAtHour, distributeClientsForHour, employees } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -11,6 +12,10 @@ export default async function handler(req, res) {
   if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const { empName, date, fromHour, toHour } = req.body
     if (!empName || !date || fromHour === undefined) {
       return res.status(400).json({ error: 'empName, date, fromHour required' })
@@ -21,7 +26,7 @@ export default async function handler(req, res) {
     const vehicleMap = await fetchClientVehicleCounts()
     const updateRows = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`)
 
-    const emp = ALL_EMPLOYEES.find(e => e.name === empName)
+    const emp = employees().find(e => e.name === empName)
     if (!emp) return res.status(400).json({ error: 'Employee not found' })
 
     const end = toHour !== undefined ? parseInt(toHour) : 24

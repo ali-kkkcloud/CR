@@ -1,9 +1,10 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog,
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
 } from '../../../lib/sheets'
-import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, ALL_EMPLOYEES, isScheduledAtHour } from '../../../lib/schedule'
+import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, employees, isScheduledAtHour } from '../../../lib/schedule'
+import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
 function ddmmyyyyFromDate(d) {
@@ -23,6 +24,10 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Roster and client hours come from the sheet; this makes sure this
+    // request is working from the current ones.
+    await loadScheduleData()
+
     const hour  = nowIST().getHours()
     const today = todayStr()
     const now   = nowStr()
@@ -77,7 +82,7 @@ export default async function handler(req, res) {
     const onShiftNames = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
     const startedToday = new Set(shiftLogRows.slice(1).filter(r => r[2] === today).map(r => r[1]))
     const newLeaveRows = []
-    ALL_EMPLOYEES.forEach(emp => {
+    employees().forEach(emp => {
       if (startedToday.has(emp.name)) return
       // A night shift that began yesterday evening has no row dated today,
       // so "no row today" alone would brand someone absent in the middle of
@@ -144,6 +149,7 @@ export default async function handler(req, res) {
 
     const { poolNames, scheduledNames } = buildHourPool({
       hour, leaveMap, overridesMap, onShiftNames,
+      clockedOutNames: getClockedOutNamesFromLog(shiftLogRows, [today, yesterday]),
       alwaysInclude: iHaveClockedOut ? null : user.name,
     })
 
@@ -192,6 +198,14 @@ export default async function handler(req, res) {
       }
     })
 
+    // Why the list might be empty. An employee who clocks in before their
+    // shift opens — arriving at 07:42 for an eight o'clock start and choosing
+    // to keep their normal time — has no clients until eight, which is
+    // correct but looks exactly like a broken page unless the screen says so.
+    const myWindow = overridesMap[user.name]
+      ? { start: overridesMap[user.name].start, end: overridesMap[user.name].end }
+      : (() => { const e = employees().find(x => x.name === user.name); return e ? { start: e.start, end: e.end } : null })()
+
     return res.status(200).json({
       hour, clients, filled,
       // How many people this hour is actually being shared between, so the
@@ -199,6 +213,9 @@ export default async function handler(req, res) {
       scheduledCount: poolNames.length,
       rosteredCount:  scheduledNames.length,
       shiftDate: myShiftDate,
+      scheduledThisHour: scheduledNames.includes(user.name),
+      clockedOut: iHaveClockedOut,
+      myWindow,
     })
 
   } catch (err) {
