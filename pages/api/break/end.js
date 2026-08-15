@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheet, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, calcDurationMinutes } from '../../../lib/sheets'
+import { readSheetCached, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, calcDurationMinutes } from '../../../lib/sheets'
 import { recentDates, findOpenBreaks } from '../../../lib/attendance'
 
 export default async function handler(req, res) {
@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   try {
     const today = todayStr()
     const now   = nowStr()
-    const rows  = await readSheet(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`)
+    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 5000)
 
     // Close EVERY open break, not just the newest one. Auto-breaks are
     // written from two places (the employee's own poll and the admin view),
