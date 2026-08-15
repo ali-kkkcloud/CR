@@ -28,6 +28,27 @@ const TAB_META = {
   settings:       { title: 'Settings',            tag: 'Command Center', sub: 'Workspace and account preferences — coming soon' },
 }
 
+// An employee's break time as of this second. The server's figure is a
+// snapshot; if they are still on a break it has to keep climbing on screen,
+// otherwise a break that started three minutes ago sits reading one minute
+// until the next refresh lands.
+function liveBreakMinutes(e) {
+  if (!e.currentlyOnBreak || !e.activeSince) return e.totalMinutes || 0
+  const m = e.activeSince.toString().match(/(\d+):(\d+):(\d+)\s*(am|pm)/i)
+  if (!m) return e.totalMinutes || 0
+  let [, h, mi, se, ap] = m
+  h = parseInt(h, 10)
+  if (ap.toLowerCase() === 'pm' && h !== 12) h += 12
+  if (ap.toLowerCase() === 'am' && h === 12) h = 0
+  const start = new Date(); start.setHours(h, parseInt(mi,10), parseInt(se,10), 0)
+  let ms = Date.now() - start.getTime()
+  if (ms < 0) ms += 24 * 3600000        // started before midnight
+  const running = Math.floor(ms / 60000)
+  // Closed sessions plus the one still running. The server counts the open
+  // one too, so take whichever is larger rather than adding them twice.
+  return Math.max(e.totalMinutes || 0, running)
+}
+
 export default function Admin() {
   const router = useRouter()
   const [user, setUser] = useState(null)
@@ -42,6 +63,10 @@ export default function Admin() {
   const [toDate, setToDate] = useState(todayISO())
   const [loading, setLoading] = useState(true)
   const [breaks, setBreaks] = useState(null)
+  // Ticks once a second purely so an open break's minutes climb on screen
+  // between server refreshes. A running timer that only moves when the page
+  // reloads reads as a broken clock.
+  const [liveTick, setLiveTick] = useState(0)
   const [breakRange, setBreakRange] = useState('today')
   const [breakFrom, setBreakFrom] = useState(todayISO())
   const [breakTo, setBreakTo] = useState(todayISO())
@@ -103,6 +128,13 @@ export default function Admin() {
     } catch (e) { console.error('loadBreaks failed:', e) }
   }, [])
 
+  // One-second heartbeat, only while the break tab is open.
+  useEffect(() => {
+    if (activeTab !== 'breaks') return
+    const id = setInterval(() => setLiveTick(t => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [activeTab])
+
   useEffect(() => {
     if (breakRange === 'today') loadBreaks('today')
     else if (breakRange === 'all') loadBreaks('all', '2000-01-01', todayISO())
@@ -149,12 +181,27 @@ export default function Admin() {
     if (activeTab === 'fullday') loadFullDay(fullDayDate)
   }, [activeTab, fullDayDate])
 
+  // Refresh whatever the admin is actually looking at, not only the overview.
+  // Every other tab used to sit frozen on whatever it loaded first — the break
+  // list in particular, which shows people currently on a break and so has to
+  // keep up or it reads as a stuck clock.
   useEffect(() => {
+    const REFRESH_MS = { overview: 30000, breaks: 20000, fullday: 45000, progress: 60000, footage: 45000 }
+    const every = REFRESH_MS[activeTab]
+    if (!every) return
     const id = setInterval(() => {
       if (activeTab === 'overview') loadData()
-    }, 60000)
+      else if (activeTab === 'breaks') {
+        if (breakRange === 'today') loadBreaks('today')
+        else if (breakRange === 'all') loadBreaks('all', '2000-01-01', todayISO())
+        else loadBreaks('custom', breakFrom, breakTo)
+      }
+      else if (activeTab === 'fullday') loadFullDay(fullDayDate)
+      else if (activeTab === 'progress') loadProgress(fromDate, toDate)
+      else if (activeTab === 'footage') loadData()
+    }, every)
     return () => clearInterval(id)
-  }, [activeTab])
+  }, [activeTab, fullDayDate, fromDate, toDate, breakRange, breakFrom, breakTo])
 
   async function handleMarkLeave() {
     if (!markLeaveModal) return
@@ -645,7 +692,10 @@ export default function Admin() {
                               {e.currentlyOnBreak && <span style={{ color:C.red, fontSize:'9px', fontWeight:700, display:'flex', alignItems:'center', gap:'4px' }}><span className="live-dot" style={{width:5,height:5,background:C.red}}></span>ON BREAK</span>}
                             </div>
                             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
-                              <span style={{ color:C.accent, fontSize:'18px', fontWeight:800 }}>{Math.floor(e.totalMinutes/60)}h {e.totalMinutes%60}m</span>
+                              <span key={liveTick} style={{ color:C.accent, fontSize:'18px', fontWeight:800 }}>{(() => {
+                                const m = liveBreakMinutes(e)
+                                return `${Math.floor(m/60)}h ${m%60}m`
+                              })()}</span>
                               <span style={{ color:C.muted, fontSize:'10px', display:'flex', alignItems:'center', gap:'4px' }}>{e.sessions} session{e.sessions!==1?'s':''} <Icon name="chevron-down" size={10} color={C.muted}/></span>
                             </div>
                             {e.currentlyOnBreak && <div style={{ color:C.muted, fontSize:'9.5px', marginTop:'3px' }}>Since {e.activeSince}</div>}

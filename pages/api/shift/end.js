@@ -133,7 +133,7 @@ export default async function handler(req, res) {
     // ── 4. Footage summary ──
     // Issue Tracker layout: B=IssueId C=Client D=Vehicle E=RaisedAt H=RaisedBy
     // J=SubRequest K=Details R=Resolved(Y/N) S=ResolvedAt
-    const footageRows = await readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 20000)
+    const footageRows = await readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000)
     const myFootage = footageRows.slice(1).filter(r => {
       const sub = (r[9] || '').toString().toLowerCase()
       const by  = (r[7] || '').toString().trim().toLowerCase()

@@ -1,4 +1,4 @@
-import { readSheet, CRM_SHEET_ID, TABS } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS } from '../../../lib/sheets'
 import { signToken } from '../../../lib/auth'
 
 export default async function handler(req, res) {
@@ -6,7 +6,11 @@ export default async function handler(req, res) {
   const { empId, password } = req.body
   if (!empId || !password) return res.status(400).json({ error:'Missing fields' })
   try {
-    const rows = await readSheet(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`)
+    // Cached: logging in is the first thing that has to work, and a whole
+    // team arriving at a shift change was spending one fresh read each on a
+    // tab that changes about once a month. Editing Credentials drops the
+    // cache, so a new joiner can sign in within the minute.
+    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`, 60000)
     const userRow = rows.slice(1).find(row =>
       (row[0]||'').toString().trim().toLowerCase() === empId.trim().toLowerCase() &&
       (row[2]||'').toString().trim() === password.trim()
