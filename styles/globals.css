@@ -55,6 +55,10 @@
   /* ── Layout ── */
   --sidebar-w: 246px;
   --topbar-h:  62px;
+  /* Content sits in one column of this width, centred. Letting it run the
+     full width of the window pushed the page's two halves to opposite
+     edges with a void between them. */
+  --content-max: 1460px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

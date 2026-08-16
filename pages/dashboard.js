@@ -5,8 +5,10 @@ import BreakOverlay from '../components/BreakOverlay'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C, parseSheetDate } from '../components/Widgets'
-import { AccountButton } from '../components/Shell'
+import EmployeeSidebar from '../components/EmployeeSidebar'
+import { TopBar, PageBody, AccountButton, NotifyButton } from '../components/Shell'
 import { Card, Button, Pill, Tag, Field, Segmented, Banner, EmptyState, Modal, T, R, SP, SURF } from '../components/ui'
+import MyDayTab from '../components/tabs/MyDayTab'
 import HourRail from '../components/HourRail'
 import TodayRail from '../components/TodayRail'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
@@ -52,11 +54,10 @@ export default function Dashboard() {
   const [clientContext, setClientContext] = useState({})
   const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
   const [myDay, setMyDay] = useState(null)
-  const [activeTab, setActiveTab] = useState('board')
+  const [activeTab, setActiveTab] = useState('dashboard')
   // Which hour the board is showing. Follows the clock until the operator
   // picks another one from the rail, then stays where they put it.
   const [viewHour, setViewHour] = useState(null)
-  const [showStats, setShowStats] = useState(false)
   // { [hour]: { [client]: record } } — what has been saved into an earlier
   // hour this session, so the board reflects it before the next my-day poll.
   const [pastEdits, setPastEdits] = useState({})
@@ -692,187 +693,159 @@ export default function Dashboard() {
   const liveClients = clients.filter(c => !c.isCustom)
   const liveDone    = liveClients.filter(c => (filled[c.client]?.status || '').toString().trim()).length
 
-  const TITLES = { board:'Board', footage:'Footage Requests', followup:'Follow-ups' }
+  const TITLES = {
+    dashboard:'Dashboard', clients:'My Clients', myday:'My Day',
+    footage:'Footage Requests', followup:'Follow-ups',
+    performance:'My Performance', notifications:'Notifications',
+    help:'Help & Support', settings:'Settings',
+  }
+  const SUBS = {
+    dashboard:'How your day is going',
+    clients:'The hour in front of you',
+    myday:'Your whole shift, hour by hour',
+    footage:'Requests you raised and closed',
+    followup:'Handed to you by a colleague',
+  }
 
   return (
     <>
       <Head><title>Cautio CRM — {TITLES[activeTab] || 'Dashboard'}</title></Head>
 
-      <div style={{ minHeight:'100vh', background:C.bg }}>
+      <div style={{ minHeight:'100vh', background:C.bg, display:'flex' }}>
 
-        {/* ══════════ COMMAND BAR ══════════
-            An operator has three destinations and one job. The nine-item
-            sidebar this replaces spent 246px of a working screen on eight
-            things they never open mid-shift — four of which weren't wired up
-            to anything. Identity, shift state and the shift controls are all
-            that has to be permanently on screen. */}
-        <header style={{
-          position:'sticky', top:0, zIndex:60,
-          background:'rgba(0,0,0,0.86)', backdropFilter:'blur(12px)',
-          borderBottom:`1px solid ${C.border}`,
-        }}>
-          <div style={{
-            display:'flex', alignItems:'center', gap:SP[4], flexWrap:'wrap',
-            padding:`${SP[3]} ${SP[5]}`,
-          }}>
-            <div style={{ display:'flex', alignItems:'center', gap:'10px', flexShrink:0 }}>
-              <img
-                src="/cautio_shield.webp" alt="Cautio"
-                style={{ width:'30px', height:'30px', objectFit:'contain' }}
-                onError={e => (e.target.style.display = 'none')}
-              />
-              <div style={{ minWidth:0 }}>
-                <div className="ellip" style={{ color:C.text, fontSize:T.md, fontWeight:800, lineHeight:1.25 }}>
-                  {user?.name}
-                </div>
-                <div style={{ color:C.muted, fontSize:'10px', lineHeight:1.3 }}>
-                  {user?.empId} · {fmtShift(summary?.shiftStart, summary?.shiftEnd)}
-                </div>
-              </div>
-            </div>
+        <EmployeeSidebar
+          activeTab={activeTab} setActiveTab={setActiveTab} user={user}
+          counts={{ footage: footage.pending.length, followup: footage.followups.length }}
+          shiftTime={fmtShift(summary?.shiftStart, summary?.shiftEnd)}
+          loginTime={startTime}
+          onlineStatus={isActive ? 'Online' : 'Offline'}
+        />
 
-            <div style={{ flex:1, minWidth:'12px' }} />
-
-            <div style={{ display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap' }}>
-              {isActive
-                ? <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>In {startTime}</Pill>
-                : <Pill icon="clock" color={C.amber}>{shiftStatus === 'ended' ? 'Shift ended' : 'Not started'}</Pill>}
-              <Pill icon="clock">{clock}</Pill>
-
-              {isActive ? (
-                <>
-                  <Button variant="danger" icon="clock" onClick={startBreak} disabled={breakActionLoading}>Break</Button>
-                  <Button
-                    variant="ghost" icon="clock"
-                    onClick={()=>setShowOTConfirm(true)}
-                    disabled={summary?.usedOT}
-                    title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
-                    style={summary?.usedOT ? undefined : { color:C.accent, borderColor:C.accent+'55', background:C.accentSoft }}
-                  >OT</Button>
-                  <Button variant="subtle" onClick={handleEndShiftClick}>End shift</Button>
-                </>
-              ) : shiftStatus === 'not_started' ? (
-                <Button variant="primary" onClick={handleStartShiftClick} loading={startingShift}>▶ Start shift</Button>
-              ) : null}
-
-              <AccountButton name={user?.name} sub={user?.empId || '—'} onClick={()=>setShowLogout(true)} />
-            </div>
-          </div>
-
-          {/* Three destinations, as a switch rather than a column of nine. */}
-          <div style={{ padding:`0 ${SP[5]} ${SP[3]}` }}>
-            <Segmented
-              value={activeTab}
-              onChange={setActiveTab}
-              options={[
-                { value:'board',    label:'Board',      count: realBoard.length },
-                { value:'footage',  label:'Footage',    count: footage.pending.length },
-                { value:'followup', label:'Follow-ups', count: footage.followups.length },
-              ]}
-            />
-          </div>
-        </header>
-
-        <main style={{ padding:`${SP[4]} ${SP[5]} ${SP[8]}` }}>
-          {!isActive && (
-            <div style={{ marginBottom:SP[3] }}>
-              <Banner
-                tone="warn" icon="clock"
-                action={shiftStatus === 'not_started'
-                  ? <Button size="sm" variant="primary" onClick={handleStartShiftClick} loading={startingShift}>Start shift</Button>
-                  : null}
-              >
-                {shiftStatus === 'ended'
-                  ? 'Your shift has ended for today — everything below is read-only.'
-                  : 'Your shift hasn’t started yet — you’re viewing today’s assignments in read-only mode.'}
-              </Banner>
-            </div>
-          )}
-
-          {activeTab === 'board' && (
-            <>
-              <div style={{ marginBottom:SP[3] }}>
-                <HourRail
-                  timeline={timeline}
-                  currentHour={currentHour}
-                  value={viewHour == null ? currentHour : viewHour}
-                  onChange={selectHour}
-                  liveCounts={{ total: liveClients.length, done: liveDone }}
+        <div style={{ flex:1, minWidth:0 }}>
+          <TopBar
+            title={TITLES[activeTab] || 'Dashboard'}
+            sub={SUBS[activeTab]}
+            right={
+              <>
+                <Pill icon="calendar">{new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short'})}</Pill>
+                <Pill icon="clock">{clock}</Pill>
+                {isActive
+                  ? <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>In {startTime}</Pill>
+                  : <Pill icon="clock" color={C.amber}>{shiftStatus === 'ended' ? 'Shift ended' : 'Not started'}</Pill>}
+                <NotifyButton
+                  count={footage.pending.length + footage.followups.length}
+                  onClick={()=>setActiveTab('footage')}
                 />
-              </div>
+                {isActive ? (
+                  <>
+                    <Button variant="danger" icon="clock" onClick={startBreak} disabled={breakActionLoading}>Break</Button>
+                    <Button
+                      variant="ghost" icon="clock"
+                      onClick={()=>setShowOTConfirm(true)}
+                      disabled={summary?.usedOT}
+                      title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
+                      style={summary?.usedOT ? undefined : { color:C.accent, borderColor:C.accent+'55', background:C.accentSoft }}
+                    >OT</Button>
+                    <Button variant="subtle" onClick={handleEndShiftClick}>End shift</Button>
+                  </>
+                ) : shiftStatus === 'not_started' ? (
+                  <Button variant="primary" onClick={handleStartShiftClick} loading={startingShift}>▶ Start shift</Button>
+                ) : null}
+                <AccountButton name={user?.name} sub={user?.empId || '—'} onClick={()=>setShowLogout(true)} />
+              </>
+            }
+          />
 
-              <div className="board-split">
-                <div style={{ minWidth:0 }}>
-                  <MyClientsTab
-                    clients={boardClients}
-                    filled={mergedFilled}
-                    saveClient={saveClient}
-                    currentHour={currentHour}
-                    hour={shownHour}
-                    hourState={viewEntry?.state || (isNowHour ? 'current' : 'done')}
-                    canEdit={isActive}
-                    {...(isNowHour ? clientContext : {})}
-                  />
-                </div>
-                <TodayRail
-                  summary={summary} myDay={myDay} breakStatus={breakStatus} footage={footage}
-                  currentHour={currentHour}
-                  hourDone={liveDone} hourTotal={liveClients.length}
-                  onGoToTab={setActiveTab}
-                  onOpenStats={()=>setShowStats(true)}
-                  isActive={isActive}
-                />
+          <PageBody>
+            {!isActive && (
+              <div style={{ marginBottom:SP[4] }}>
+                <Banner
+                  tone="warn" icon="clock"
+                  action={shiftStatus === 'not_started'
+                    ? <Button size="sm" variant="primary" onClick={handleStartShiftClick} loading={startingShift}>Start shift</Button>
+                    : null}
+                >
+                  {shiftStatus === 'ended'
+                    ? 'Your shift has ended for today — everything below is read-only.'
+                    : 'Your shift hasn’t started yet — you’re viewing today’s assignments in read-only mode.'}
+                </Banner>
               </div>
-            </>
-          )}
+            )}
 
-          {activeTab === 'footage'  && <EmpFootageTab footage={footage} />}
-          {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
-        </main>
-      </div>
-
-      {/* My stats — read occasionally, so it opens over the work rather than
-          replacing it with a destination of its own. */}
-      {showStats && (
-        <div
-          onClick={()=>setShowStats(false)}
-          style={{
-            position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', backdropFilter:'blur(3px)',
-            zIndex:1000, display:'flex', justifyContent:'flex-end',
-          }}
-        >
-          <div
-            onClick={e=>e.stopPropagation()}
-            className="fade-in"
-            style={{
-              width:'min(1080px, 94vw)', height:'100%', overflowY:'auto',
-              background:C.bg, borderLeft:`1px solid ${C.border2}`,
-              boxShadow:'-18px 0 50px rgba(0,0,0,0.6)',
-            }}
-          >
-            <div style={{
-              position:'sticky', top:0, zIndex:2,
-              display:'flex', alignItems:'center', justifyContent:'space-between', gap:SP[3],
-              padding:`${SP[4]} ${SP[5]}`,
-              background:'rgba(0,0,0,0.9)', backdropFilter:'blur(10px)',
-              borderBottom:`1px solid ${C.border}`,
-            }}>
-              <div>
-                <div style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px' }}>My stats</div>
-                <div style={{ color:C.muted, fontSize:T.base, marginTop:'2px' }}>How your work is trending</div>
-              </div>
-              <Button variant="subtle" onClick={()=>setShowStats(false)}>Close</Button>
-            </div>
-            <div style={{ padding:`${SP[4]} ${SP[5]} ${SP[8]}` }}>
+            {activeTab === 'dashboard' && (
               <EmpDashboardTab
                 summary={summary} range={summaryRange} setRange={setSummaryRange}
-                loading={summaryLoading} onGoToTab={(t)=>{ setShowStats(false); setActiveTab(t) }}
-                breakStatus={breakStatus}
+                loading={summaryLoading} onGoToTab={setActiveTab} breakStatus={breakStatus}
               />
-            </div>
-          </div>
+            )}
+
+            {/* My Clients — the hour in front of you. The rail above it can
+                move the board to any hour of the shift; the rail beside it
+                carries everything that would otherwise be a trip elsewhere. */}
+            {activeTab === 'clients' && (
+              <>
+                <div style={{ marginBottom:SP[3] }}>
+                  <HourRail
+                    timeline={timeline}
+                    currentHour={currentHour}
+                    value={shownHour}
+                    onChange={selectHour}
+                    liveCounts={{ total: liveClients.length, done: liveDone }}
+                  />
+                </div>
+
+                <div className="board-split">
+                  <div style={{ minWidth:0 }}>
+                    <MyClientsTab
+                      clients={boardClients}
+                      filled={mergedFilled}
+                      saveClient={saveClient}
+                      currentHour={currentHour}
+                      hour={shownHour}
+                      hourState={viewEntry?.state || (isNowHour ? 'current' : 'done')}
+                      canEdit={isActive}
+                      {...(isNowHour ? clientContext : {})}
+                    />
+                  </div>
+                  <TodayRail
+                    summary={summary} myDay={myDay} breakStatus={breakStatus} footage={footage}
+                    currentHour={currentHour}
+                    hourDone={liveDone} hourTotal={liveClients.length}
+                    onGoToTab={setActiveTab}
+                    onOpenStats={()=>setActiveTab('dashboard')}
+                    isActive={isActive}
+                  />
+                </div>
+              </>
+            )}
+
+            {activeTab === 'myday' && (
+              <MyDayTab
+                currentHour={currentHour} currentClients={clients} filled={filled} myDay={myDay}
+                saveUpdate={saveUpdate} saving={saving}
+                footagePending={footage.pending.length} followupsPending={footage.followups.length}
+                onGoToTab={setActiveTab} canEdit={isActive}
+              />
+            )}
+
+            {activeTab === 'footage'  && <EmpFootageTab footage={footage} />}
+            {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
+
+            {['performance','notifications','help','settings'].includes(activeTab) && (
+              <Card pad={false} style={{ maxWidth:'520px', margin:'40px auto' }}>
+                <EmptyState
+                  icon={activeTab==='performance'?'analytics':activeTab==='notifications'?'alerts':activeTab==='help'?'sparkles':'settings'}
+                  title={`${TITLES[activeTab]} — coming soon`}
+                  detail="This module isn't wired up to live data yet."
+                  action={activeTab==='performance'
+                    ? <Button variant="primary" onClick={()=>setActiveTab('dashboard')}>See my dashboard instead</Button>
+                    : null}
+                />
+              </Card>
+            )}
+          </PageBody>
         </div>
-      )}
+      </div>
 
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
 

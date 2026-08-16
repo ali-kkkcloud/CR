@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr } from '../../../lib/sheets'
-import { sweepAutoBreaks } from '../../../lib/attendance'
+import { sweepAutoBreaks, findOpenBreaks, recentDates } from '../../../lib/attendance'
 
 // GET /api/admin/breaks?from=YYYY-MM-DD&to=YYYY-MM-DD  (both optional — defaults to today)
 export default async function handler(req, res) {
@@ -55,6 +55,40 @@ export default async function handler(req, res) {
       return true
     })
 
+    // ── Who is on a break RIGHT NOW ──
+    //
+    // Deliberately not derived from the rows above. Those are filtered to
+    // whatever date range the admin picked, and "currently on break" is not a
+    // question about a date range:
+    //
+    //   - picking "All time" made every stale Active row in the sheet's
+    //     history mark that person as on a break this second;
+    //   - picking "Today" hid a break that began before midnight on a night
+    //     shift, which is exactly the one still running.
+    //
+    // It is the same definition the employee's own screen uses — an open row
+    // across the two days a running shift can span — with one extra guard:
+    // nobody can be on a break if they are not on a shift. A row left Active
+    // by a shift that was never closed out is a leftover, not a person who
+    // stepped away, and reporting it kept somebody "on break" long after they
+    // had gone home.
+    const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
+    const dates = recentDates()
+    const onShiftIds = new Set(
+      shiftRows.slice(1)
+        .filter(r => dates.includes(r[2]) && (r[6] || '').toString().trim() === 'Active')
+        .map(r => (r[0] || '').toString().trim())
+    )
+
+    const liveBreaks = {}   // name -> { since, isAuto }
+    rows.slice(1).forEach(r => {
+      const empId = (r[0] || '').toString().trim()
+      if (!onShiftIds.has(empId)) return
+      const open = findOpenBreaks(rows, empId, dates)[0]
+      if (!open) return
+      liveBreaks[r[1] || 'Unknown'] = { since: open.startTime, date: open.startDate, isAuto: open.isAuto }
+    })
+
     const byEmployee = {}
     relevant.forEach(r => {
       const name = r[1] || 'Unknown'
@@ -63,11 +97,17 @@ export default async function handler(req, res) {
       byEmployee[name].sessions++
       byEmployee[name].totalMinutes += minutes
       if ((r[7] || '') === 'Auto') byEmployee[name].autoSessions = (byEmployee[name].autoSessions || 0) + 1
-      if (r[6] === 'Active') {
-        byEmployee[name].currentlyOnBreak = true
-        byEmployee[name].activeSince = r[3]
-        byEmployee[name].activeIsAuto = (r[7] || '') === 'Auto'
-      }
+    })
+
+    // Somebody on a break right now may have no session inside the selected
+    // range at all (a night shift's break began yesterday). They still belong
+    // in the list, or the count and the list would disagree.
+    Object.entries(liveBreaks).forEach(([name, live]) => {
+      if (!byEmployee[name]) byEmployee[name] = { name, sessions: 0, autoSessions: 0, totalMinutes: 0 }
+      byEmployee[name].currentlyOnBreak = true
+      byEmployee[name].activeSince = live.since
+      byEmployee[name].activeDate = live.date
+      byEmployee[name].activeIsAuto = live.isAuto
     })
 
     const employees = Object.values(byEmployee).sort((a,b) => b.totalMinutes - a.totalMinutes)

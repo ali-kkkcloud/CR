@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import Icon from '../Icons'
 import { C } from '../Widgets'
-import { Card, CardHead, Button, Segmented, Tag, EmptyState, Stat, Meter, T, R, SP, SURF } from '../ui'
+import { Card, CardHead, Button, Segmented, Tag, EmptyState, Stat, Meter, T, R, SP, SURF, elapsedSecondsIST } from '../ui'
 
 // An employee's break time as of this second. The server's figure is a
 // snapshot; if they are still on a break it has to keep climbing on screen,
@@ -9,16 +9,11 @@ import { Card, CardHead, Button, Segmented, Tag, EmptyState, Stat, Meter, T, R, 
 // until the next refresh lands.
 export function liveBreakMinutes(e) {
   if (!e.currentlyOnBreak || !e.activeSince) return e.totalMinutes || 0
-  const m = e.activeSince.toString().match(/(\d+):(\d+):(\d+)\s*(am|pm)/i)
-  if (!m) return e.totalMinutes || 0
-  let [, h, mi, se, ap] = m
-  h = parseInt(h, 10)
-  if (ap.toLowerCase() === 'pm' && h !== 12) h += 12
-  if (ap.toLowerCase() === 'am' && h === 12) h = 0
-  const start = new Date(); start.setHours(h, parseInt(mi, 10), parseInt(se, 10), 0)
-  let ms = Date.now() - start.getTime()
-  if (ms < 0) ms += 24 * 3600000        // started before midnight
-  const running = Math.floor(ms / 60000)
+  // In the IST frame, like every other time in the sheets. Building the start
+  // with the browser's own setHours made this wrong by the machine's offset
+  // from IST — and this figure is the one an admin reads to decide whether
+  // somebody has been away too long.
+  const running = Math.floor(elapsedSecondsIST(e.activeDate, e.activeSince) / 60)
   // Closed sessions plus the one still running. The server counts the open
   // one too, so take whichever is larger rather than adding them twice.
   return Math.max(e.totalMinutes || 0, running)
