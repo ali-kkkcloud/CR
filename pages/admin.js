@@ -14,6 +14,7 @@ import FullDayTab from '../components/tabs/FullDayTab'
 import ProgressTab from '../components/tabs/ProgressTab'
 import FootageTab from '../components/tabs/FootageTab'
 import BreaksTab, { liveBreakMinutes } from '../components/tabs/BreaksTab'
+import FloorPanel from '../components/tabs/FloorPanel'
 
 function todayISO() {
   const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
@@ -397,6 +398,32 @@ export default function Admin() {
   if (totalPendingToday>0) aiAlerts.push({ sev:'info', icon:'clock', title:'Updates outstanding', desc:`${totalPendingToday} client slot${totalPendingToday===1?'':'s'} not yet updated today`, tab:'fullday' })
   if (redistribution.length>0) aiAlerts.push({ sev:'success', icon:'shuffle', title:'Work moved', desc:`${redistribution.length} slot${redistribution.length===1?'':'s'} redistributed today`, tab:'redistribution' })
 
+  // The headline. Severity is whatever is worst on the floor: somebody who
+  // should be here and isn't outranks a queue that is merely long.
+  const headline = (() => {
+    const bits = []
+    if (kpis.notStarted > 0) bits.push(`${kpis.notStarted} not clocked in`)
+    if (breaks?.onBreakNow > 0) bits.push(`${breaks.onBreakNow} on break`)
+    if (totalPendingToday > 0) bits.push(`${totalPendingToday} updates outstanding`)
+    if (footage.pending.length > 0) bits.push(`${footage.pending.length} footage requests open`)
+
+    if (kpis.notStarted > 0) return {
+      tone:'error', color:C.red, icon:'offline',
+      title: `${kpis.notStarted} employee${kpis.notStarted === 1 ? '' : 's'} should be on shift and ${kpis.notStarted === 1 ? 'is' : 'are'}n't`,
+      detail: bits.slice(1).join(' · ') || 'Everything else is running normally.',
+    }
+    if (totalPendingToday > 0 || footage.pending.length > 0) return {
+      tone:'warn', color:C.amber, icon:'clock',
+      title: `${activeNowCnt} of ${onDutyNow.length} on duty this hour`,
+      detail: bits.join(' · '),
+    }
+    return {
+      tone:'good', color:C.accent, icon:'check-circle',
+      title: 'The floor is clear',
+      detail: bits.length ? bits.join(' · ') : `${activeNowCnt} of ${onDutyNow.length} on duty · nothing outstanding`,
+    }
+  })()
+
   const tabMeta = TAB_META[activeTab] || TAB_META.overview
   const notifCount = footage.pending.length + footage.followups.length
 
@@ -432,96 +459,65 @@ export default function Admin() {
           {/* ══════════ OVERVIEW ══════════ */}
           {activeTab === 'overview' && (
             <>
-              {/* Right now — the four numbers a supervisor opens this page for */}
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:SP[3], flexWrap:'wrap', marginBottom:SP[3] }}>
-                <div className="eyebrow">Right now</div>
+              {/* ── The headline ──
+                  An admin opens this to answer one question: does anything
+                  need me right now? It used to take eight stat cards and a
+                  scroll to find out. It is one sentence now, and the two
+                  panels under it are the answer. */}
+              <div style={{
+                display:'flex', alignItems:'center', gap:SP[3], flexWrap:'wrap',
+                background: headline.tone === 'good' ? '#94EC8E0f' : headline.tone === 'warn' ? '#FFC1070f' : '#FF4D4D12',
+                border:`1px solid ${headline.color}2e`, borderRadius:R.lg,
+                padding:'14px 18px', marginBottom:SP[3],
+              }}>
+                <Icon name={headline.icon} size={19} color={headline.color} />
+                <div style={{ flex:1, minWidth:'200px' }}>
+                  <div style={{ color:headline.color, fontSize:T.lg, fontWeight:800, letterSpacing:'-0.2px' }}>
+                    {headline.title}
+                  </div>
+                  <div style={{ color:C.muted, fontSize:T.base, marginTop:'3px' }}>{headline.detail}</div>
+                </div>
                 <div style={{ display:'flex', gap:SP[2], flexWrap:'wrap' }}>
                   <Button size="sm" variant="ghost" icon="download" onClick={downloadDailyReport}>Daily report</Button>
                   <Button size="sm" variant="primary" iconRight="arrow-right" onClick={()=>setActiveTab('fullday')}>Full day</Button>
                 </div>
               </div>
 
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(190px, 1fr))', gap:SP[3], marginBottom:SP[5] }}>
-                <Stat
-                  icon="shield" label="On duty this hour"
-                  value={`${activeNowCnt}/${onDutyNow.length}`}
-                  sub={`${commandHealthPct}% of who should be here`}
-                  subColor={commandHealthPct < 80 ? C.amber : C.muted}
-                  accent={commandHealthPct < 80 ? C.amber : C.accent}
-                  progress={commandHealthPct}
-                />
-                <Stat
-                  icon="check-circle" label="Updates completed" value={totalUpdatesToday}
-                  // With nothing assigned yet, completionPct is 100 by
-                  // definition — reporting "100% of today's work" against a
-                  // zero reads as a finished day rather than one that has
-                  // not begun.
-                  sub={totalUpdatesToday + totalPendingToday === 0 ? 'Nothing recorded yet today' : `${completionPct}% of today's work`}
-                  progress={totalUpdatesToday + totalPendingToday === 0 ? 0 : completionPct}
-                />
-                <Stat
-                  icon="clock" label="Pending updates" value={totalPendingToday}
-                  sub={totalPendingToday > 0 ? 'Awaiting completion' : 'Nothing outstanding'}
-                  subColor={totalPendingToday > 0 ? C.amber : C.accent}
-                  accent={totalPendingToday > 0 ? C.amber : C.accent}
-                />
-                <Stat
-                  icon="offline" label="Not started" value={kpis.notStarted}
-                  sub={kpis.notStarted > 0 ? 'Should be active by now' : 'Everyone scheduled is in'}
-                  subColor={kpis.notStarted > 0 ? C.red : C.accent}
-                  accent={kpis.notStarted > 0 ? C.red : C.accent}
-                  onClick={()=>setRosterModal({ title:'Not Started', empty:'Everyone scheduled has clocked in.', rows:notStartedEmployees })}
-                />
-              </div>
-
-              <div className="eyebrow" style={{ marginBottom:SP[3] }}>Workforce</div>
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(190px, 1fr))', gap:SP[3], marginBottom:SP[5] }}>
-                <Stat
-                  icon="users" label="Clocked in" value={kpis.active} sub={`${activePct}% of ${kpis.total} employees`} progress={activePct}
-                  onClick={()=>setRosterModal({ title:'Clocked in', empty:'Nobody is clocked in right now.', rows:activeEmployees })}
-                />
-                <Stat icon="leaves" label="Week off" value={kpis.weekOff} sub="Scheduled off today" />
-                <Stat
-                  icon="clock" label="On break now" value={breaks?.onBreakNow || 0}
-                  sub={breaks?.onBreakNow ? 'Tap to see who' : 'Nobody is away'}
-                  subColor={breaks?.onBreakNow ? C.red : C.muted}
-                  accent={breaks?.onBreakNow ? C.red : C.accent}
-                  onClick={()=>setActiveTab('breaks')}
-                />
-                <Stat icon="shuffle" label="Redistributed today" value={redistribution.length} sub="Slots that changed hands"
-                  onClick={redistribution.length ? ()=>setActiveTab('redistribution') : undefined} />
-              </div>
-
-              {/* Attention + status */}
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(320px, 1fr))', gap:SP[3], marginBottom:SP[5] }}>
-                <Card>
-                  <CardHead title="Needs attention" icon="alerts" />
+              {/* ── Needs you, and the floor ── */}
+              <div className="floor-split" style={{ marginBottom:SP[5] }}>
+                <Card pad={false} style={{ display:'flex', flexDirection:'column' }}>
+                  <div style={{ padding:SP[4], borderBottom:`1px solid ${C.border}` }}>
+                    <span className="eyebrow">Needs you</span>
+                  </div>
                   {aiAlerts.length === 0 ? (
-                    <div style={{ display:'flex', alignItems:'center', gap:SP[2], padding:'14px 0', color:C.accent, fontSize:T.base, fontWeight:600 }}>
-                      <Icon name="check-circle" size={16} color={C.accent} /> All clear — nothing needs you right now.
-                    </div>
+                    <EmptyState icon="check-circle" tone="good" title="All clear." detail="Nothing on the floor needs you right now." />
                   ) : (
-                    <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
+                    <div style={{ padding:'6px' }}>
                       {aiAlerts.map((a,i) => <AlertRow key={i} alert={a} onClick={()=>setActiveTab(a.tab)} />)}
                     </div>
                   )}
-                </Card>
 
-                <Card>
-                  <CardHead title="Employee status" icon="users" right={<Tag color={C.accent} dot>LIVE</Tag>} />
-                  <div style={{ display:'flex', alignItems:'center', gap:SP[4] }}>
-                    <Donut segments={statusDonutSegs} size={104} thickness={14} centerLabel={kpis.total} centerSub="Employees" />
-                    <div style={{ display:'flex', flexDirection:'column', gap:'8px', flex:1, minWidth:0 }}>
-                      {statusDonutSegs.map(seg => (
-                        <div key={seg.label} style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-                          <span style={{ width:8, height:8, borderRadius:'50%', background:seg.color, flexShrink:0 }} />
-                          <span className="ellip" style={{ color:C.text2, fontSize:T.base, flex:1 }}>{seg.label}</span>
-                          <span style={{ color:C.text, fontSize:T.base, fontWeight:700 }}>{seg.value}</span>
-                        </div>
-                      ))}
-                    </div>
+                  {/* The day's shape, kept small and underneath — it is
+                      context for the queue above, not the headline. */}
+                  <div style={{
+                    marginTop:'auto', borderTop:`1px solid ${C.border}`,
+                    padding:SP[4], display:'grid',
+                    gridTemplateColumns:'repeat(auto-fit, minmax(96px, 1fr))', gap:SP[3],
+                  }}>
+                    <MiniFact label="On duty"   value={`${activeNowCnt}/${onDutyNow.length}`} color={commandHealthPct < 80 ? C.amber : C.accent} />
+                    <MiniFact label="Done"      value={totalUpdatesToday} color={C.accent} />
+                    <MiniFact label="Pending"   value={totalPendingToday} color={totalPendingToday ? C.amber : C.muted} />
+                    <MiniFact label="On break"  value={breaks?.onBreakNow || 0} color={breaks?.onBreakNow ? C.red : C.muted} onClick={()=>setActiveTab('breaks')} />
+                    <MiniFact label="Week off"  value={kpis.weekOff} color={C.purple} />
+                    <MiniFact label="Moved"     value={redistribution.length} color={C.blue} onClick={redistribution.length ? ()=>setActiveTab('redistribution') : undefined} />
                   </div>
                 </Card>
+
+                <FloorPanel
+                  employees={employees}
+                  breaks={breaks}
+                  onPick={()=>setActiveTab('fullday')}
+                />
               </div>
 
               {/* Output */}
@@ -854,6 +850,23 @@ export default function Admin() {
 // ─────────────────────────────────────────────────────────────────────────
 // Presentational helpers (Overview-tab specific — shared ones live in Widgets.js)
 // ─────────────────────────────────────────────────────────────────────────
+
+function MiniFact({ label, value, color, onClick }) {
+  const Tag = onClick ? 'button' : 'div'
+  return (
+    <Tag
+      onClick={onClick}
+      className={onClick ? 'pressable' : undefined}
+      style={{
+        background:'transparent', border:'none', textAlign:'left', padding:0,
+        cursor: onClick ? 'pointer' : 'default', minWidth:0,
+      }}
+    >
+      <div style={{ color: color || C.text, fontSize:T.lg, fontWeight:800, lineHeight:1 }}>{value}</div>
+      <div className="ellip" style={{ color:C.muted, fontSize:'9.5px', marginTop:'4px' }}>{label}</div>
+    </Tag>
+  )
+}
 
 function AlertRow({ alert, onClick }) {
   const sevColor = { high:C.red, warn:C.amber, info:C.blue, success:C.accent }[alert.sev] || C.muted

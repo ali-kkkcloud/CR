@@ -272,6 +272,17 @@ input[type=date] { color-scheme: dark; }
 @media (max-width: 660px)  { .hero-grid { grid-template-columns: 1fr; } }
 @media (max-width: 1280px) { .hero-grid > :first-child { grid-column: 1 / -1; } }
 
+/* The board and its rail. The rail drops below the board before it drops
+   away, because what it carries — footage waiting, the next hour — still
+   matters on a laptop. */
+.board-split { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 300px; align-items: start; }
+@media (max-width: 1180px) { .board-split { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1180px) { .today-rail { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); } }
+
+/* The queue and the floor, side by side above the fold. */
+.floor-split { display: grid; gap: 12px; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: stretch; }
+@media (max-width: 1080px) { .floor-split { grid-template-columns: minmax(0, 1fr); } }
+
 /* Trend / calendar / notifications */
 .three-grid { display: grid; gap: 12px; grid-template-columns: 1.5fr 1.1fr 1fr; }
 @media (max-width: 1240px) { .three-grid { grid-template-columns: 1fr 1fr; } }

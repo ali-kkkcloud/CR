@@ -68,9 +68,19 @@ function emptyMessage({ scheduledThisHour, clockedOut, myWindow }) {
 }
 
 export default function MyClientsTab({
-  clients, filled, saveClient, saving, currentHour, canEdit = true,
+  clients, filled, saveClient, currentHour, canEdit = true,
   scheduledThisHour, clockedOut, myWindow,
+  // The board is no longer locked to the hour in progress. The rail above it
+  // can select any hour of the shift, and saving an earlier one is the same
+  // call with the hour passed through — /api/crm/update has always taken the
+  // slot as an argument.
+  hour, hourState = 'current',
 }) {
+  const slot = hour == null ? currentHour : hour
+  const isNow = slot === currentHour
+  // An hour that hasn't begun has nothing to record against it yet.
+  const upcoming = hourState === 'upcoming' && !isNow
+  const editable = canEdit && !upcoming
   const [selected, setSelected] = useState(null)
   const [drafts, setDrafts]     = useState({})
   const [query, setQuery]       = useState('')
@@ -132,12 +142,12 @@ export default function MyClientsTab({
   // typed into the misalignment box — the single biggest source of the
   // platform feeling slow, and of quota being spent on nothing.
   const doSave = useCallback(async (client, { advance = false } = {}) => {
-    if (!client || !canEdit || savingNow) return
+    if (!client || !editable || savingNow) return
     const rec = drafts[client]
     if (!rec) return
     setSavingNow(true)
     try {
-      const ok = await saveClient(client, rec)
+      const ok = await saveClient(client, rec, slot)
       if (ok) {
         setDrafts(prev => { const n = { ...prev }; delete n[client]; return n })
         setJustSaved(client)
@@ -158,7 +168,7 @@ export default function MyClientsTab({
     } finally {
       setSavingNow(false)
     }
-  }, [drafts, canEdit, savingNow, saveClient, realClients, filled, toast])
+  }, [drafts, editable, savingNow, saveClient, realClients, filled, toast, slot])
 
   function step(delta) {
     if (!visible.length) return
@@ -204,13 +214,13 @@ export default function MyClientsTab({
           }}>
             <Icon name="sparkles" size={24} color={C.accent} />
           </div>
-          <div className="eyebrow" style={{ marginBottom:'10px' }}>{fmtHourSlot(currentHour)}</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>{fmtHourSlot(slot)}</div>
           <div style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.3px' }}>
             {customEntry.client}
           </div>
           <div style={{ color:C.muted, fontSize:T.base, marginTop:'10px', maxWidth:'380px', margin:'10px auto 0', lineHeight:1.65 }}>
             This hour is set aside for this, so no client fleets are assigned to you.
-            Your board fills again at {fmtHour((currentHour + 1) % 24)}.
+            Your board fills again at {fmtHour((slot + 1) % 24)}.
           </div>
         </div>
       </Card>
@@ -239,31 +249,28 @@ export default function MyClientsTab({
     <>
       {toastNode}
 
-      {/* ── Hour header: what this board is, and how far through it you are ── */}
-      <div style={{
-        display:'flex', alignItems:'center', gap:SP[4], flexWrap:'wrap',
-        marginBottom:SP[3],
-      }}>
-        <div style={{ minWidth:0 }}>
-          <div className="eyebrow">This hour · {fmtHourSlot(currentHour)}</div>
-          <div style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px', marginTop:'2px' }}>
-            {doneCount} <span style={{ color:C.muted, fontWeight:600, fontSize:T.md }}>of {realClients.length} done</span>
-          </div>
+      {/* No hour header here. The rail above the board carries the hour and
+          the rail beside it carries the count — repeating both on top of the
+          board was three statements of the same fact competing for the same
+          screen. An hour other than the one in progress still needs saying,
+          because nothing else on screen would explain the different data. */}
+      {!isNow && (
+        <div style={{ marginBottom:SP[3] }}>
+          <Banner tone="info" icon="calendar">
+            {hourState === 'done' ? 'Viewing an earlier hour' : 'Viewing a later hour'} · {fmtHourSlot(slot)}
+            {' — '}{doneCount} of {realClients.length} done
+          </Banner>
         </div>
-        <div style={{ flex:1, minWidth:'160px', maxWidth:'320px' }}>
-          <Meter value={pct} height={6} />
-          <div style={{ color:C.muted, fontSize:T.xs, marginTop:'6px' }}>
-            {pendingCount === 0 ? 'Every client on this board is updated.' : `${pendingCount} still to go`}
-          </div>
-        </div>
-      </div>
+      )}
 
-      {!canEdit && (
+      {!editable && (
         <div style={{ marginBottom:SP[3] }}>
           <Banner tone="warn" icon="clock">
-            {clockedOut
-              ? 'Your shift has ended — this board is read-only.'
-              : 'View only — start your shift to make updates.'}
+            {upcoming
+              ? 'This hour hasn’t started yet — its clients become editable once it begins.'
+              : clockedOut
+                ? 'Your shift has ended — this board is read-only.'
+                : 'View only — start your shift to make updates.'}
           </Banner>
         </div>
       )}
@@ -276,7 +283,7 @@ export default function MyClientsTab({
           buttons stay where they are. */}
       <div style={{
         display:'flex', gap:SP[3], alignItems:'stretch',
-        height:'calc(100vh - 265px)', minHeight:'470px',
+        height:'calc(100vh - 232px)', minHeight:'460px',
       }}>
 
         {/* ── LEFT: the whole hour, always visible ── */}
@@ -371,7 +378,7 @@ export default function MyClientsTab({
                         : <Tag color={C.muted} dot>PENDING</Tag>}
                   </div>
                   <div style={{ color:C.muted, fontSize:T.base, marginTop:'5px' }}>
-                    {selMeta?.vehicleCount || 0} vehicles · {fmtHour(currentHour)} slot
+                    {selMeta?.vehicleCount || 0} vehicles · {fmtHour(slot)} slot
                     {savedAt && <> · last saved {savedAt}</>}
                   </div>
                 </div>
@@ -387,7 +394,7 @@ export default function MyClientsTab({
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 150px', gap:SP[3] }}>
                   <Field label="Status" hint="This is what marks the client complete.">
                     <select
-                      disabled={!canEdit}
+                      disabled={!editable}
                       value={rec.status}
                       onChange={e => setField(sel, 'status', e.target.value)}
                     >
@@ -396,7 +403,7 @@ export default function MyClientsTab({
                   </Field>
                   <Field label="Alert count">
                     <input
-                      disabled={!canEdit} type="number" min="0" placeholder="0"
+                      disabled={!editable} type="number" min="0" placeholder="0"
                       value={rec.alertCount}
                       onChange={e => setField(sel, 'alertCount', e.target.value)}
                     />
@@ -410,7 +417,7 @@ export default function MyClientsTab({
                     : 'Comma separated, e.g. KA01AB1234, KA02CD5678'}
                 >
                   <input
-                    disabled={!canEdit} placeholder="KA01AB1234, KA02CD5678"
+                    disabled={!editable} placeholder="KA01AB1234, KA02CD5678"
                     value={rec.misalignVehicles}
                     onChange={e => setField(sel, 'misalignVehicles', e.target.value)}
                   />
@@ -419,7 +426,7 @@ export default function MyClientsTab({
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 150px', gap:SP[3] }}>
                   <Field label="Fatigue">
                     <select
-                      disabled={!canEdit}
+                      disabled={!editable}
                       value={rec.fatigue}
                       onChange={e => setField(sel, 'fatigue', e.target.value)}
                     >
@@ -428,7 +435,7 @@ export default function MyClientsTab({
                   </Field>
                   <Field label="Fatigue count">
                     <input
-                      disabled={!canEdit || !fatigueYes} type="number" min="0"
+                      disabled={!editable || !fatigueYes} type="number" min="0"
                       placeholder={fatigueYes ? '0' : '—'}
                       value={rec.fatigueCount}
                       onChange={e => setField(sel, 'fatigueCount', e.target.value)}
@@ -438,7 +445,7 @@ export default function MyClientsTab({
 
                 <Field label="Notes" hint="Optional — anything the next shift should know.">
                   <textarea
-                    disabled={!canEdit} rows={2} placeholder="Anything worth passing on…"
+                    disabled={!editable} rows={2} placeholder="Anything worth passing on…"
                     value={rec.notes}
                     onChange={e => setField(sel, 'notes', e.target.value)}
                     style={{ resize:'vertical', minHeight:'56px' }}
@@ -453,8 +460,8 @@ export default function MyClientsTab({
                 borderBottomLeftRadius:R.lg, borderBottomRightRadius:R.lg, flexWrap:'wrap',
               }}>
                 <div style={{ flex:1, minWidth:'140px', color:C.muted, fontSize:T.xs }}>
-                  {!canEdit
-                    ? 'Read-only'
+                  {!editable
+                    ? (upcoming ? 'This hour hasn’t started yet' : 'Read-only')
                     : justSaved === sel
                       ? <span style={{ color:C.accent, fontWeight:600 }}>✓ Saved</span>
                       : dirty
@@ -462,11 +469,11 @@ export default function MyClientsTab({
                         : <>Ctrl+S to save · Alt+↑↓ to change client</>}
                 </div>
                 <Button
-                  variant="ghost" size="md" disabled={!canEdit || !dirty} loading={savingNow}
+                  variant="ghost" size="md" disabled={!editable || !dirty} loading={savingNow}
                   onClick={() => doSave(sel)}
                 >Save</Button>
                 <Button
-                  variant="primary" size="md" disabled={!canEdit || !dirty} loading={savingNow}
+                  variant="primary" size="md" disabled={!editable || !dirty} loading={savingNow}
                   onClick={() => doSave(sel, { advance: true })}
                 >Save &amp; next ↓</Button>
               </div>

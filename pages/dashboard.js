@@ -1,15 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
-import EmployeeSidebar from '../components/EmployeeSidebar'
 import BreakOverlay from '../components/BreakOverlay'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C, parseSheetDate } from '../components/Widgets'
-import { TopBar, PageBody, AccountButton, NotifyButton } from '../components/Shell'
-import { Card, Button, Pill, Tag, Field, Banner, EmptyState, Modal, T, R, SP, SURF } from '../components/ui'
+import { AccountButton } from '../components/Shell'
+import { Card, Button, Pill, Tag, Field, Segmented, Banner, EmptyState, Modal, T, R, SP, SURF } from '../components/ui'
+import HourRail from '../components/HourRail'
+import TodayRail from '../components/TodayRail'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
-import MyDayTab from '../components/tabs/MyDayTab'
 import MyClientsTab from '../components/tabs/MyClientsTab'
 import EmpFootageTab from '../components/tabs/EmpFootageTab'
 import EmpFollowupTab from '../components/tabs/EmpFollowupTab'
@@ -52,7 +52,14 @@ export default function Dashboard() {
   const [clientContext, setClientContext] = useState({})
   const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
   const [myDay, setMyDay] = useState(null)
-  const [activeTab, setActiveTab] = useState('dashboard')
+  const [activeTab, setActiveTab] = useState('board')
+  // Which hour the board is showing. Follows the clock until the operator
+  // picks another one from the rail, then stays where they put it.
+  const [viewHour, setViewHour] = useState(null)
+  const [showStats, setShowStats] = useState(false)
+  // { [hour]: { [client]: record } } — what has been saved into an earlier
+  // hour this session, so the board reflects it before the next my-day poll.
+  const [pastEdits, setPastEdits] = useState({})
   const [saving, setSaving] = useState({})
   const [showReport, setShowReport] = useState(false)
   const [report, setReport] = useState(null)
@@ -77,6 +84,7 @@ export default function Dashboard() {
   const [otLoading, setOtLoading] = useState(false)
   const [shiftStartedInfo, setShiftStartedInfo] = useState(null) // { start, end } | null — what the window became, shown after clocking in
 
+  const followRef = useRef(true)   // is the board tracking the clock?
   const hourRef = useRef(currentHour)
   const autoRef = useRef(null)
   const summaryRefreshRef = useRef(null)
@@ -232,6 +240,18 @@ export default function Dashboard() {
   useEffect(() => {
     if (user) loadSummary(summaryRange)
   }, [summaryRange])
+
+  // The board starts on the hour in progress and moves with it, until the
+  // operator selects another one — after which it stays put, because being
+  // yanked to a different hour mid-edit is worse than a stale header.
+  useEffect(() => {
+    if (followRef.current) setViewHour(currentHour)
+  }, [currentHour])
+
+  function selectHour(h) {
+    followRef.current = h === currentHour
+    setViewHour(h)
+  }
 
   function handleStartShiftClick() {
     if (startingShift) return
@@ -403,6 +423,14 @@ export default function Dashboard() {
       if (!res.ok || !data.success) return false
       if (isCurrentHourEdit) {
         setFilled(p => ({ ...p, [client]: { ...(p[client] || {}), ...record, updatedAt: data.updatedAt || '' } }))
+      } else {
+        // An earlier hour is served from the day's record, which is refetched
+        // on its own schedule. Hold what was just written so the board shows
+        // it immediately rather than reverting until the next poll.
+        setPastEdits(p => ({
+          ...p,
+          [targetHour]: { ...(p[targetHour] || {}), [client]: { ...record, updatedAt: data.updatedAt || '' } },
+        }))
       }
       // "status" is what actually marks a client done — refresh the summary
       // shortly after so My Targets and the trend don't sit stale until the
@@ -623,108 +651,229 @@ export default function Dashboard() {
   )
 
   // ── MAIN APP ──
-  const tabTitle = {
-    dashboard: 'Dashboard', myday: 'My Day', clients: 'My Clients', footage: 'Footage Requests',
-    followup: 'Follow-ups', performance: 'My Performance', notifications: 'Notifications',
-    help: 'Help & Support', settings: 'Settings',
-  }[activeTab]
-
   const isActive = shiftStatus === 'active'
+
+  // ── The board's hour ──
+  // The rail can select any hour of the shift. The hour in progress is served
+  // by the live split (/api/clients/current); any other hour comes from the
+  // day's own record, which is what My Day always read. Same data, same save
+  // path — it is just no longer behind a separate navigation item.
+  const timeline   = myDay?.timeline || []
+  const shownHour  = viewHour == null ? currentHour : viewHour
+  const viewEntry  = timeline.find(t => t.hour === shownHour)
+  const isNowHour  = shownHour === currentHour
+
+  const boardClients = isNowHour
+    ? clients
+    : (viewEntry?.clients || [])
+        .filter(c => !c.redistributedAway)
+        .map(c => ({ client:c.client, vehicleCount:c.vehicleCount, isSpecific:c.isSpecific, isCustom:c.isCustom }))
+
+  const boardFilled = isNowHour
+    ? filled
+    : Object.fromEntries((viewEntry?.clients || []).map(c => [c.client, {
+        status: c.status || '', misalignVehicles: c.misalignVehicles || '',
+        alertCount: c.alertCount || '', fatigue: c.fatigue || 'No',
+        fatigueCount: c.fatigueCount || '', notes: c.notes || '',
+        updatedAt: c.updatedAt || '',
+      }]))
+
+  // Merged with anything saved into a past hour this session, so a tile turns
+  // "done" straight away instead of waiting for the next my-day poll.
+  const mergedFilled = isNowHour
+    ? boardFilled
+    : { ...boardFilled, ...(pastEdits[shownHour] || {}) }
+
+  const realBoard = boardClients.filter(c => !c.isCustom)
+
+  // The rail's "This hour" card is about the hour in progress, always — not
+  // about whichever hour the board happens to be showing. Deriving it from
+  // the board put the live hour's label above an earlier hour's counts.
+  const liveClients = clients.filter(c => !c.isCustom)
+  const liveDone    = liveClients.filter(c => (filled[c.client]?.status || '').toString().trim()).length
+
+  const TITLES = { board:'Board', footage:'Footage Requests', followup:'Follow-ups' }
 
   return (
     <>
-      <Head><title>Cautio CRM — {tabTitle}</title></Head>
-      <div style={{minHeight:'100vh', background:C.bg, display:'flex'}}>
-        <EmployeeSidebar
-          activeTab={activeTab} setActiveTab={setActiveTab} user={user}
-          counts={{ footage: footage.pending.length, followup: footage.followups.length }}
-          shiftTime={fmtShift(summary?.shiftStart, summary?.shiftEnd)}
-          loginTime={startTime}
-          onlineStatus={isActive ? 'Online' : 'Offline'}
-        />
+      <Head><title>Cautio CRM — {TITLES[activeTab] || 'Dashboard'}</title></Head>
 
-        <div style={{flex:1, minWidth:0}}>
+      <div style={{ minHeight:'100vh', background:C.bg }}>
 
-          <TopBar
-            title={`${greeting()}, ${user?.name || ''}`}
-            sub={isActive
-              ? 'You’re clocked in. Your board updates itself every hour.'
-              : shiftStatus === 'ended'
-                ? 'Your shift has ended for today.'
-                : 'Start your shift to begin working.'}
-            right={
-              <>
-                <Pill icon="calendar">{new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</Pill>
-                <Pill icon="clock">{fmtShift(summary?.shiftStart, summary?.shiftEnd)}</Pill>
-                {isActive && (
-                  <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>
-                    In {startTime}
-                  </Pill>
-                )}
-                <NotifyButton
-                  count={footage.pending.length + footage.followups.length}
-                  onClick={()=>setActiveTab('footage')}
-                />
-                {isActive ? (
-                  <>
-                    <Button variant="danger" icon="clock" onClick={startBreak} disabled={breakActionLoading}>Break</Button>
-                    <Button
-                      variant="ghost" icon="clock"
-                      onClick={()=>setShowOTConfirm(true)}
-                      disabled={summary?.usedOT}
-                      title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
-                      style={summary?.usedOT ? undefined : { color:C.accent, borderColor:C.accent+'55', background:C.accentSoft }}
-                    >OT</Button>
-                    <Button variant="subtle" onClick={handleEndShiftClick}>End shift</Button>
-                  </>
-                ) : shiftStatus === 'not_started' ? (
-                  <Button variant="primary" onClick={handleStartShiftClick} loading={startingShift}>▶ Start shift</Button>
-                ) : null}
-                <AccountButton name={user?.name} sub={user?.empId || '—'} onClick={()=>setShowLogout(true)} />
-              </>
-            }
-          />
-
-          <PageBody>
-            {!isActive && (
-              <div style={{ marginBottom:SP[4] }}>
-                <Banner tone="warn" icon="clock">
-                  {shiftStatus === 'ended'
-                    ? 'Your shift has ended for today — everything below is read-only.'
-                    : 'Your shift hasn’t started yet — you’re viewing today’s assignments in read-only mode.'}
-                </Banner>
-              </div>
-            )}
-
-            {activeTab === 'dashboard' && (
-              <EmpDashboardTab summary={summary} range={summaryRange} setRange={setSummaryRange} loading={summaryLoading} onGoToTab={setActiveTab} breakStatus={breakStatus} />
-            )}
-            {activeTab === 'myday' && (
-              <MyDayTab
-                currentHour={currentHour} currentClients={clients} filled={filled} myDay={myDay}
-                saveUpdate={saveUpdate} saving={saving}
-                footagePending={footage.pending.length} followupsPending={footage.followups.length}
-                onGoToTab={setActiveTab} canEdit={isActive}
+        {/* ══════════ COMMAND BAR ══════════
+            An operator has three destinations and one job. The nine-item
+            sidebar this replaces spent 246px of a working screen on eight
+            things they never open mid-shift — four of which weren't wired up
+            to anything. Identity, shift state and the shift controls are all
+            that has to be permanently on screen. */}
+        <header style={{
+          position:'sticky', top:0, zIndex:60,
+          background:'rgba(0,0,0,0.86)', backdropFilter:'blur(12px)',
+          borderBottom:`1px solid ${C.border}`,
+        }}>
+          <div style={{
+            display:'flex', alignItems:'center', gap:SP[4], flexWrap:'wrap',
+            padding:`${SP[3]} ${SP[5]}`,
+          }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'10px', flexShrink:0 }}>
+              <img
+                src="/cautio_shield.webp" alt="Cautio"
+                style={{ width:'30px', height:'30px', objectFit:'contain' }}
+                onError={e => (e.target.style.display = 'none')}
               />
-            )}
-            {activeTab === 'clients' && (
-              <MyClientsTab clients={clients} filled={filled} saveClient={saveClient} saving={saving} currentHour={currentHour} canEdit={isActive} {...clientContext} />
-            )}
-            {activeTab === 'footage' && <EmpFootageTab footage={footage} />}
-            {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
+              <div style={{ minWidth:0 }}>
+                <div className="ellip" style={{ color:C.text, fontSize:T.md, fontWeight:800, lineHeight:1.25 }}>
+                  {user?.name}
+                </div>
+                <div style={{ color:C.muted, fontSize:'10px', lineHeight:1.3 }}>
+                  {user?.empId} · {fmtShift(summary?.shiftStart, summary?.shiftEnd)}
+                </div>
+              </div>
+            </div>
 
-            {['performance','notifications','help','settings'].includes(activeTab) && (
-              <Card pad={false} style={{ maxWidth:'520px', margin:'40px auto' }}>
-                <EmptyState
-                  icon={activeTab==='performance'?'analytics':activeTab==='notifications'?'alerts':activeTab==='help'?'sparkles':'settings'}
-                  title={`${tabTitle} — coming soon`}
-                  detail="This module isn't wired up to live data yet."
+            <div style={{ flex:1, minWidth:'12px' }} />
+
+            <div style={{ display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap' }}>
+              {isActive
+                ? <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>In {startTime}</Pill>
+                : <Pill icon="clock" color={C.amber}>{shiftStatus === 'ended' ? 'Shift ended' : 'Not started'}</Pill>}
+              <Pill icon="clock">{clock}</Pill>
+
+              {isActive ? (
+                <>
+                  <Button variant="danger" icon="clock" onClick={startBreak} disabled={breakActionLoading}>Break</Button>
+                  <Button
+                    variant="ghost" icon="clock"
+                    onClick={()=>setShowOTConfirm(true)}
+                    disabled={summary?.usedOT}
+                    title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
+                    style={summary?.usedOT ? undefined : { color:C.accent, borderColor:C.accent+'55', background:C.accentSoft }}
+                  >OT</Button>
+                  <Button variant="subtle" onClick={handleEndShiftClick}>End shift</Button>
+                </>
+              ) : shiftStatus === 'not_started' ? (
+                <Button variant="primary" onClick={handleStartShiftClick} loading={startingShift}>▶ Start shift</Button>
+              ) : null}
+
+              <AccountButton name={user?.name} sub={user?.empId || '—'} onClick={()=>setShowLogout(true)} />
+            </div>
+          </div>
+
+          {/* Three destinations, as a switch rather than a column of nine. */}
+          <div style={{ padding:`0 ${SP[5]} ${SP[3]}` }}>
+            <Segmented
+              value={activeTab}
+              onChange={setActiveTab}
+              options={[
+                { value:'board',    label:'Board',      count: realBoard.length },
+                { value:'footage',  label:'Footage',    count: footage.pending.length },
+                { value:'followup', label:'Follow-ups', count: footage.followups.length },
+              ]}
+            />
+          </div>
+        </header>
+
+        <main style={{ padding:`${SP[4]} ${SP[5]} ${SP[8]}` }}>
+          {!isActive && (
+            <div style={{ marginBottom:SP[3] }}>
+              <Banner
+                tone="warn" icon="clock"
+                action={shiftStatus === 'not_started'
+                  ? <Button size="sm" variant="primary" onClick={handleStartShiftClick} loading={startingShift}>Start shift</Button>
+                  : null}
+              >
+                {shiftStatus === 'ended'
+                  ? 'Your shift has ended for today — everything below is read-only.'
+                  : 'Your shift hasn’t started yet — you’re viewing today’s assignments in read-only mode.'}
+              </Banner>
+            </div>
+          )}
+
+          {activeTab === 'board' && (
+            <>
+              <div style={{ marginBottom:SP[3] }}>
+                <HourRail
+                  timeline={timeline}
+                  currentHour={currentHour}
+                  value={viewHour == null ? currentHour : viewHour}
+                  onChange={selectHour}
+                  liveCounts={{ total: liveClients.length, done: liveDone }}
                 />
-              </Card>
-            )}
-          </PageBody>
-        </div>
+              </div>
+
+              <div className="board-split">
+                <div style={{ minWidth:0 }}>
+                  <MyClientsTab
+                    clients={boardClients}
+                    filled={mergedFilled}
+                    saveClient={saveClient}
+                    currentHour={currentHour}
+                    hour={shownHour}
+                    hourState={viewEntry?.state || (isNowHour ? 'current' : 'done')}
+                    canEdit={isActive}
+                    {...(isNowHour ? clientContext : {})}
+                  />
+                </div>
+                <TodayRail
+                  summary={summary} myDay={myDay} breakStatus={breakStatus} footage={footage}
+                  currentHour={currentHour}
+                  hourDone={liveDone} hourTotal={liveClients.length}
+                  onGoToTab={setActiveTab}
+                  onOpenStats={()=>setShowStats(true)}
+                  isActive={isActive}
+                />
+              </div>
+            </>
+          )}
+
+          {activeTab === 'footage'  && <EmpFootageTab footage={footage} />}
+          {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
+        </main>
       </div>
+
+      {/* My stats — read occasionally, so it opens over the work rather than
+          replacing it with a destination of its own. */}
+      {showStats && (
+        <div
+          onClick={()=>setShowStats(false)}
+          style={{
+            position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', backdropFilter:'blur(3px)',
+            zIndex:1000, display:'flex', justifyContent:'flex-end',
+          }}
+        >
+          <div
+            onClick={e=>e.stopPropagation()}
+            className="fade-in"
+            style={{
+              width:'min(1080px, 94vw)', height:'100%', overflowY:'auto',
+              background:C.bg, borderLeft:`1px solid ${C.border2}`,
+              boxShadow:'-18px 0 50px rgba(0,0,0,0.6)',
+            }}
+          >
+            <div style={{
+              position:'sticky', top:0, zIndex:2,
+              display:'flex', alignItems:'center', justifyContent:'space-between', gap:SP[3],
+              padding:`${SP[4]} ${SP[5]}`,
+              background:'rgba(0,0,0,0.9)', backdropFilter:'blur(10px)',
+              borderBottom:`1px solid ${C.border}`,
+            }}>
+              <div>
+                <div style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px' }}>My stats</div>
+                <div style={{ color:C.muted, fontSize:T.base, marginTop:'2px' }}>How your work is trending</div>
+              </div>
+              <Button variant="subtle" onClick={()=>setShowStats(false)}>Close</Button>
+            </div>
+            <div style={{ padding:`${SP[4]} ${SP[5]} ${SP[8]}` }}>
+              <EmpDashboardTab
+                summary={summary} range={summaryRange} setRange={setSummaryRange}
+                loading={summaryLoading} onGoToTab={(t)=>{ setShowStats(false); setActiveTab(t) }}
+                breakStatus={breakStatus}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
 
       {/* Shift started — a statement of the window now in force, never a question */}
