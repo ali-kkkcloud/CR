@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Icon from '../Icons'
-import { C, KpiCard, MiniStat, AttendanceDots, ScoreBadge, HBarList } from '../Widgets'
+import { C, MiniStat, AttendanceDots, ScoreBadge, HBarList } from '../Widgets'
+import { Card, Button, SearchInput, Stat, T, R, SP, SURF } from '../ui'
 
 function initials(name) { return (name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase() }
 
@@ -87,35 +88,41 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
   return (
     <div>
       {/* Control bar */}
-      <div style={{ display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap', background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'12px 16px', marginBottom:'14px' }}>
-        <span style={{ color:C.muted, fontSize:'10px', fontWeight:700 }}>FROM</span>
-        <input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} style={dateInpStyle} />
-        <span style={{ color:C.muted, fontSize:'10px', fontWeight:700 }}>TO</span>
-        <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={dateInpStyle} />
-        <button style={quickBtnStyle} onClick={()=>{setFromDate(todayISO());setToDate(todayISO())}}>Today</button>
-        <button style={quickBtnStyle} onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-1); const s=d.toISOString().split('T')[0]; setFromDate(s); setToDate(s) }}>Yesterday</button>
-        <button style={quickBtnStyle} onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-6); setFromDate(d.toISOString().split('T')[0]); setToDate(todayISO()) }}>Last 7 Days</button>
-        <button style={quickBtnStyle} onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-29); setFromDate(d.toISOString().split('T')[0]); setToDate(todayISO()) }}>Last 30 Days</button>
-        <input placeholder="🔍 Search employee..." value={search} onChange={e=>setSearch(e.target.value)} style={{...dateInpStyle, flex:1, minWidth:'160px'}} />
-        <button style={outlineBtnStyle} onClick={exportPerformance}><Icon name="download" size={12} color={C.text2}/> Export</button>
-      </div>
+      <Card style={{ marginBottom:SP[4] }}>
+        <div style={{ display:'flex', gap:SP[2], alignItems:'center', flexWrap:'wrap' }}>
+          <span className="eyebrow">From</span>
+          <input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} style={{ width:'auto' }} />
+          <span className="eyebrow">To</span>
+          <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={{ width:'auto' }} />
+          <Button size="sm" variant="subtle" onClick={()=>{setFromDate(todayISO());setToDate(todayISO())}}>Today</Button>
+          <Button size="sm" variant="subtle" onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-1); const x=d.toISOString().split('T')[0]; setFromDate(x); setToDate(x) }}>Yesterday</Button>
+          <Button size="sm" variant="subtle" onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-6); setFromDate(d.toISOString().split('T')[0]); setToDate(todayISO()) }}>Last 7 days</Button>
+          <Button size="sm" variant="subtle" onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-29); setFromDate(d.toISOString().split('T')[0]); setToDate(todayISO()) }}>Last 30 days</Button>
+          <div style={{ flex:1, minWidth:'170px' }}>
+            <SearchInput value={search} onChange={setSearch} placeholder="Search employee…" />
+          </div>
+          <Button size="sm" variant="ghost" icon="download" onClick={exportPerformance}>Export</Button>
+        </div>
+      </Card>
 
       {/* KPI strip */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(140px, 1fr))', gap:'10px', marginBottom:'14px' }}>
-        <KpiCard icon="users" label="Employees" value={kpis.employees} sub={`${kpis.days} day(s) in range`} />
-        <KpiCard icon="shield" label="Avg Attendance" value={`${kpis.avgAttendance}%`} sub="Present vs range days" />
-        <KpiCard icon="check-circle" label="Updates Recorded" value={kpis.updates} sub="Across selected range" />
-        <KpiCard icon="analytics" label="Misaligns Found" value={kpis.misaligns} subColor={kpis.misaligns>0?C.amber:C.muted} />
-        <KpiCard icon="alerts" label="Alerts" value={kpis.alerts} subColor={kpis.alerts>0?C.amber:C.muted} />
-        <KpiCard icon="camera" label="Footage Pending" value={kpis.footagePending} subColor={kpis.footagePending>0?C.amber:C.muted} />
-        <KpiCard icon="check-circle" label="Footage Completed" value={kpis.footageDone} />
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(148px, 1fr))', gap:SP[3], marginBottom:SP[4] }}>
+        <Stat icon="users" label="Employees" value={kpis.employees} sub={`${kpis.days} day${kpis.days===1?'':'s'} in range`} />
+        <Stat icon="shield" label="Avg attendance" value={`${kpis.avgAttendance}%`} sub="Present vs range days" progress={kpis.avgAttendance} />
+        <Stat icon="check-circle" label="Updates recorded" value={kpis.updates} sub="Across selected range" />
+        <Stat icon="analytics" label="Misaligns found" value={kpis.misaligns} subColor={kpis.misaligns>0?C.amber:C.muted} accent={kpis.misaligns>0?C.amber:C.accent} />
+        <Stat icon="alerts" label="Alerts" value={kpis.alerts} subColor={kpis.alerts>0?C.amber:C.muted} accent={kpis.alerts>0?C.amber:C.accent} />
+        <Stat icon="camera" label="Footage pending" value={kpis.footagePending} subColor={kpis.footagePending>0?C.amber:C.muted} accent={kpis.footagePending>0?C.amber:C.accent} />
+        <Stat icon="check-circle" label="Footage completed" value={kpis.footageDone} />
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'300px 1.4fr 1fr', gap:'14px', alignItems:'start' }}>
         {/* Employee list */}
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'14px' }}>
-          <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>EMPLOYEES ({filtered.length})</div>
-          <input placeholder="Search employee..." value={search} onChange={e=>setSearch(e.target.value)} style={{ ...dateInpStyle, width:'100%', boxSizing:'border-box', marginBottom:'10px' }} />
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>EMPLOYEES ({filtered.length})</div>
+          <div style={{ marginBottom:'10px' }}>
+            <SearchInput value={search} onChange={setSearch} placeholder="Search employee…" />
+          </div>
           <div style={{ display:'flex', flexDirection:'column', gap:'6px', maxHeight:'560px', overflowY:'auto' }}>
             {filtered.map(e => {
               const score = computeScore(e)
@@ -170,12 +177,12 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
               <MiniStat label="DAYS ABSENT" val={selected.daysAbsent} warn={selected.daysAbsent>0} />
             </div>
 
-            <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'8px' }}>ATTENDANCE — {progress.from} to {progress.to}</div>
+            <div className="eyebrow" style={{ marginBottom:'8px' }}>ATTENDANCE — {progress.from} to {progress.to}</div>
             <div style={{ marginBottom:'16px' }}><AttendanceDots attendance={selected.attendance} /></div>
 
             {isSingleDay ? (
               <>
-                <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'8px' }}>CLIENTS ASSIGNED — {fromDate}</div>
+                <div className="eyebrow" style={{ marginBottom:'8px' }}>CLIENTS ASSIGNED — {fromDate}</div>
                 {dayLoading ? (
                   <div style={{display:'flex',justifyContent:'center',padding:'1.5rem'}}><div className="spinner"></div></div>
                 ) : !selectedDayHours ? (
@@ -205,7 +212,7 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
         {selected && (
           <div style={{ display:'flex', flexDirection:'column', gap:'14px' }}>
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-              <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>SCORE BREAKDOWN</div>
+              <div className="eyebrow" style={{ marginBottom:'10px' }}>SCORE BREAKDOWN</div>
               <HBarList items={[
                 { label:'Attendance', value:Math.round((selected.daysPresent/(selected.totalDaysInRange||1))*40), color:C.accent },
                 { label:'Alignment', value:Math.max(0,20-Math.min(20,selected.rangeMisaligns*2)), color:C.blue },
@@ -213,12 +220,12 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
                 { label:'Footage upkeep', value:Math.max(0,20-Math.min(20,selected.footagePending*4)), color:C.amber },
               ]} max={40} />
               <div style={{ marginTop:'10px', color:C.muted, fontSize:'9.5px', lineHeight:1.5 }}>
-                Heuristic score out of 100 — weighted from attendance, data alignment, alert control and footage upkeep. Tune weights anytime in ProgressTab.js.
+                Score out of 100 — weighted from attendance, data alignment, alert control and footage upkeep.
               </div>
             </div>
 
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-              <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'10px' }}>NOTES</div>
+              <div className="eyebrow" style={{ marginBottom:'10px' }}>NOTES</div>
               {notes[selected.name] && notes[selected.name].map((n,i) => (
                 <div key={i} style={{ background:C.s2, borderRadius:'8px', padding:'8px 10px', marginBottom:'6px' }}>
                   <div style={{ color:C.text2, fontSize:'11px' }}>{n.text}</div>
@@ -239,13 +246,11 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
 
       {/* Team comparison */}
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginTop:'14px' }}>
-        <div style={{ color:C.accent, fontSize:'10.5px', fontWeight:700, marginBottom:'12px' }}>TOP ALERT + MISALIGN LOAD (this range)</div>
+        <div className="eyebrow" style={{ marginBottom:'12px' }}>TOP ALERT + MISALIGN LOAD (this range)</div>
         <HBarList items={[...list].sort((a,b)=>(b.rangeAlerts+b.rangeMisaligns)-(a.rangeAlerts+a.rangeMisaligns)).slice(0,8).map(e=>({ label:e.name, value:e.rangeAlerts+e.rangeMisaligns, color:C.amber }))} />
       </div>
     </div>
   )
 }
 
-const dateInpStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text, fontSize:'12.5px', padding:'7px 10px' }
-const quickBtnStyle = { background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'11px', padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' }
-const outlineBtnStyle = { display:'flex', alignItems:'center', gap:'5px', background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'8px', color:C.text2, fontSize:'11.5px', fontWeight:600, padding:'8px 12px', cursor:'pointer', whiteSpace:'nowrap' }
+const quickBtnStyle = { background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md, color:C.text2, fontSize:T.sm, fontWeight:600, padding:'7px 11px', cursor:'pointer', whiteSpace:'nowrap' }

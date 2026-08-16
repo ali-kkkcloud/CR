@@ -1,4 +1,5 @@
 import { C } from '../Widgets'
+import { Card, T, R, SP, SURF } from '../ui'
 
 export default function EmpFollowupTab({ followups }) {
   return (

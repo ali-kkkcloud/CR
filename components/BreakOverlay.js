@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import Icon from './Icons'
 import { C } from './Widgets'
+import { Card, Button, Tag, T, SP } from './ui'
 
 function fmtMinutes(mins) {
   const h = Math.floor(mins/60), m = mins%60
@@ -57,52 +58,70 @@ export default function BreakOverlay({ startTime, startDate, history, totalMinut
     return () => clearInterval(id)
   }, [startTime, startDate])
 
-  const mm = String(Math.floor(elapsed/60)).padStart(2,'0')
-  const ss = String(elapsed%60).padStart(2,'0')
+  // Past an hour, mm:ss keeps counting the minutes up — "111:29" — which
+  // nobody reads as an hour and fifty-one minutes. Roll into hours instead.
+  const hrs = Math.floor(elapsed / 3600)
+  const mm  = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0')
+  const ss  = String(elapsed % 60).padStart(2, '0')
+  const clock = hrs > 0 ? `${hrs}:${mm}:${ss}` : `${mm}:${ss}`
 
   return (
-    <div style={{ position:'fixed', inset:0, background:C.bg, zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center', padding:'20px' }}>
-      <div style={{ maxWidth:'440px', width:'100%', textAlign:'center' }}>
-        <div style={{ width:'72px', height:'72px', borderRadius:'50%', background:C.accentDark, display:'flex', alignItems:'center', justifyContent:'center', margin:'0 auto 20px' }}>
-          <Icon name="clock" size={32} color={C.accent} />
-        </div>
-        <div style={{ color:C.text, fontSize:'20px', fontWeight:800, marginBottom:'6px' }}>
-          {isAuto ? 'Break started automatically' : "You're on a break"}
-        </div>
-        <div style={{ color:C.muted, fontSize:'13px', marginBottom:'28px' }}>
-          {isAuto
-            ? `Nothing was recorded for ${idleMinutes || 10} minutes, so a break was started for you from when you stopped. Resume when you're back at your desk.`
-            : "Take your time. Your dashboard will be here when you're back."}
+    <div style={{
+      position:'fixed', inset:0, background:C.bg, zIndex:2000,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:SP[5],
+    }}>
+      <div style={{ maxWidth:'440px', width:'100%' }} className="fade-in">
+        <div style={{ textAlign:'center', marginBottom:SP[5] }}>
+          <div style={{
+            width:'66px', height:'66px', borderRadius:'50%',
+            background: isAuto ? C.amber+'18' : C.accentDark,
+            display:'flex', alignItems:'center', justifyContent:'center', margin:`0 auto ${SP[4]}`,
+          }}>
+            <Icon name="clock" size={29} color={isAuto ? C.amber : C.accent} />
+          </div>
+          <div style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px' }}>
+            {isAuto ? 'Break started automatically' : 'You’re on a break'}
+          </div>
+          <div style={{ color:C.muted, fontSize:T.base, marginTop:'8px', lineHeight:1.65 }}>
+            {isAuto
+              ? `Nothing was recorded for ${idleMinutes || 10} minutes, so a break was started from the moment you stopped. Resume when you’re back at your desk.`
+              : 'Take your time. Your board will be exactly where you left it.'}
+          </div>
         </div>
 
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'16px', padding:'28px', marginBottom:'20px' }}>
-          <div style={{ color:C.muted, fontSize:'10.5px', fontWeight:700, letterSpacing:'1px', marginBottom:'10px' }}>BREAK STARTED AT {startTime}</div>
-          <div style={{ color:C.accent, fontSize:'44px', fontWeight:800, fontVariantNumeric:'tabular-nums' }}>{mm}:{ss}</div>
-          <div style={{ color:C.muted, fontSize:'11px', marginTop:'4px' }}>elapsed</div>
-        </div>
+        <Card style={{ textAlign:'center', padding:'30px 24px', marginBottom:SP[4] }}>
+          <div className="eyebrow" style={{ marginBottom:'12px' }}>Started at {startTime}</div>
+          <div style={{
+            color: isAuto ? C.amber : C.accent,
+            fontSize: hrs > 0 ? '40px' : '46px', fontWeight:800, lineHeight:1, letterSpacing:'-1.5px',
+          }}>{clock}</div>
+          <div style={{ color:C.muted, fontSize:T.sm, marginTop:'8px' }}>elapsed</div>
+        </Card>
 
-        <button onClick={onResume} disabled={resuming} style={{ width:'100%', background:C.accent, border:'none', borderRadius:'12px', color:'#06120a', fontSize:'15px', fontWeight:800, padding:'16px', cursor:'pointer', marginBottom:'20px' }}>
-          {resuming ? 'Resuming...' : '▶ Resume Work'}
-        </button>
+        <Button variant="primary" size="lg" full loading={resuming} onClick={onResume} style={{ marginBottom:SP[4] }}>
+          ▶ Resume work
+        </Button>
 
         {history.length > 0 && (
-          <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', textAlign:'left' }}>
-            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'10px' }}>
-              <span style={{ color:C.accent, fontSize:'10.5px', fontWeight:700 }}>TODAY'S BREAKS</span>
-              <span style={{ color:C.muted, fontSize:'10.5px' }}>Total: {fmtMinutes(totalMinutesToday)}</span>
+          <Card>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'11px' }}>
+              <span className="eyebrow">Today’s breaks</span>
+              <span style={{ color:C.text2, fontSize:T.xs, fontWeight:600 }}>Total {fmtMinutes(totalMinutesToday)}</span>
             </div>
-            <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:'7px' }}>
               {history.map((h,i) => (
-                <div key={i} style={{ display:'flex', justifyContent:'space-between', fontSize:'11px' }}>
-                  <span style={{ color:C.text2 }}>
-                    {h.startTime} {h.endTime ? `→ ${h.endTime}` : '(ongoing)'}
-                    {h.isAuto && <span style={{ color:C.amber, marginLeft:'6px', fontSize:'9.5px', fontWeight:700 }}>AUTO</span>}
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:SP[2], fontSize:T.sm }}>
+                  <span style={{ color:C.text2, display:'flex', alignItems:'center', gap:'7px', minWidth:0 }}>
+                    <span className="ellip">{h.startTime} {h.endTime ? `→ ${h.endTime}` : '(ongoing)'}</span>
+                    {h.isAuto && <Tag color={C.amber}>AUTO</Tag>}
                   </span>
-                  <span style={{ color: h.status==='Active'?C.accent:C.muted, fontWeight:600 }}>{fmtMinutes(h.minutes)}</span>
+                  <span style={{ color: h.status==='Active' ? C.accent : C.muted, fontWeight:700, flexShrink:0 }}>
+                    {fmtMinutes(h.minutes)}
+                  </span>
                 </div>
               ))}
             </div>
-          </div>
+          </Card>
         )}
       </div>
     </div>
