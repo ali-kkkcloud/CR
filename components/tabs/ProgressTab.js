@@ -116,7 +116,10 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
         <Stat icon="check-circle" label="Footage completed" value={kpis.footageDone} />
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'300px 1.4fr 1fr', gap:'14px', alignItems:'start' }}>
+      {/* Three fixed tracks overflowed the page below about 1250px — the
+          300px list plus two columns whose contents have their own minimum
+          widths added up to more than the content column had. */}
+      <div className="progress-split">
         {/* Employee list */}
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'14px' }}>
           <div className="eyebrow" style={{ marginBottom:'10px' }}>EMPLOYEES ({filtered.length})</div>

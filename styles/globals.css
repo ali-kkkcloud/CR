@@ -283,6 +283,15 @@ input[type=date] { color-scheme: dark; }
 @media (max-width: 1180px) { .board-split { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1180px) { .today-rail { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); } }
 
+/* Employee Progress: employee list · detail · score. Collapses before it
+   overflows — three fixed tracks did not fit under ~1250px. */
+.progress-split {
+  display: grid; gap: 14px; align-items: start;
+  grid-template-columns: 300px minmax(0, 1.4fr) minmax(0, 1fr);
+}
+@media (max-width: 1330px) { .progress-split { grid-template-columns: 280px minmax(0, 1fr); } }
+@media (max-width: 900px)  { .progress-split { grid-template-columns: minmax(0, 1fr); } }
+
 /* The queue and the floor, side by side above the fold. */
 .floor-split { display: grid; gap: 12px; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: stretch; }
 @media (max-width: 1080px) { .floor-split { grid-template-columns: minmax(0, 1fr); } }

@@ -453,7 +453,22 @@ export default function Dashboard() {
       const res  = await fetch('/api/break/start', { method:'POST' })
       const data = await res.json()
       if (data.success) {
-        await loadBreakStatus()
+        // Enter the break from THIS response, not from a follow-up fetch.
+        //
+        // The overlay used to appear only once loadBreakStatus came back. When
+        // that second request failed the break was already written to the
+        // sheet, so the employee carried on working on a board the platform
+        // considered abandoned — and the admin saw them on a break. The state
+        // the server just confirmed is enough to show the overlay; the refresh
+        // below only fills in the day's history.
+        setBreakStatus(prev => ({
+          ...prev,
+          onBreak: true,
+          startTime: data.startTime || prev.startTime,
+          startDate: data.startDate || prev.startDate,
+          isAuto: !!data.isAuto,
+        }))
+        loadBreakStatus().catch(() => {})
       } else {
         alert(data.error || 'Could not start break. Please try again.')
       }
@@ -472,10 +487,16 @@ export default function Dashboard() {
       const data = await res.json()
       if (data.success || res.status === 404) {
         // 404 means the break was already closed — by ending the shift, or by
-        // a second tab. There is nothing left to resume from, so refresh and
-        // let the overlay clear instead of warning about a problem that
-        // has already resolved itself.
-        await loadBreakStatus()
+        // a second tab. There is nothing left to resume from, so clear the
+        // overlay instead of warning about a problem that has already
+        // resolved itself.
+        //
+        // Cleared from this response for the same reason the overlay is opened
+        // from its own: if the refresh failed, the break was closed in the
+        // sheet but the employee stayed trapped behind an overlay with no way
+        // back to their board.
+        setBreakStatus(prev => ({ ...prev, onBreak: false, startTime: null, startDate: null, isAuto: false }))
+        loadBreakStatus().catch(() => {})
       } else {
         alert(data.error || 'Could not resume — please try again.')
       }

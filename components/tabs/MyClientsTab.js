@@ -82,6 +82,13 @@ export default function MyClientsTab({
   const upcoming = hourState === 'upcoming' && !isNow
   const editable = canEdit && !upcoming
   const [selected, setSelected] = useState(null)
+  // Drafts are keyed by HOUR and client, not client alone.
+  //
+  // The rail can move the board between hours without remounting this
+  // component, and the same client appears in many hours of a shift. Keyed by
+  // name only, an unsaved edit typed against Zingbus at 3AM reappeared as
+  // Zingbus's record at 4AM — and saving it wrote those values to the 4AM
+  // slot. Silent, and wrong in the sheet.
   const [drafts, setDrafts]     = useState({})
   const [query, setQuery]       = useState('')
   const [filter, setFilter]     = useState('pending')
@@ -117,22 +124,30 @@ export default function MyClientsTab({
     setSelected(visible[0]?.client || realClients[0]?.client || null)
   }, [realClients, visible, selected])
 
-  const draftOf = useCallback((client) => drafts[client] || recordOf(filled, client), [drafts, filled])
+  const dkey = useCallback((client) => `${slot}|${client}`, [slot])
+
+  const draftOf = useCallback(
+    (client) => drafts[dkey(client)] || recordOf(filled, client),
+    [drafts, filled, dkey]
+  )
 
   const dirty = useMemo(() => {
-    if (!selected || !drafts[selected]) return false
+    if (!selected) return false
+    const d = drafts[`${slot}|${selected}`]
+    if (!d) return false
     const saved = recordOf(filled, selected)
-    return FIELDS.some(f => (drafts[selected][f] || '') !== (saved[f] || ''))
-  }, [drafts, filled, selected])
+    return FIELDS.some(f => (d[f] || '') !== (saved[f] || ''))
+  }, [drafts, filled, selected, slot])
 
   function setField(client, field, value) {
     setDrafts(prev => {
-      const base = prev[client] || recordOf(filled, client)
+      const k = `${slot}|${client}`
+      const base = prev[k] || recordOf(filled, client)
       const next = { ...base, [field]: value }
       // Fatigue count only exists while fatigue is Yes — leaving a stale
       // number behind would be written to the sheet on the next save.
       if (field === 'fatigue' && value === 'No') next.fatigueCount = ''
-      return { ...prev, [client]: next }
+      return { ...prev, [k]: next }
     })
   }
 
@@ -143,13 +158,13 @@ export default function MyClientsTab({
   // platform feeling slow, and of quota being spent on nothing.
   const doSave = useCallback(async (client, { advance = false } = {}) => {
     if (!client || !editable || savingNow) return
-    const rec = drafts[client]
+    const rec = drafts[`${slot}|${client}`]
     if (!rec) return
     setSavingNow(true)
     try {
       const ok = await saveClient(client, rec, slot)
       if (ok) {
-        setDrafts(prev => { const n = { ...prev }; delete n[client]; return n })
+        setDrafts(prev => { const n = { ...prev }; delete n[`${slot}|${client}`]; return n })
         setJustSaved(client)
         setTimeout(() => setJustSaved(s => (s === client ? null : s)), 1000)
         toast(`${client} saved`)
@@ -317,7 +332,7 @@ export default function MyClientsTab({
             ) : visible.map(c => {
               const done   = isDone(filled, c.client)
               const on     = c.client === sel
-              const edited = !!drafts[c.client]
+              const edited = !!drafts[`${slot}|${c.client}`]
               return (
                 <button
                   key={c.client}
