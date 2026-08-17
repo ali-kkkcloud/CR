@@ -5,8 +5,9 @@ import BreakOverlay from '../components/BreakOverlay'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C, parseSheetDate } from '../components/Widgets'
-import { AccountButton } from '../components/Shell'
+import { AccountButton, NotifyButton } from '../components/Shell'
 import { Card, Button, Pill, Tag, Field, Segmented, Banner, EmptyState, Modal, T, R, SP, SURF } from '../components/ui'
+import MyDayTab from '../components/tabs/MyDayTab'
 import HourRail from '../components/HourRail'
 import TodayRail from '../components/TodayRail'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
@@ -52,11 +53,13 @@ export default function Dashboard() {
   const [clientContext, setClientContext] = useState({})
   const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
   const [myDay, setMyDay] = useState(null)
+  // Lands on the Board — the work — rather than on charts. An operator
+  // clocking in wants their clients, not a trend line.
   const [activeTab, setActiveTab] = useState('board')
+  const [showMore, setShowMore]   = useState(false)
   // Which hour the board is showing. Follows the clock until the operator
   // picks another one from the rail, then stays where they put it.
   const [viewHour, setViewHour] = useState(null)
-  const [showStats, setShowStats] = useState(false)
   // { [hour]: { [client]: record } } — what has been saved into an earlier
   // hour this session, so the board reflects it before the next my-day poll.
   const [pastEdits, setPastEdits] = useState({})
@@ -179,7 +182,11 @@ export default function Dashboard() {
   }, [])
 
   const loadSummary = useCallback(async (range) => {
-    setSummaryLoading(true)
+    // Only announce loading when there is nothing on screen yet. This runs on
+    // the 30-second poll too, and flipping the flag every time collapsed the
+    // whole Dashboard into skeletons twice a minute — the charts, the
+    // calendar and the targets all blinked out and back for no reason.
+    if (!summaryRef.current) setSummaryLoading(true)
     try {
       const res  = await fetch(`/api/dashboard/summary?range=${range}`)
       const data = await res.json()
@@ -452,7 +459,22 @@ export default function Dashboard() {
       const res  = await fetch('/api/break/start', { method:'POST' })
       const data = await res.json()
       if (data.success) {
-        await loadBreakStatus()
+        // Enter the break from THIS response, not from a follow-up fetch.
+        //
+        // The overlay used to appear only once loadBreakStatus came back. When
+        // that second request failed the break was already written to the
+        // sheet, so the employee carried on working on a board the platform
+        // considered abandoned — and the admin saw them on a break. The state
+        // the server just confirmed is enough to show the overlay; the refresh
+        // below only fills in the day's history.
+        setBreakStatus(prev => ({
+          ...prev,
+          onBreak: true,
+          startTime: data.startTime || prev.startTime,
+          startDate: data.startDate || prev.startDate,
+          isAuto: !!data.isAuto,
+        }))
+        loadBreakStatus().catch(() => {})
       } else {
         alert(data.error || 'Could not start break. Please try again.')
       }
@@ -471,10 +493,16 @@ export default function Dashboard() {
       const data = await res.json()
       if (data.success || res.status === 404) {
         // 404 means the break was already closed — by ending the shift, or by
-        // a second tab. There is nothing left to resume from, so refresh and
-        // let the overlay clear instead of warning about a problem that
-        // has already resolved itself.
-        await loadBreakStatus()
+        // a second tab. There is nothing left to resume from, so clear the
+        // overlay instead of warning about a problem that has already
+        // resolved itself.
+        //
+        // Cleared from this response for the same reason the overlay is opened
+        // from its own: if the refresh failed, the break was closed in the
+        // sheet but the employee stayed trapped behind an overlay with no way
+        // back to their board.
+        setBreakStatus(prev => ({ ...prev, onBreak: false, startTime: null, startDate: null, isAuto: false }))
+        loadBreakStatus().catch(() => {})
       } else {
         alert(data.error || 'Could not resume — please try again.')
       }
@@ -692,7 +720,24 @@ export default function Dashboard() {
   const liveClients = clients.filter(c => !c.isCustom)
   const liveDone    = liveClients.filter(c => (filled[c.client]?.status || '').toString().trim()).length
 
-  const TITLES = { board:'Board', footage:'Footage Requests', followup:'Follow-ups' }
+  const TITLES = {
+    board:'Board', myday:'My Day', dashboard:'Dashboard',
+    footage:'Footage Requests', followup:'Follow-ups',
+    performance:'My Performance', notifications:'Notifications',
+    help:'Help & Support', settings:'Settings',
+  }
+
+  // Every destination the sidebar used to hold. The five that carry real work
+  // sit in the switch; the four that are still placeholders sit behind More,
+  // so nothing is unreachable and the bar stays readable.
+  const MAIN_TABS = [
+    { value:'board',     label:'Board',      count: realBoard.length },
+    { value:'myday',     label:'My Day' },
+    { value:'dashboard', label:'Dashboard' },
+    { value:'footage',   label:'Footage',    count: footage.pending.length },
+    { value:'followup',  label:'Follow-ups', count: footage.followups.length },
+  ]
+  const MORE_TABS = ['performance', 'notifications', 'help', 'settings']
 
   return (
     <>
@@ -700,18 +745,14 @@ export default function Dashboard() {
 
       <div style={{ minHeight:'100vh', background:C.bg }}>
 
-        {/* ══════════ COMMAND BAR ══════════
-            An operator has three destinations and one job. The nine-item
-            sidebar this replaces spent 246px of a working screen on eight
-            things they never open mid-shift — four of which weren't wired up
-            to anything. Identity, shift state and the shift controls are all
-            that has to be permanently on screen. */}
+        {/* ══════════ COMMAND BAR ══════════ */}
         <header style={{
           position:'sticky', top:0, zIndex:60,
           background:'rgba(0,0,0,0.86)', backdropFilter:'blur(12px)',
           borderBottom:`1px solid ${C.border}`,
         }}>
           <div style={{
+            maxWidth:'var(--content-max)', margin:'0 auto',
             display:'flex', alignItems:'center', gap:SP[4], flexWrap:'wrap',
             padding:`${SP[3]} ${SP[5]}`,
           }}>
@@ -738,6 +779,10 @@ export default function Dashboard() {
                 ? <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>In {startTime}</Pill>
                 : <Pill icon="clock" color={C.amber}>{shiftStatus === 'ended' ? 'Shift ended' : 'Not started'}</Pill>}
               <Pill icon="clock">{clock}</Pill>
+              <NotifyButton
+                count={footage.pending.length + footage.followups.length}
+                onClick={()=>setActiveTab('footage')}
+              />
 
               {isActive ? (
                 <>
@@ -759,120 +804,143 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Three destinations, as a switch rather than a column of nine. */}
-          <div style={{ padding:`0 ${SP[5]} ${SP[3]}` }}>
-            <Segmented
-              value={activeTab}
-              onChange={setActiveTab}
-              options={[
-                { value:'board',    label:'Board',      count: realBoard.length },
-                { value:'footage',  label:'Footage',    count: footage.pending.length },
-                { value:'followup', label:'Follow-ups', count: footage.followups.length },
-              ]}
-            />
+          <div style={{
+            maxWidth:'var(--content-max)', margin:'0 auto',
+            display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap',
+            padding:`0 ${SP[5]} ${SP[3]}`,
+          }}>
+            <Segmented value={activeTab} onChange={setActiveTab} options={MAIN_TABS} />
+
+            {/* The four modules that aren't wired to live data yet. Reachable,
+                without taking a slot from the five that are. */}
+            <div style={{ position:'relative' }}>
+              <Button
+                variant={MORE_TABS.includes(activeTab) ? 'primary' : 'subtle'}
+                size="sm"
+                iconRight="chevron-down"
+                onClick={()=>setShowMore(v => !v)}
+              >More</Button>
+              {showMore && (
+                <>
+                  <div onClick={()=>setShowMore(false)} style={{ position:'fixed', inset:0, zIndex:70 }} />
+                  <div className="fade-in" style={{
+                    position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:71,
+                    minWidth:'190px', background:SURF.raised,
+                    border:`1px solid ${C.border2}`, borderRadius:R.md,
+                    boxShadow:'0 14px 36px rgba(0,0,0,0.6)', overflow:'hidden',
+                  }}>
+                    {MORE_TABS.map(t => (
+                      <button
+                        key={t}
+                        onClick={()=>{ setActiveTab(t); setShowMore(false) }}
+                        className="row-hover"
+                        style={{
+                          display:'block', width:'100%', textAlign:'left',
+                          background: activeTab===t ? C.accentSoft : 'transparent',
+                          border:'none', borderBottom:`1px solid ${C.border}`,
+                          padding:'10px 14px',
+                          color: activeTab===t ? C.accent : C.text2,
+                          fontSize:T.base, fontWeight: activeTab===t ? 700 : 500,
+                        }}
+                      >{TITLES[t]}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </header>
 
         <main style={{ padding:`${SP[4]} ${SP[5]} ${SP[8]}` }}>
-          {!isActive && (
-            <div style={{ marginBottom:SP[3] }}>
-              <Banner
-                tone="warn" icon="clock"
-                action={shiftStatus === 'not_started'
-                  ? <Button size="sm" variant="primary" onClick={handleStartShiftClick} loading={startingShift}>Start shift</Button>
-                  : null}
-              >
-                {shiftStatus === 'ended'
-                  ? 'Your shift has ended for today — everything below is read-only.'
-                  : 'Your shift hasn’t started yet — you’re viewing today’s assignments in read-only mode.'}
-              </Banner>
-            </div>
-          )}
-
-          {activeTab === 'board' && (
-            <>
+          <div style={{ maxWidth:'var(--content-max)', margin:'0 auto', minWidth:0 }}>
+            {!isActive && (
               <div style={{ marginBottom:SP[3] }}>
-                <HourRail
-                  timeline={timeline}
-                  currentHour={currentHour}
-                  value={viewHour == null ? currentHour : viewHour}
-                  onChange={selectHour}
-                  liveCounts={{ total: liveClients.length, done: liveDone }}
-                />
+                <Banner
+                  tone="warn" icon="clock"
+                  action={shiftStatus === 'not_started'
+                    ? <Button size="sm" variant="primary" onClick={handleStartShiftClick} loading={startingShift}>Start shift</Button>
+                    : null}
+                >
+                  {shiftStatus === 'ended'
+                    ? 'Your shift has ended for today — everything below is read-only.'
+                    : 'Your shift hasn’t started yet — you’re viewing today’s assignments in read-only mode.'}
+                </Banner>
               </div>
+            )}
 
-              <div className="board-split">
-                <div style={{ minWidth:0 }}>
-                  <MyClientsTab
-                    clients={boardClients}
-                    filled={mergedFilled}
-                    saveClient={saveClient}
+            {/* ── Board: the hour in front of you ── */}
+            {activeTab === 'board' && (
+              <>
+                <div style={{ marginBottom:SP[3] }}>
+                  <HourRail
+                    timeline={timeline}
                     currentHour={currentHour}
-                    hour={shownHour}
-                    hourState={viewEntry?.state || (isNowHour ? 'current' : 'done')}
-                    canEdit={isActive}
-                    {...(isNowHour ? clientContext : {})}
+                    value={shownHour}
+                    onChange={selectHour}
+                    liveCounts={{ total: liveClients.length, done: liveDone }}
                   />
                 </div>
-                <TodayRail
-                  summary={summary} myDay={myDay} breakStatus={breakStatus} footage={footage}
-                  currentHour={currentHour}
-                  hourDone={liveDone} hourTotal={liveClients.length}
-                  onGoToTab={setActiveTab}
-                  onOpenStats={()=>setShowStats(true)}
-                  isActive={isActive}
-                />
-              </div>
-            </>
-          )}
 
-          {activeTab === 'footage'  && <EmpFootageTab footage={footage} />}
-          {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
-        </main>
-      </div>
+                <div className="board-split">
+                  <div style={{ minWidth:0 }}>
+                    <MyClientsTab
+                      clients={boardClients}
+                      filled={mergedFilled}
+                      saveClient={saveClient}
+                      currentHour={currentHour}
+                      hour={shownHour}
+                      hourState={viewEntry?.state || (isNowHour ? 'current' : 'done')}
+                      canEdit={isActive}
+                      {...(isNowHour ? clientContext : {})}
+                    />
+                  </div>
+                  <TodayRail
+                    summary={summary} myDay={myDay} breakStatus={breakStatus} footage={footage}
+                    currentHour={currentHour}
+                    hourDone={liveDone} hourTotal={liveClients.length}
+                    onGoToTab={setActiveTab}
+                    onOpenStats={()=>setActiveTab('dashboard')}
+                    isActive={isActive}
+                  />
+                </div>
+              </>
+            )}
 
-      {/* My stats — read occasionally, so it opens over the work rather than
-          replacing it with a destination of its own. */}
-      {showStats && (
-        <div
-          onClick={()=>setShowStats(false)}
-          style={{
-            position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', backdropFilter:'blur(3px)',
-            zIndex:1000, display:'flex', justifyContent:'flex-end',
-          }}
-        >
-          <div
-            onClick={e=>e.stopPropagation()}
-            className="fade-in"
-            style={{
-              width:'min(1080px, 94vw)', height:'100%', overflowY:'auto',
-              background:C.bg, borderLeft:`1px solid ${C.border2}`,
-              boxShadow:'-18px 0 50px rgba(0,0,0,0.6)',
-            }}
-          >
-            <div style={{
-              position:'sticky', top:0, zIndex:2,
-              display:'flex', alignItems:'center', justifyContent:'space-between', gap:SP[3],
-              padding:`${SP[4]} ${SP[5]}`,
-              background:'rgba(0,0,0,0.9)', backdropFilter:'blur(10px)',
-              borderBottom:`1px solid ${C.border}`,
-            }}>
-              <div>
-                <div style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px' }}>My stats</div>
-                <div style={{ color:C.muted, fontSize:T.base, marginTop:'2px' }}>How your work is trending</div>
-              </div>
-              <Button variant="subtle" onClick={()=>setShowStats(false)}>Close</Button>
-            </div>
-            <div style={{ padding:`${SP[4]} ${SP[5]} ${SP[8]}` }}>
+            {/* ── My Day: the whole shift, and everything that used to live here ── */}
+            {activeTab === 'myday' && (
+              <MyDayTab
+                currentHour={currentHour} currentClients={clients} filled={filled} myDay={myDay}
+                saveUpdate={saveUpdate} saving={saving}
+                footagePending={footage.pending.length} followupsPending={footage.followups.length}
+                onGoToTab={setActiveTab} canEdit={isActive}
+              />
+            )}
+
+            {activeTab === 'dashboard' && (
               <EmpDashboardTab
                 summary={summary} range={summaryRange} setRange={setSummaryRange}
-                loading={summaryLoading} onGoToTab={(t)=>{ setShowStats(false); setActiveTab(t) }}
-                breakStatus={breakStatus}
+                loading={summaryLoading} onGoToTab={setActiveTab} breakStatus={breakStatus}
               />
-            </div>
+            )}
+
+            {activeTab === 'footage'  && <EmpFootageTab footage={footage} />}
+            {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
+
+            {MORE_TABS.includes(activeTab) && (
+              <Card pad={false} style={{ maxWidth:'520px', margin:'40px auto' }}>
+                <EmptyState
+                  icon={activeTab==='performance'?'analytics':activeTab==='notifications'?'alerts':activeTab==='help'?'sparkles':'settings'}
+                  title={`${TITLES[activeTab]} — coming soon`}
+                  detail="This module isn't wired up to live data yet."
+                  action={activeTab==='performance'
+                    ? <Button variant="primary" onClick={()=>setActiveTab('dashboard')}>See my dashboard instead</Button>
+                    : null}
+                />
+              </Card>
+            )}
           </div>
-        </div>
-      )}
+        </main>
+      </div>
 
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
 

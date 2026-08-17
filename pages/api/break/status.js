@@ -41,7 +41,19 @@ export default async function handler(req, res) {
     const mine = rows.slice(1).filter(r =>
       (r[0] || '').toString().trim() === user.empId.toString().trim()
     )
-    const myToday = mine.filter(r => r[2] === today)
+    // One break, one line. Two writers landing together can leave an
+    // identical pair behind, and listing both showed the same break twice and
+    // added its minutes to the day's total twice — a 42-minute break reading
+    // as "Total 1h 24m". The sweep now closes duplicates, but the reader
+    // should never be able to double-count one either.
+    const seenBreak = new Set()
+    const myToday = mine.filter(r => {
+      if (r[2] !== today) return false
+      const key = `${r[2]}|${r[3]}`
+      if (seenBreak.has(key)) return false
+      seenBreak.add(key)
+      return true
+    })
 
     // An open break is looked for across both days. One started just before
     // midnight still belongs to the shift in progress, and searching only

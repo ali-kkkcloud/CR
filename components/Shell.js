@@ -122,19 +122,26 @@ export function TopBar({ title, sub, right }) {
   return (
     <header style={{
       position:'sticky', top:0, zIndex:50,
-      display:'flex', alignItems:'center', justifyContent:'space-between',
-      gap:SP[4], flexWrap:'wrap',
       padding:`${SP[4]} ${SP[6]}`,
       background:'rgba(0,0,0,0.82)', backdropFilter:'blur(12px)',
       borderBottom:`1px solid ${C.border}`,
     }}>
-      <div style={{ minWidth:0 }}>
-        <h1 style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px', lineHeight:1.25 }}>
-          {title}
-        </h1>
-        {sub && <div style={{ color:C.muted, fontSize:T.base, marginTop:'2px' }} className="ellip">{sub}</div>}
+      {/* The same column the page body uses. Without it the title sat against
+          the left edge and the controls against the right, with a metre of
+          nothing between them on a wide monitor. */}
+      <div style={{
+        maxWidth:'var(--content-max)', margin:'0 auto',
+        display:'flex', alignItems:'center', justifyContent:'space-between',
+        gap:SP[4], flexWrap:'wrap',
+      }}>
+        <div style={{ minWidth:0 }}>
+          <h1 style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px', lineHeight:1.25 }}>
+            {title}
+          </h1>
+          {sub && <div style={{ color:C.muted, fontSize:T.base, marginTop:'2px' }} className="ellip">{sub}</div>}
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap' }}>{right}</div>
       </div>
-      <div style={{ display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap' }}>{right}</div>
     </header>
   )
 }
@@ -202,8 +209,10 @@ export function NotifyButton({ count = 0, onClick, title = 'Notifications' }) {
 // ══════════════════════════════════════════════════════════════════════
 export function PageBody({ children, style }) {
   return (
-    <main style={{ padding:`${SP[5]} ${SP[6]} ${SP[8]}`, minWidth:0, ...style }}>
-      {children}
+    <main style={{ padding:`${SP[5]} ${SP[6]} ${SP[8]}`, minWidth:0 }}>
+      <div style={{ maxWidth:'var(--content-max)', margin:'0 auto', minWidth:0, ...style }}>
+        {children}
+      </div>
     </main>
   )
 }

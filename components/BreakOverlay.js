@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import Icon from './Icons'
 import { C } from './Widgets'
-import { Card, Button, Tag, T, SP } from './ui'
+import { Card, Button, Tag, T, SP, elapsedSecondsIST } from './ui'
 
 function fmtMinutes(mins) {
   const h = Math.floor(mins/60), m = mins%60
@@ -11,48 +11,13 @@ function fmtMinutes(mins) {
 export default function BreakOverlay({ startTime, startDate, history, totalMinutesToday, onResume, resuming, isAuto, idleMinutes }) {
   const [elapsed, setElapsed] = useState(0)
 
+  // Measured in IST on both ends. The old version built the start time with
+  // the browser's own setHours and compared it against the browser's clock —
+  // correct only on a machine already set to IST, and out by the whole offset
+  // on any other, which turned a nineteen-minute break into nineteen hours.
   useEffect(() => {
     if (!startTime) return
-    function parseToToday(timeStr) {
-      const t = (timeStr || '').toString().trim()
-      let m = t.match(/(\d+):(\d+):(\d+)\s*(am|pm)/i)
-      if (m) {
-        let [, h, mi, se, ampm] = m
-        h = parseInt(h); mi = parseInt(mi); se = parseInt(se)
-        if (ampm.toLowerCase() === 'pm' && h !== 12) h += 12
-        if (ampm.toLowerCase() === 'am' && h === 12) h = 0
-        const d = new Date(); d.setHours(h, mi, se, 0); return d
-      }
-      m = t.match(/^(\d{1,2}):(\d{2}):(\d{2})$/)
-      if (m) {
-        const [, h, mi, se] = m
-        const d = new Date(); d.setHours(parseInt(h), parseInt(mi), parseInt(se), 0); return d
-      }
-      return null
-    }
-    // The day the break began, "DD/MM/YYYY", which for one started before
-    // midnight is yesterday. Without it the time-of-day alone would be read
-    // as today and the counter would sit at zero.
-    function dayOffset() {
-      const m = (startDate || '').toString().match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-      if (!m) return null
-      const [, dd, mm, yy] = m
-      const then = new Date(parseInt(yy), parseInt(mm)-1, parseInt(dd))
-      const today = new Date(); today.setHours(0,0,0,0)
-      return Math.round((today - then) / 86400000)
-    }
-    function tick() {
-      const start = parseToToday(startTime)
-      if (!start) return
-      let startMs = start.getTime()
-      const days = dayOffset()
-      if (days != null && days > 0) startMs -= days * 86400000
-      // No date to go on: a start that lands in the future can only be one
-      // from before midnight, so pull it back a day rather than show zero.
-      else if (days == null && startMs > Date.now()) startMs -= 86400000
-      const diff = Math.max(0, Math.floor((Date.now()-startMs)/1000))
-      setElapsed(diff)
-    }
+    const tick = () => setElapsed(elapsedSecondsIST(startDate, startTime))
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
