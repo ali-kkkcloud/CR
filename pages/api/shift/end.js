@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, appendRow, appendRows, updateRowCells,
-  CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
+  CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
   getAwayOnBreakNames, findOpenShiftRow
 } from '../../../lib/sheets'
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     // to be looked for across both days — matching on today alone meant
     // ending such a shift silently failed to close it out, leaving the
     // employee "Active" forever.
-    const yesterday = ddmmyyyyFromDate(new Date(nowTime.getTime() - 24*3600000))
+    const yesterday = yesterdayStr()
     const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 5000)
     const open = findOpenShiftRow(shiftRows, user.empId, [today, yesterday])
     const shiftRowIndex = open ? open.rowNumber : -1

@@ -1,6 +1,6 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
-import { appendRow, readSheet, readSheetCached, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
+import { appendRow, readSheet, readSheetCached, updateRowCells, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
 import { getEmployeeShift, computeShiftWindow } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
     // Already clocked in? Checked across yesterday too, so a night shift
     // running past midnight isn't handed a second, duplicate shift row
     // when the calendar date rolls over.
-    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+    const yesterday = yesterdayStr()
     const open = findOpenShiftRow(rows, user.empId, [today, yesterday])
     if (open) {
       return res.status(200).json({ success: true, alreadyStarted: true, startTime: open.row[3], shiftDate: open.date })

@@ -1,12 +1,14 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
-  getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
+  getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, yesterdayStr,
+  hourHasPassed, whoWasOnShiftAtHour,
   getAwayOnBreakNames, fetchClientVehicleCounts,
 } from '../../../lib/sheets'
-import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour } from '../../../lib/schedule'
+import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
+import { sweepShiftAutoClose } from '../../../lib/attendance'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -22,6 +24,12 @@ export default async function handler(req, res) {
 
     const today       = todayStr()
     const currentHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours()
+
+    // Close shifts left running past their window, before anything is read —
+    // so this very response shows the floor as it now is rather than as it was
+    // a refresh ago. Idempotent; a row already Ended is skipped.
+    try { await sweepShiftAutoClose(employees()) }
+    catch (e) { console.error('shift auto-close sweep failed:', e.message) }
 
     const [credRows, shiftRows, breakRows, updateRows, redistRows, footageRows, overridesMap] = await Promise.all([
       readSheetCached(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`, 60000),
@@ -61,21 +69,18 @@ export default async function handler(req, res) {
       workByEmp[owner].assigned += 1
     })
 
-    // Hours with work scheduled and nobody rostered to do it.
+    // Every hour of the day, audited against the schedule itself: is each
+    // client due this hour actually on somebody's board?
     //
-    // A client's hours come from Client_Timings and the roster comes from
-    // Employee_Hours, and nothing has ever checked that the two line up. Today
-    // 145 clients fall at seven in the evening and no shift covers that hour,
-    // so those slots cannot be assigned to anybody — they were absent from
-    // every board and from this screen too, which is indistinguishable from the
-    // platform having lost them.
+    // The one thing this platform must never do is lose a client, and a client
+    // that reaches nobody is invisible by definition — it is on no board, so no
+    // employee can miss it, and nothing would ever report it. This measures the
+    // split against Client_Timings directly and names anything unplaced.
     let coverageGaps = []
 
     // A night shift is logged under the day it began, so both days count as
     // "clocked in right now".
-    const istNowTop = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-    const yTop = new Date(istNowTop.getTime() - 24 * 3600000)
-    const yesterdayTop = `${String(yTop.getDate()).padStart(2,'0')}/${String(yTop.getMonth()+1).padStart(2,'0')}/${yTop.getFullYear()}`
+    const yesterdayTop = yesterdayStr()
     // The same definition of "on shift" the employee's own screen uses: an
     // Active row, and not one left open so long that it is plainly forgotten.
     // The admin used to read the raw row instead, so somebody whose own
@@ -88,11 +93,76 @@ export default async function handler(req, res) {
     // works it out — same pool, same locks, same vehicle-count balancing.
     try {
       const leaveMap   = await getLeaveMapForDate(today)
+      const vehicleMapForAudit = await fetchClientVehicleCounts()
+      // Which clients already reached somebody's board, hour by hour. A row in
+      // CRM_Updates is written the moment a client lands in front of an
+      // employee, so for an hour that has finished this trail IS the record of
+      // who had what — and it is the only honest one. Recomputing a finished
+      // hour from who happens to be on shift now reported the entire day as
+      // unassigned the moment the last person went home, which is both alarming
+      // and false: those hours were worked.
+      const seenByHour = {}
+      updateRows.slice(1).filter(r => r[0] === today).forEach(r => {
+        const h = parseInt(r[4])
+        if (!Number.isFinite(h)) return
+        if (!seenByHour[h]) seenByHour[h] = new Set()
+        seenByHour[h].add(r[3])
+      })
+
+      const nowHour = currentHour
       for (let h = 0; h < 24; h++) {
-        const due = Object.entries(clientTimings()).filter(([, hs]) => hs.includes(h)).length
-        if (due === 0) continue
-        if (getScheduledEmployeesAtHour(h, leaveMap, overridesMap).length === 0) {
-          coverageGaps.push({ hour: h, clients: due })
+        const due = Object.entries(clientTimings()).filter(([, hs]) => hs.includes(h)).map(([n]) => n)
+        if (due.length === 0) continue
+
+        let unassigned, reason
+        if (hourHasPassed(h, nowHour)) {
+          // Finished. Judged on who was ACTUALLY at work during that hour, read
+          // back from the attendance log's own start and end times — not on who
+          // is clocked in now, which by the evening is nobody and would report a
+          // fully worked day as belonging to no one.
+          //
+          // A client counts as having reached somebody if it was placed by the
+          // split for that hour, or if a row was written for it. The second is
+          // what covers an hour whose staffing has since been edited.
+          const wereHere = whoWasOnShiftAtHour(shiftRows, today, h, nowHour)
+          const rostered = getScheduledEmployeesAtHour(h, leaveMap, overridesMap).map(e => e.name)
+          const pool = rostered.filter(n => wereHere.has(n))
+          const seen = seenByHour[h] || new Set()
+          if (pool.length === 0) {
+            unassigned = due.filter(c => !seen.has(c))
+            reason = 'no-staff'
+          } else {
+            const audit = auditHourAssignment(
+              h, pool, vehicleMapForAudit,
+              buildLockedAssignments(updateRows, today, h), true
+            )
+            unassigned = audit.unassigned.filter(c => !seen.has(c))
+            reason = audit.reason
+          }
+        } else {
+          const { poolNames } = buildHourPool({
+            hour: h, leaveMap, overridesMap,
+            onShiftNames: onShiftNamesTop,
+            clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterdayTop]),
+            awayNames: awayNamesTop,
+          })
+          const audit = auditHourAssignment(
+            h, poolNames, vehicleMapForAudit,
+            buildLockedAssignments(updateRows, today, h), true
+          )
+          unassigned = audit.unassigned
+          reason = audit.reason
+        }
+
+        if (unassigned.length > 0) {
+          coverageGaps.push({
+            hour: h,
+            clients: unassigned.length,
+            due: due.length,
+            reason,
+            past: hourHasPassed(h, nowHour),
+            sample: unassigned.slice(0, 6),
+          })
         }
       }
       const vehicleMap = await fetchClientVehicleCounts()

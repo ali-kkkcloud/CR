@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
-import Sidebar from '../components/Sidebar'
+import Sidebar, { TAB_SECTION } from '../components/Sidebar'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C, Donut, parseSheetDate } from '../components/Widgets'
 import { TopBar, PageBody, AccountButton, NotifyButton } from '../components/Shell'
 import {
-  Card, CardHead, Button, Pill, Tag, Field, Stat, Meter,
+  Card, CardHead, Button, Pill, Tag, Field, Stat, Meter, Segmented,
   EmptyState, Modal, Table, T, R, SP, SURF, fmtRange,
 } from '../components/ui'
 import FullDayTab from '../components/tabs/FullDayTab'
@@ -23,24 +23,58 @@ function fmtHourShort(h) {
   return `${to12}${h >= 12 ? 'pm' : 'am'}`
 }
 
+// The operating day, not the calendar one: it turns over at 07:00 IST, so at
+// three in the morning the day still in progress is the previous date. Every
+// date the server writes follows the same rule, and a date picker that
+// disagreed with it would ask for a day the sheet has nothing under.
+//
+// toISOString is deliberately not used — it converts to UTC, which shifts the
+// date backwards for any IST time before 05:30 and produced the wrong day for
+// exactly the early hours this rule exists for.
 function todayISO() {
   const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-  return d.toISOString().split('T')[0]
+  if (d.getHours() < 7) d.setDate(d.getDate() - 1)
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
 const TAB_META = {
-  overview:       { title: 'Overview',            sub: 'What the whole floor is doing, right now' },
-  fullday:        { title: 'Full Day View',       sub: 'Hour by hour, for every employee' },
-  breaks:         { title: 'Breaks',               sub: 'Who is away, for how long, and how often' },
-  progress:       { title: 'Employee Progress',   sub: 'Attendance and output across a date range' },
-  footage:        { title: 'Footage Requests',    sub: 'Pending and completed footage requests' },
-  followups:      { title: 'Follow-ups',          sub: 'Open follow-ups awaiting resolution' },
-  redistribution: { title: 'Redistribution Log',  sub: "Today's workload moves between employees" },
-  leaves:         { title: 'Leaves',              sub: 'Leave calendar — coming soon' },
-  reports:        { title: 'Reports',             sub: 'Scheduled and downloadable reports — coming soon' },
-  analytics:      { title: 'Analytics',           sub: 'Deeper trends across your fleet — coming soon' },
-  alerts:         { title: 'Alerts',              sub: 'All system and AI alerts in one place — coming soon' },
-  settings:       { title: 'Settings',            sub: 'Workspace and account preferences — coming soon' },
+  overview:       { title: 'Live floor',          sub: 'What the whole floor is doing, right now' },
+  fullday:        { title: 'The day',             sub: 'Hour by hour, for every employee' },
+  redistribution: { title: 'The day',             sub: "Where today's work moved, and why" },
+  footage:        { title: 'Requests',            sub: 'Footage requests raised by the floor' },
+  followups:      { title: 'Requests',            sub: 'Requests handed on at the end of a shift' },
+  progress:       { title: 'People',              sub: 'Attendance and output across a date range' },
+  breaks:         { title: 'People',              sub: 'Who is away, for how long, and how often' },
+  leaves:         { title: 'People',              sub: 'Leave calendar — coming soon' },
+  reports:        { title: 'More',                sub: 'Scheduled and downloadable reports — coming soon' },
+  analytics:      { title: 'More',                sub: 'Deeper trends across your fleet — coming soon' },
+  alerts:         { title: 'More',                sub: 'All system and AI alerts in one place — coming soon' },
+  settings:       { title: 'More',                sub: 'Workspace and account preferences — coming soon' },
+}
+
+// The switch at the top of a section. One row of plain choices beats five more
+// items in the sidebar, and it puts the sibling screens where you can see they
+// exist at all.
+const SECTION_TABS = {
+  day: [
+    { value:'fullday',        label:'Hour by hour' },
+    { value:'redistribution', label:'Work moved' },
+  ],
+  requests: [
+    { value:'footage',   label:'Footage' },
+    { value:'followups', label:'Follow-ups' },
+  ],
+  people: [
+    { value:'progress', label:'Attendance & output' },
+    { value:'breaks',   label:'Breaks' },
+    { value:'leaves',   label:'Leaves' },
+  ],
+  more: [
+    { value:'reports',   label:'Reports' },
+    { value:'analytics', label:'Analytics' },
+    { value:'alerts',    label:'Alerts' },
+    { value:'settings',  label:'Settings' },
+  ],
 }
 
 export default function Admin() {
@@ -77,6 +111,7 @@ export default function Admin() {
   const [clock, setClock] = useState('')
   // { title, rows } — roster drill-down opened from an Overview KPI card
   const [rosterModal, setRosterModal] = useState(null)
+  const [gapModal, setGapModal] = useState(null)
 
   useEffect(() => {
     function tick() {
@@ -429,9 +464,9 @@ export default function Admin() {
   // that only ever pointed at one of them.
   const aiAlerts = []
   if (coverageGaps.length>0) aiAlerts.push({
-    sev:'high', icon:'alerts', title:'Hours with nobody rostered',
-    desc:`${gapClients} client slot${gapClients===1?'':'s'} fall in ${coverageGaps.length} hour${coverageGaps.length===1?'':'s'} no shift covers (${coverageGaps.map(g=>fmtHourShort(g.hour)).join(', ')}) — nobody can be given them`,
-    tab:'fullday',
+    sev:'high', icon:'alerts', title:'Clients nobody can be given',
+    desc:`${gapClients} client slot${gapClients===1?'':'s'} across ${coverageGaps.length} hour${coverageGaps.length===1?'':'s'} (${coverageGaps.map(g=>fmtHourShort(g.hour)).join(', ')}) — no one is rostered, so they are on nobody's board`,
+    tab:'unassigned',
   })
   if (kpis.notStarted>0) aiAlerts.push({ sev:'high', icon:'offline', title:'Not started', desc:`${kpis.notStarted} employee${kpis.notStarted===1?' has':'s have'} not clocked in yet`, tab:'fullday' })
   if (staleShiftEmployees.length>0) aiAlerts.push({
@@ -491,7 +526,11 @@ export default function Admin() {
         <Sidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          counts={{ footage: footage.pending.length, followups: footage.followups.length, redistribution: redistribution.length, breaks: breaks?.onBreakNow }}
+          counts={{
+            requests: footage.pending.length + footage.followups.length,
+            people:   breaks?.onBreakNow || 0,
+            live:     aiAlerts.filter(a => a.sev === 'high').length,
+          }}
           employeesMonitored={kpis.total}
         />
 
@@ -511,6 +550,25 @@ export default function Admin() {
           />
 
           <PageBody>
+
+          {/* The section's own screens, as one row of choices. Sections with a
+              single screen show nothing here. */}
+          {(SECTION_TABS[TAB_SECTION[activeTab]] || []).length > 1 && (
+            <div style={{ marginBottom:SP[4] }}>
+              <Segmented
+                value={activeTab}
+                onChange={setActiveTab}
+                options={(SECTION_TABS[TAB_SECTION[activeTab]] || []).map(t => ({
+                  ...t,
+                  count: t.value === 'footage'   ? footage.pending.length
+                       : t.value === 'followups' ? footage.followups.length
+                       : t.value === 'breaks'    ? (breaks?.onBreakNow || 0)
+                       : t.value === 'redistribution' ? redistribution.length
+                       : undefined,
+                }))}
+              />
+            </div>
+          )}
 
           {/* ══════════ OVERVIEW ══════════ */}
           {activeTab === 'overview' && (
@@ -538,6 +596,47 @@ export default function Admin() {
                   <Button size="sm" variant="primary" iconRight="arrow-right" onClick={()=>setActiveTab('fullday')}>Full day</Button>
                 </div>
               </div>
+
+              {/* ── Clients nobody can be given ──
+                  The one failure this platform must never hide. A client that
+                  reaches no board cannot be missed by an employee, so without
+                  this panel nothing anywhere would ever mention it. Sits above
+                  everything else because it is the only problem on this screen
+                  that no amount of chasing people will fix — it needs the
+                  roster or the client's hours changed in the sheet. */}
+              {coverageGaps.length > 0 && (
+                <Card
+                  pad={false}
+                  style={{ borderColor:C.red+'55', background:'#FF4D4D0a', marginBottom:SP[3] }}
+                >
+                  <div style={{ display:'flex', alignItems:'center', gap:SP[3], padding:`${SP[4]} ${SP[4]} ${SP[3]}`, flexWrap:'wrap' }}>
+                    <Icon name="alerts" size={18} color={C.red} />
+                    <div style={{ flex:1, minWidth:'220px' }}>
+                      <div style={{ color:C.red, fontSize:T.md, fontWeight:800 }}>
+                        {gapClients} client slot{gapClients===1?'':'s'} are on nobody's board
+                      </div>
+                      <div style={{ color:C.muted, fontSize:T.sm, marginTop:'3px' }}>
+                        Scheduled in {coverageGaps.length} hour{coverageGaps.length===1?'':'s'} with nobody rostered to take them.
+                        Fix the roster or the client's hours in the sheet and they appear immediately.
+                      </div>
+                    </div>
+                    <Button size="sm" variant="danger" onClick={()=>setGapModal(coverageGaps)}>See which</Button>
+                  </div>
+                  <div style={{
+                    display:'flex', gap:SP[2], flexWrap:'wrap',
+                    padding:`0 ${SP[4]} ${SP[4]}`,
+                  }}>
+                    {coverageGaps.map(g => (
+                      <span key={g.hour} style={{
+                        background:'#FF4D4D14', border:`1px solid ${C.red}33`, borderRadius:R.md,
+                        padding:'6px 11px', color:C.text2, fontSize:T.sm, fontWeight:600,
+                      }}>
+                        {fmtHourShort(g.hour)} · <span style={{ color:C.red }}>{g.clients}</span>
+                      </span>
+                    ))}
+                  </div>
+                </Card>
+              )}
 
               {/* ── Needs you, and the floor ── */}
               <div className="floor-split" style={{ marginBottom:SP[5] }}>
@@ -877,6 +976,42 @@ export default function Admin() {
         <Field label="Reason for closing">
           <input placeholder="e.g. Footage not available, already resolved" value={closeReason} onChange={e=>setCloseReason(e.target.value)} />
         </Field>
+      </Modal>
+
+      {/* ══════════ UNASSIGNED CLIENTS ══════════ */}
+      <Modal
+        open={!!gapModal}
+        onClose={()=>setGapModal(null)}
+        width={520}
+        icon="alerts" iconColor={C.red}
+        title="Clients nobody can be given"
+        sub="These hours have clients scheduled and no employee rostered to take them, so the work reaches no board at all."
+        footer={<Button variant="ghost" full onClick={()=>setGapModal(null)}>Close</Button>}
+      >
+        {gapModal && (
+          <div style={{ maxHeight:'54vh', overflowY:'auto' }}>
+            {gapModal.map(g => (
+              <div key={g.hour} style={{ padding:'11px 0', borderBottom:`1px solid ${C.border}` }}>
+                <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:SP[2] }}>
+                  <span style={{ color:C.text, fontSize:T.md, fontWeight:700 }}>{fmtHourShort(g.hour)}</span>
+                  <span style={{ color:C.red, fontSize:T.base, fontWeight:700 }}>
+                    {g.clients} of {g.due} unassigned
+                  </span>
+                </div>
+                <div style={{ color:C.muted, fontSize:T.sm, marginTop:'4px', lineHeight:1.6 }}>
+                  {g.reason === 'no-staff'
+                    ? 'Nobody is rostered for this hour, or everybody who is has been marked on leave.'
+                    : 'Everybody available this hour is set to another duty in Employee_Hours.'}
+                </div>
+                {g.sample?.length > 0 && (
+                  <div style={{ color:C.text2, fontSize:T.xs, marginTop:'6px', lineHeight:1.7 }}>
+                    {g.sample.join(' · ')}{g.clients > g.sample.length ? ` … +${g.clients - g.sample.length} more` : ''}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </Modal>
 
       {/* ══════════ ROSTER DRILL-DOWN ══════════ */}

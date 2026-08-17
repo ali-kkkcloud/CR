@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, appendRow, updateRowCells, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST } from '../../../lib/sheets'
+import { readSheetCached, appendRow, updateRowCells, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST } from '../../../lib/sheets'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -12,7 +12,7 @@ export default async function handler(req, res) {
   try {
     const { client, slot, status, misalignVehicles, alertCount, fatigue, fatigueCount, notes } = req.body
     const today = todayStr(), now = nowStr(), hour = nowIST().getHours()
-    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+    const yesterday = yesterdayStr()
 
     // Every row this employee's shift produces is stamped with the date the
     // shift STARTED (see /api/clients/current), so a night shift's

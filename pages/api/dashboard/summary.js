@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, getShiftOverridesForDate,
-  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
+  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, yesterdayStr,
 } from '../../../lib/sheets'
 import { employees, distributeClientsForHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -65,8 +65,7 @@ export default async function handler(req, res) {
     // yesterday evening and is still running past midnight, everything
     // (attendance, today's targets, the active override) must stay
     // attached to the date the shift STARTED, not the new calendar date.
-    const yesterdayDate = new Date(nowISTDate().getTime() - 24*3600000)
-    const yesterday = ddmmyyyy(yesterdayDate)
+    const yesterday = yesterdayStr()
     const shiftLogPeek = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
     const myToday     = shiftLogPeek.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===calendarToday)
     const myYesterday = shiftLogPeek.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===yesterday)

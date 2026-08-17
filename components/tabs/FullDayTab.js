@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import Icon from '../Icons'
 import { C, MiniStat, ScoreBadge } from '../Widgets'
-import { Card, Button, SearchInput, Tag, T, R, SP, SURF } from '../ui'
+import { Card, Button, SearchInput, Tag, T, R, SP, SURF, istDayISO } from '../ui'
 
 function hourLabel(h) {
   const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
@@ -245,7 +245,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
               onClick={()=>{ const d=new Date(date); d.setDate(d.getDate()+1); setDate(d.toISOString().split('T')[0]) }}>›</Button>
           </div>
           <Button size="sm" variant="subtle" onClick={()=>setDate(todayISO())}>Today</Button>
-          <Button size="sm" variant="subtle" onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-1); setDate(d.toISOString().split('T')[0]) }}>Yesterday</Button>
+          <Button size="sm" variant="subtle" onClick={()=>setDate(istDayISO(-1))}>Yesterday</Button>
 
           <div style={{ flex:1, minWidth:'180px' }}>
             <SearchInput value={search} onChange={setSearch} placeholder="Search employee or client…" />
