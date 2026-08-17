@@ -267,7 +267,7 @@ export default function MyDayTab({ currentHour, currentClients, filled, myDay, s
         <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px', padding:'16px' }}>
           <div className="eyebrow" style={{ marginBottom:'10px' }}>Recent activity</div>
           {recentUpdates.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No updates yet today.</div> : (
-            <div style={{ display:'flex', flexDirection:'column', gap:'8px', maxHeight:'150px', overflowY:'auto' }}>
+            <div className="scroll-fade" style={{ display:'flex', flexDirection:'column', gap:'8px', maxHeight:'150px', overflowY:'auto' }}>
               {recentUpdates.map((e,i) => (
                 <div key={i} style={{ display:'flex', justifyContent:'space-between' }}>
                   <span style={{ color:C.text2, fontSize:'10.5px' }}>{e.label} — {e.client}</span>

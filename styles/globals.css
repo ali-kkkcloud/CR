@@ -246,6 +246,14 @@ input[type=date] { color-scheme: dark; }
 .lift { transition: border-color var(--fast), background var(--fast); }
 .lift:hover { border-color: #2e2e2e; }
 
+/* A scrolling list whose last row is cut in half by the container edge reads
+   as broken rather than as "there is more". Fades the boundary instead. */
+.scroll-fade {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent 100%);
+  padding-bottom: 6px;
+}
+
 /* Truncate to one line — used in every list where a client name can be long. */
 .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 

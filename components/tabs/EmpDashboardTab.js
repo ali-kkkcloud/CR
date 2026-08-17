@@ -16,9 +16,10 @@ const CAL_LABELS = {
 }
 
 export default function EmpDashboardTab({ summary, range, setRange, loading, onGoToTab, breakStatus }) {
-  // Skeletons that hold the real layout, rather than a lone spinner that
-  // makes the whole page jump when the data lands.
-  if (loading || !summary) return (
+  // Skeletons only while there is genuinely nothing to show. A refresh that
+  // arrives behind data must never take the data away — see the note on
+  // loadSummary in pages/dashboard.js.
+  if (!summary || (loading && !summary.trend)) return (
     <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(230px, 1fr))', gap:SP[3] }}>
       {[0,1,2,3].map(i => <SkeletonCard key={i} lines={3} />)}
     </div>
@@ -90,17 +91,17 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
       <div className="three-grid" style={{ marginBottom:SP[4] }}>
         <Card>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'10px' }}>
-            <div style={{ color:C.accent, fontSize:'11px', fontWeight:700 }}>UPDATES TREND (Completed vs Missed)</div>
+            <div className="eyebrow">Updates trend — completed vs missed</div>
           </div>
           <div style={{ display:'flex', gap:'16px', marginBottom:'8px' }}>
-            <div><span style={{color:C.accent,fontSize:'18px',fontWeight:800}}>{updatesCompleted}</span> <span style={{color:C.muted,fontSize:'10px'}}>COMPLETED</span></div>
-            <div><span style={{color:C.red,fontSize:'18px',fontWeight:800}}>{updatesMissed}</span> <span style={{color:C.muted,fontSize:'10px'}}>MISSED</span></div>
+            <div><span style={{color:C.accent,fontSize:'18px',fontWeight:800}}>{updatesCompleted}</span> <span style={{color:C.muted,fontSize:'10px'}}>Completed</span></div>
+            <div><span style={{color:C.red,fontSize:'18px',fontWeight:800}}>{updatesMissed}</span> <span style={{color:C.muted,fontSize:'10px'}}>Missed</span></div>
           </div>
           <LineChart series={[{name:'Completed',color:C.accent,data:trend.completed},{name:'Missed',color:C.red,data:trend.missed}]} labels={trend.labels} height={180} />
         </Card>
 
         <Card>
-          <div className="eyebrow" style={{ marginBottom:'10px' }}>MONTHLY CALENDAR</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>Monthly calendar</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:'4px', marginBottom:'10px' }}>
             {calendar.map(d => (
               <div key={d.date} title={`${d.date} — ${CAL_LABELS[d.status]||d.status} (${d.completed}/${d.total})`} style={{
@@ -120,7 +121,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
         </Card>
 
         <Card>
-          <div className="eyebrow" style={{ marginBottom:'10px' }}>NOTIFICATIONS</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>Notifications</div>
           {notifications.length===0 ? (
             <div style={{ color:C.muted, fontSize:'11px', padding:'10px 0' }}>All clear — no action needed.</div>
           ) : (
@@ -143,7 +144,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
 
       {/* My Targets — always TODAY's numbers, independent of the trend range above */}
       <Card style={{ marginBottom:SP[4] }}>
-        <div className="eyebrow" style={{ marginBottom:'4px' }}>MY TARGETS — TODAY</div>
+        <div className="eyebrow" style={{ marginBottom:'4px' }}>My targets — today</div>
         <div style={{ color:C.muted, fontSize:'10px', marginBottom:'12px' }}>What's assigned to you today vs. what's completed so far</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:'10px' }}>
           {[
@@ -170,7 +171,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
       {/* Footage / Followup / Top clients / recent activity */}
       <div className="four-grid">
         <Card onClick={()=>onGoToTab('footage')} className="pressable" style={{ cursor:'pointer' }}>
-          <div className="eyebrow" style={{ marginBottom:'10px' }}>FOOTAGE OVERVIEW</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>Footage overview</div>
           <div style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
             <Donut segments={[{label:'Uploaded',value:footageTaken,color:C.accent},{label:'Pending',value:footagePending,color:C.amber}]} size={84} thickness={11} centerLabel={footageTaken+footagePending} centerSub="Total" />
           </div>
@@ -178,7 +179,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
         </Card>
 
         <Card onClick={()=>onGoToTab('followup')} className="pressable" style={{ cursor:'pointer' }}>
-          <div className="eyebrow" style={{ marginBottom:'10px' }}>FOLLOW-UP OVERVIEW</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>Follow-up overview</div>
           <div style={{ display:'flex', justifyContent:'center', marginBottom:'10px' }}>
             <Donut segments={[{label:'Closed',value:followupsClosed,color:C.accent},{label:'Pending',value:followupsPending,color:C.amber}]} size={84} thickness={11} centerLabel={followupsClosed+followupsPending} centerSub="Total" />
           </div>
@@ -186,7 +187,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
         </Card>
 
         <Card>
-          <div className="eyebrow" style={{ marginBottom:'10px' }}>TOP CLIENTS</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>Top clients</div>
           {topClients.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>No data for this period.</div> : (
             <div style={{ display:'flex', flexDirection:'column', gap:'9px' }}>
               {topClients.map((c,i) => (
@@ -204,9 +205,9 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
         </Card>
 
         <Card>
-          <div className="eyebrow" style={{ marginBottom:'10px' }}>RECENT ACTIVITY</div>
+          <div className="eyebrow" style={{ marginBottom:'10px' }}>Recent activity</div>
           {recentActivity.length===0 ? <div style={{color:C.muted,fontSize:'11px'}}>Nothing yet.</div> : (
-            <div style={{ display:'flex', flexDirection:'column', gap:'9px', maxHeight:'220px', overflowY:'auto' }}>
+            <div className="scroll-fade" style={{ display:'flex', flexDirection:'column', gap:'9px', maxHeight:'220px', overflowY:'auto' }}>
               {recentActivity.map((a,i) => (
                 <div key={i}>
                   <div style={{ display:'flex', justifyContent:'space-between' }}>

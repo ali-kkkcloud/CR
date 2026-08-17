@@ -5,8 +5,7 @@ import BreakOverlay from '../components/BreakOverlay'
 import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C, parseSheetDate } from '../components/Widgets'
-import EmployeeSidebar from '../components/EmployeeSidebar'
-import { TopBar, PageBody, AccountButton, NotifyButton } from '../components/Shell'
+import { AccountButton, NotifyButton } from '../components/Shell'
 import { Card, Button, Pill, Tag, Field, Segmented, Banner, EmptyState, Modal, T, R, SP, SURF } from '../components/ui'
 import MyDayTab from '../components/tabs/MyDayTab'
 import HourRail from '../components/HourRail'
@@ -54,7 +53,10 @@ export default function Dashboard() {
   const [clientContext, setClientContext] = useState({})
   const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
   const [myDay, setMyDay] = useState(null)
-  const [activeTab, setActiveTab] = useState('dashboard')
+  // Lands on the Board — the work — rather than on charts. An operator
+  // clocking in wants their clients, not a trend line.
+  const [activeTab, setActiveTab] = useState('board')
+  const [showMore, setShowMore]   = useState(false)
   // Which hour the board is showing. Follows the clock until the operator
   // picks another one from the rail, then stays where they put it.
   const [viewHour, setViewHour] = useState(null)
@@ -180,7 +182,11 @@ export default function Dashboard() {
   }, [])
 
   const loadSummary = useCallback(async (range) => {
-    setSummaryLoading(true)
+    // Only announce loading when there is nothing on screen yet. This runs on
+    // the 30-second poll too, and flipping the flag every time collapsed the
+    // whole Dashboard into skeletons twice a minute — the charts, the
+    // calendar and the targets all blinked out and back for no reason.
+    if (!summaryRef.current) setSummaryLoading(true)
     try {
       const res  = await fetch(`/api/dashboard/summary?range=${range}`)
       const data = await res.json()
@@ -715,71 +721,140 @@ export default function Dashboard() {
   const liveDone    = liveClients.filter(c => (filled[c.client]?.status || '').toString().trim()).length
 
   const TITLES = {
-    dashboard:'Dashboard', clients:'My Clients', myday:'My Day',
+    board:'Board', myday:'My Day', dashboard:'Dashboard',
     footage:'Footage Requests', followup:'Follow-ups',
     performance:'My Performance', notifications:'Notifications',
     help:'Help & Support', settings:'Settings',
   }
-  const SUBS = {
-    dashboard:'How your day is going',
-    clients:'The hour in front of you',
-    myday:'Your whole shift, hour by hour',
-    footage:'Requests you raised and closed',
-    followup:'Handed to you by a colleague',
-  }
+
+  // Every destination the sidebar used to hold. The five that carry real work
+  // sit in the switch; the four that are still placeholders sit behind More,
+  // so nothing is unreachable and the bar stays readable.
+  const MAIN_TABS = [
+    { value:'board',     label:'Board',      count: realBoard.length },
+    { value:'myday',     label:'My Day' },
+    { value:'dashboard', label:'Dashboard' },
+    { value:'footage',   label:'Footage',    count: footage.pending.length },
+    { value:'followup',  label:'Follow-ups', count: footage.followups.length },
+  ]
+  const MORE_TABS = ['performance', 'notifications', 'help', 'settings']
 
   return (
     <>
       <Head><title>Cautio CRM — {TITLES[activeTab] || 'Dashboard'}</title></Head>
 
-      <div style={{ minHeight:'100vh', background:C.bg, display:'flex' }}>
+      <div style={{ minHeight:'100vh', background:C.bg }}>
 
-        <EmployeeSidebar
-          activeTab={activeTab} setActiveTab={setActiveTab} user={user}
-          counts={{ footage: footage.pending.length, followup: footage.followups.length }}
-          shiftTime={fmtShift(summary?.shiftStart, summary?.shiftEnd)}
-          loginTime={startTime}
-          onlineStatus={isActive ? 'Online' : 'Offline'}
-        />
+        {/* ══════════ COMMAND BAR ══════════ */}
+        <header style={{
+          position:'sticky', top:0, zIndex:60,
+          background:'rgba(0,0,0,0.86)', backdropFilter:'blur(12px)',
+          borderBottom:`1px solid ${C.border}`,
+        }}>
+          <div style={{
+            maxWidth:'var(--content-max)', margin:'0 auto',
+            display:'flex', alignItems:'center', gap:SP[4], flexWrap:'wrap',
+            padding:`${SP[3]} ${SP[5]}`,
+          }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'10px', flexShrink:0 }}>
+              <img
+                src="/cautio_shield.webp" alt="Cautio"
+                style={{ width:'30px', height:'30px', objectFit:'contain' }}
+                onError={e => (e.target.style.display = 'none')}
+              />
+              <div style={{ minWidth:0 }}>
+                <div className="ellip" style={{ color:C.text, fontSize:T.md, fontWeight:800, lineHeight:1.25 }}>
+                  {user?.name}
+                </div>
+                <div style={{ color:C.muted, fontSize:'10px', lineHeight:1.3 }}>
+                  {user?.empId} · {fmtShift(summary?.shiftStart, summary?.shiftEnd)}
+                </div>
+              </div>
+            </div>
 
-        <div style={{ flex:1, minWidth:0 }}>
-          <TopBar
-            title={TITLES[activeTab] || 'Dashboard'}
-            sub={SUBS[activeTab]}
-            right={
-              <>
-                <Pill icon="calendar">{new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short'})}</Pill>
-                <Pill icon="clock">{clock}</Pill>
-                {isActive
-                  ? <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>In {startTime}</Pill>
-                  : <Pill icon="clock" color={C.amber}>{shiftStatus === 'ended' ? 'Shift ended' : 'Not started'}</Pill>}
-                <NotifyButton
-                  count={footage.pending.length + footage.followups.length}
-                  onClick={()=>setActiveTab('footage')}
-                />
-                {isActive ? (
-                  <>
-                    <Button variant="danger" icon="clock" onClick={startBreak} disabled={breakActionLoading}>Break</Button>
-                    <Button
-                      variant="ghost" icon="clock"
-                      onClick={()=>setShowOTConfirm(true)}
-                      disabled={summary?.usedOT}
-                      title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
-                      style={summary?.usedOT ? undefined : { color:C.accent, borderColor:C.accent+'55', background:C.accentSoft }}
-                    >OT</Button>
-                    <Button variant="subtle" onClick={handleEndShiftClick}>End shift</Button>
-                  </>
-                ) : shiftStatus === 'not_started' ? (
-                  <Button variant="primary" onClick={handleStartShiftClick} loading={startingShift}>▶ Start shift</Button>
-                ) : null}
-                <AccountButton name={user?.name} sub={user?.empId || '—'} onClick={()=>setShowLogout(true)} />
-              </>
-            }
-          />
+            <div style={{ flex:1, minWidth:'12px' }} />
 
-          <PageBody>
+            <div style={{ display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap' }}>
+              {isActive
+                ? <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>In {startTime}</Pill>
+                : <Pill icon="clock" color={C.amber}>{shiftStatus === 'ended' ? 'Shift ended' : 'Not started'}</Pill>}
+              <Pill icon="clock">{clock}</Pill>
+              <NotifyButton
+                count={footage.pending.length + footage.followups.length}
+                onClick={()=>setActiveTab('footage')}
+              />
+
+              {isActive ? (
+                <>
+                  <Button variant="danger" icon="clock" onClick={startBreak} disabled={breakActionLoading}>Break</Button>
+                  <Button
+                    variant="ghost" icon="clock"
+                    onClick={()=>setShowOTConfirm(true)}
+                    disabled={summary?.usedOT}
+                    title={summary?.usedOT ? 'Overtime already used today' : 'Extend your shift by 3 hours'}
+                    style={summary?.usedOT ? undefined : { color:C.accent, borderColor:C.accent+'55', background:C.accentSoft }}
+                  >OT</Button>
+                  <Button variant="subtle" onClick={handleEndShiftClick}>End shift</Button>
+                </>
+              ) : shiftStatus === 'not_started' ? (
+                <Button variant="primary" onClick={handleStartShiftClick} loading={startingShift}>▶ Start shift</Button>
+              ) : null}
+
+              <AccountButton name={user?.name} sub={user?.empId || '—'} onClick={()=>setShowLogout(true)} />
+            </div>
+          </div>
+
+          <div style={{
+            maxWidth:'var(--content-max)', margin:'0 auto',
+            display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap',
+            padding:`0 ${SP[5]} ${SP[3]}`,
+          }}>
+            <Segmented value={activeTab} onChange={setActiveTab} options={MAIN_TABS} />
+
+            {/* The four modules that aren't wired to live data yet. Reachable,
+                without taking a slot from the five that are. */}
+            <div style={{ position:'relative' }}>
+              <Button
+                variant={MORE_TABS.includes(activeTab) ? 'primary' : 'subtle'}
+                size="sm"
+                iconRight="chevron-down"
+                onClick={()=>setShowMore(v => !v)}
+              >More</Button>
+              {showMore && (
+                <>
+                  <div onClick={()=>setShowMore(false)} style={{ position:'fixed', inset:0, zIndex:70 }} />
+                  <div className="fade-in" style={{
+                    position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:71,
+                    minWidth:'190px', background:SURF.raised,
+                    border:`1px solid ${C.border2}`, borderRadius:R.md,
+                    boxShadow:'0 14px 36px rgba(0,0,0,0.6)', overflow:'hidden',
+                  }}>
+                    {MORE_TABS.map(t => (
+                      <button
+                        key={t}
+                        onClick={()=>{ setActiveTab(t); setShowMore(false) }}
+                        className="row-hover"
+                        style={{
+                          display:'block', width:'100%', textAlign:'left',
+                          background: activeTab===t ? C.accentSoft : 'transparent',
+                          border:'none', borderBottom:`1px solid ${C.border}`,
+                          padding:'10px 14px',
+                          color: activeTab===t ? C.accent : C.text2,
+                          fontSize:T.base, fontWeight: activeTab===t ? 700 : 500,
+                        }}
+                      >{TITLES[t]}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </header>
+
+        <main style={{ padding:`${SP[4]} ${SP[5]} ${SP[8]}` }}>
+          <div style={{ maxWidth:'var(--content-max)', margin:'0 auto', minWidth:0 }}>
             {!isActive && (
-              <div style={{ marginBottom:SP[4] }}>
+              <div style={{ marginBottom:SP[3] }}>
                 <Banner
                   tone="warn" icon="clock"
                   action={shiftStatus === 'not_started'
@@ -793,17 +868,8 @@ export default function Dashboard() {
               </div>
             )}
 
-            {activeTab === 'dashboard' && (
-              <EmpDashboardTab
-                summary={summary} range={summaryRange} setRange={setSummaryRange}
-                loading={summaryLoading} onGoToTab={setActiveTab} breakStatus={breakStatus}
-              />
-            )}
-
-            {/* My Clients — the hour in front of you. The rail above it can
-                move the board to any hour of the shift; the rail beside it
-                carries everything that would otherwise be a trip elsewhere. */}
-            {activeTab === 'clients' && (
+            {/* ── Board: the hour in front of you ── */}
+            {activeTab === 'board' && (
               <>
                 <div style={{ marginBottom:SP[3] }}>
                   <HourRail
@@ -840,6 +906,7 @@ export default function Dashboard() {
               </>
             )}
 
+            {/* ── My Day: the whole shift, and everything that used to live here ── */}
             {activeTab === 'myday' && (
               <MyDayTab
                 currentHour={currentHour} currentClients={clients} filled={filled} myDay={myDay}
@@ -849,10 +916,17 @@ export default function Dashboard() {
               />
             )}
 
+            {activeTab === 'dashboard' && (
+              <EmpDashboardTab
+                summary={summary} range={summaryRange} setRange={setSummaryRange}
+                loading={summaryLoading} onGoToTab={setActiveTab} breakStatus={breakStatus}
+              />
+            )}
+
             {activeTab === 'footage'  && <EmpFootageTab footage={footage} />}
             {activeTab === 'followup' && <EmpFollowupTab followups={footage.followups} />}
 
-            {['performance','notifications','help','settings'].includes(activeTab) && (
+            {MORE_TABS.includes(activeTab) && (
               <Card pad={false} style={{ maxWidth:'520px', margin:'40px auto' }}>
                 <EmptyState
                   icon={activeTab==='performance'?'analytics':activeTab==='notifications'?'alerts':activeTab==='help'?'sparkles':'settings'}
@@ -864,8 +938,8 @@ export default function Dashboard() {
                 />
               </Card>
             )}
-          </PageBody>
-        </div>
+          </div>
+        </main>
       </div>
 
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
