@@ -10,7 +10,7 @@
 // Colours are the brand tokens, unchanged. What is new is the scale they
 // are applied on.
 // ══════════════════════════════════════════════════════════════════════
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Icon from './Icons'
 import { C } from './Widgets'
 
@@ -342,6 +342,17 @@ export function Banner({ tone = 'info', icon, children, action }) {
 // that had drifted apart. Escape and backdrop both close it.
 // ══════════════════════════════════════════════════════════════════════
 export function Modal({ open, onClose, title, sub, icon, iconColor = C.accent, width = 420, children, footer }) {
+  // Escape closes it. This has always been in the comment above and was never
+  // actually wired up, and it matters most for the one modal that has no
+  // footer buttons — a roster list, where the only way out was to guess that
+  // clicking the dark area behind it would work.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e) => { if (e.key === 'Escape') onClose && onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
   if (!open) return null
   return (
     <div
@@ -360,7 +371,21 @@ export function Modal({ open, onClose, title, sub, icon, iconColor = C.accent, w
           boxShadow:'0 18px 50px rgba(0,0,0,0.65)',
         }}
       >
-        <div style={{ padding:`${SP[5]} ${SP[5]} ${SP[4]}` }}>
+        <div style={{ padding:`${SP[5]} ${SP[5]} ${SP[4]}`, position:'relative' }}>
+          {/* A visible way out, on every modal. Some carry a Cancel button in
+              their footer and some don't; the ones that don't had no closing
+              affordance on screen at all. */}
+          <button
+            onClick={onClose}
+            title="Close"
+            aria-label="Close"
+            className="pressable"
+            style={{
+              position:'absolute', top:'12px', right:'12px',
+              background:'transparent', border:'none', borderRadius:R.sm,
+              color:C.muted, fontSize:'18px', lineHeight:1, padding:'4px 8px', cursor:'pointer',
+            }}
+          >×</button>
           {icon && (
             <div style={{
               width:'44px', height:'44px', borderRadius:R.lg, background:iconColor+'18',
@@ -369,7 +394,7 @@ export function Modal({ open, onClose, title, sub, icon, iconColor = C.accent, w
               <Icon name={icon} size={20} color={iconColor} />
             </div>
           )}
-          {title && <div style={{ color:C.text, fontSize:T.lg, fontWeight:700 }}>{title}</div>}
+          {title && <div style={{ color:C.text, fontSize:T.lg, fontWeight:700, paddingRight:'26px' }}>{title}</div>}
           {sub && <div style={{ color:C.muted, fontSize:T.base, marginTop:'6px', lineHeight:1.6 }}>{sub}</div>}
           {children && <div style={{ marginTop: title||sub ? SP[4] : 0 }}>{children}</div>}
         </div>

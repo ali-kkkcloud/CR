@@ -21,13 +21,23 @@ function fmtMinutes(mins) {
 export default function TodayRail({
   summary, myDay, breakStatus, footage, currentHour,
   hourDone, hourTotal, onGoToTab, onOpenStats, isActive,
+  // The next client still needing an update this hour, and the way to put it
+  // in front of the operator. Both came from My Day's "Current task" panel.
+  upNext, onFocusClient,
+  // Every update saved today, newest first — My Day's "Recent activity".
+  recent = [],
 }) {
   const pct = hourTotal > 0 ? Math.round((hourDone / hourTotal) * 100) : 0
   const next = myDay?.timeline?.find(t => t.hour === (currentHour + 1) % 24)
   const today = summary?.today || {}
 
-  const dayDone  = today.clientsCompleted || 0
-  const dayTotal = today.clientsAssigned || 0
+  // Two sources say how much of the day is done: the summary endpoint counts
+  // it from the sheet, my-day counts it from the timeline it just built. They
+  // agree, but only one of them is present early in a shift — so whichever
+  // has numbers wins, rather than showing 0 / 0 while the other loads.
+  const dayTotal = today.clientsAssigned  || myDay?.totalClients   || 0
+  const dayDone  = today.clientsCompleted || myDay?.totalCompleted || 0
+  const dayLeft  = Math.max(0, dayTotal - dayDone)
   const dayPct   = dayTotal > 0 ? Math.round((dayDone / dayTotal) * 100) : 0
 
   const alerts = []
@@ -60,6 +70,30 @@ export default function TodayRail({
             : `${hourTotal - hourDone} still to go`}
         </div>
       </Card>
+
+      {/* ── Up next ──
+          My Day's "Current task": the one client to do now, and a button that
+          puts it on the board. Only while there is still work in the hour —
+          "all caught up" is already said by the card above. */}
+      {upNext && (
+        <Card>
+          <div className="eyebrow">Up next</div>
+          <div style={{ display:'flex', alignItems:'center', gap:SP[2], marginTop:'7px', flexWrap:'wrap' }}>
+            <span className="ellip" style={{ color:C.text, fontSize:T.md, fontWeight:700, minWidth:0 }}>
+              {upNext.client}
+            </span>
+            <Tag color={C.amber} dot>PENDING</Tag>
+          </div>
+          <div style={{ color:C.muted, fontSize:T.xs, marginTop:'3px' }}>
+            {upNext.vehicleCount || 0} vehicles
+          </div>
+          <Button
+            variant="primary" size="sm" full
+            onClick={() => onFocusClient && onFocusClient(upNext.client)}
+            style={{ marginTop:SP[3] }}
+          >Open on the board →</Button>
+        </Card>
+      )}
 
       {/* ── Needs you ── */}
       {alerts.length > 0 && (
@@ -120,6 +154,19 @@ export default function TodayRail({
       <Card>
         <div className="eyebrow" style={{ marginBottom:'11px' }}>Today</div>
 
+        {/* The three day-level numbers My Day carried under its donut. Total,
+            done and what is still outstanding across the whole shift — not
+            just this hour, which the top card already covers. */}
+        <div style={{
+          display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:SP[2],
+          background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md,
+          padding:'11px 8px', marginBottom:SP[3],
+        }}>
+          <DayFact value={dayTotal} label="TOTAL" color={C.text} />
+          <DayFact value={dayDone}  label="DONE"  color={C.accent} />
+          <DayFact value={dayLeft}  label="LEFT"  color={dayLeft > 0 ? C.amber : C.accent} />
+        </div>
+
         <RailRow label="Clients" value={`${dayDone} / ${dayTotal}`} meter={dayPct} />
         <RailRow
           label="Attendance"
@@ -142,7 +189,43 @@ export default function TodayRail({
           style={{ marginTop:SP[3] }}
         >My stats &amp; trend →</Button>
       </Card>
+
+      {/* ── Recent activity ──
+          The last updates saved today, newest first, straight from My Day.
+          It is the only place an operator can see that a save actually
+          landed and at what time, hours after the fact. */}
+      <Card>
+        <div className="eyebrow" style={{ marginBottom:'10px' }}>Recent activity</div>
+        {recent.length === 0 ? (
+          <div style={{ color:C.muted, fontSize:T.base }}>No updates saved yet today.</div>
+        ) : (
+          <div className="scroll-fade" style={{
+            display:'flex', flexDirection:'column', gap:'8px',
+            maxHeight:'168px', overflowY:'auto',
+          }}>
+            {recent.map((e, i) => (
+              <div key={`${e.hour}|${e.client}|${i}`} style={{
+                display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:SP[2],
+              }}>
+                <span className="ellip" style={{ color:C.text2, fontSize:T.xs, minWidth:0 }}>
+                  {e.client}
+                </span>
+                <span style={{ color:C.muted, fontSize:'9.5px', flexShrink:0 }}>{e.time}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </aside>
+  )
+}
+
+function DayFact({ value, label, color }) {
+  return (
+    <div style={{ textAlign:'center', minWidth:0 }}>
+      <div style={{ color, fontSize:T.lg, fontWeight:800, lineHeight:1 }}>{value}</div>
+      <div style={{ color:C.muted, fontSize:'9px', marginTop:'4px', letterSpacing:'0.4px' }}>{label}</div>
+    </div>
   )
 }
 

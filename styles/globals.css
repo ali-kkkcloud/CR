@@ -257,6 +257,11 @@ input[type=date] { color-scheme: dark; }
 /* Truncate to one line — used in every list where a client name can be long. */
 .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
+/* Secondary detail that earns its place on a wide screen and gets in the way
+   on a narrow one — a colour legend, a hint beside a control. */
+.hide-narrow { display: flex; }
+@media (max-width: 1120px) { .hide-narrow { display: none !important; } }
+
 /* Section heading above a group of cards. */
 .eyebrow {
   color: var(--muted);
