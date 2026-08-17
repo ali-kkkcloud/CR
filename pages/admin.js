@@ -504,11 +504,29 @@ export default function Admin() {
                     padding:SP[4], display:'grid',
                     gridTemplateColumns:'repeat(auto-fit, minmax(96px, 1fr))', gap:SP[3],
                   }}>
-                    <MiniFact label="On duty"   value={`${activeNowCnt}/${onDutyNow.length}`} color={commandHealthPct < 80 ? C.amber : C.accent} />
+                    {/* Two of these open the roster behind the number — who is
+                        actually clocked in, and who should be but isn't. The
+                        old KPI cards did, and the modal was still here after
+                        the redesign with nothing left to open it. */}
+                    <MiniFact
+                      label="On duty" value={`${activeNowCnt}/${onDutyNow.length}`}
+                      color={commandHealthPct < 80 ? C.amber : C.accent}
+                      onClick={()=>setRosterModal({ title:'Clocked in now', empty:'Nobody is clocked in right now.', rows:activeEmployees })}
+                    />
                     <MiniFact label="Done"      value={totalUpdatesToday} color={C.accent} />
                     <MiniFact label="Pending"   value={totalPendingToday} color={totalPendingToday ? C.amber : C.muted} />
+                    <MiniFact
+                      label="Not in" value={kpis.notStarted}
+                      color={kpis.notStarted ? C.red : C.muted}
+                      onClick={()=>setRosterModal({ title:'Not started', empty:'Everyone scheduled has clocked in.', rows:notStartedEmployees })}
+                    />
                     <MiniFact label="On break"  value={breaks?.onBreakNow || 0} color={breaks?.onBreakNow ? C.red : C.muted} onClick={()=>setActiveTab('breaks')} />
                     <MiniFact label="Week off"  value={kpis.weekOff} color={C.purple} />
+                    <MiniFact
+                      label="Footage" value={footage.pending.length}
+                      color={footage.pending.length ? C.amber : C.muted}
+                      onClick={()=>setActiveTab('footage')}
+                    />
                     <MiniFact label="Moved"     value={redistribution.length} color={C.blue} onClick={redistribution.length ? ()=>setActiveTab('redistribution') : undefined} />
                   </div>
                 </Card>
@@ -680,7 +698,7 @@ export default function Admin() {
 
           {/* ══════════ FOLLOW-UPS ══════════ */}
           {activeTab === 'followups' && (
-            <div style={{ maxWidth:'940px' }}>
+            <div style={{ maxWidth:'940px', margin:'0 auto' }}>
               {footage.followups.length === 0 ? (
                 <Card pad={false}>
                   <EmptyState icon="followups" tone="good" title="No open follow-ups." detail="A follow-up appears here when an employee hands a footage request to a colleague at the end of their shift." />
@@ -720,7 +738,7 @@ export default function Admin() {
 
           {/* ══════════ REDISTRIBUTION ══════════ */}
           {activeTab === 'redistribution' && (
-            <div style={{ maxWidth:'940px' }}>
+            <div style={{ maxWidth:'940px', margin:'0 auto' }}>
               <Card pad={false} style={{ overflow:'hidden' }}>
                 <Table
                   cols={[
@@ -812,6 +830,7 @@ export default function Admin() {
         width={460}
         title={rosterModal?.title}
         sub={rosterModal ? `${rosterModal.rows.length} employee${rosterModal.rows.length===1?'':'s'} · timings in IST` : ''}
+        footer={<Button variant="ghost" full onClick={()=>setRosterModal(null)}>Close</Button>}
       >
         {rosterModal && (rosterModal.rows.length === 0 ? (
           <div style={{ color:C.muted, fontSize:T.base, padding:'18px 0', textAlign:'center' }}>{rosterModal.empty}</div>

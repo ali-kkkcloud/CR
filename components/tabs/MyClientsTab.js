@@ -75,6 +75,10 @@ export default function MyClientsTab({
   // call with the hour passed through — /api/crm/update has always taken the
   // slot as an argument.
   hour, hourState = 'current',
+  // { client, at } — a request from outside (the rail's "Up next") to put a
+  // particular client in the detail pane. Carries a timestamp so asking for
+  // the same client twice still registers as a new request.
+  focusRequest,
 }) {
   const slot = hour == null ? currentHour : hour
   const isNow = slot === currentHour
@@ -123,6 +127,26 @@ export default function MyClientsTab({
     if (selected && realClients.some(c => c.client === selected)) return
     setSelected(visible[0]?.client || realClients[0]?.client || null)
   }, [realClients, visible, selected])
+
+  // Asked for from outside. Search and filter both get cleared first —
+  // selecting a client the list is currently hiding would move the detail pane
+  // to a row that isn't on screen, which reads as the button doing nothing.
+  //
+  // Handled exactly once per request. Keyed only on the request, a client list
+  // that refreshes every thirty seconds would re-apply the last focus for the
+  // rest of the shift — wiping whatever the operator had typed into the search
+  // box each time the poll came back.
+  const handledFocusRef = useRef(null)
+  useEffect(() => {
+    if (!focusRequest?.client) return
+    const token = `${focusRequest.at || ''}|${focusRequest.client}`
+    if (handledFocusRef.current === token) return
+    if (!realClients.some(c => c.client === focusRequest.client)) return
+    handledFocusRef.current = token
+    setQuery('')
+    setFilter('all')
+    setSelected(focusRequest.client)
+  }, [focusRequest, realClients])
 
   const dkey = useCallback((client) => `${slot}|${client}`, [slot])
 
@@ -221,7 +245,9 @@ export default function MyClientsTab({
   // ── An hour spent on something other than fleet work ──
   if (customEntry) {
     return (
-      <Card style={{ padding:0, overflow:'hidden' }}>
+      // A minimum height, so an hour with no board doesn't collapse into a
+      // strip beside a full-height rail and read as a half-loaded page.
+      <Card style={{ padding:0, overflow:'hidden', minHeight:'420px', display:'flex', alignItems:'center', justifyContent:'center' }}>
         <div style={{ padding:'48px 24px', textAlign:'center' }}>
           <div style={{
             width:'52px', height:'52px', borderRadius:R.lg, background:C.accentDark,
@@ -246,9 +272,11 @@ export default function MyClientsTab({
   if (realClients.length === 0) {
     const m = emptyMessage({ scheduledThisHour, clockedOut, myWindow })
     return (
-      <Card style={{ padding:0 }}>
+      <Card pad={false} style={{ minHeight:'420px', display:'flex', flexDirection:'column' }}>
         {!canEdit && <ReadOnlyStrip clockedOut={clockedOut} />}
-        <EmptyState icon={m.icon} tone={m.tone} title={m.title} detail={m.detail} />
+        <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <EmptyState icon={m.icon} tone={m.tone} title={m.title} detail={m.detail} />
+        </div>
       </Card>
     )
   }
@@ -333,6 +361,12 @@ export default function MyClientsTab({
               const done   = isDone(filled, c.client)
               const on     = c.client === sel
               const edited = !!drafts[`${slot}|${c.client}`]
+              // Which client was last touched, and when — per row, on the list
+              // itself. The old grid carried a LAST UPDATED column that said
+              // "Updated at 3:14:02 pm" or "Still not updated" against every
+              // client, and it is the one thing an operator scans the list for:
+              // not just what is left, but how long something has been sitting.
+              const at = (filled[c.client]?.updatedAt || '').toString().trim()
               return (
                 <button
                   key={c.client}
@@ -360,6 +394,18 @@ export default function MyClientsTab({
                     <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'2px' }}>
                       {c.vehicleCount || 0} vehicles
                       {c.isSpecific && <span style={{ color:C.blue }}> · yours</span>}
+                      {c.isRedistributed && c.fromEmployee && (
+                        <span style={{ color:C.purple }}> · ↩ {c.fromEmployee}</span>
+                      )}
+                    </span>
+                    <span className="ellip" style={{
+                      display:'block', marginTop:'2px',
+                      color: done ? C.accent : C.red,
+                      fontSize:T.xs, fontWeight: done ? 500 : 600,
+                    }}>
+                      {done
+                        ? (at ? `Updated at ${at}` : 'Updated')
+                        : upcoming ? 'Not started yet' : 'Still not updated'}
                     </span>
                   </span>
                   {edited
@@ -394,7 +440,17 @@ export default function MyClientsTab({
                   </div>
                   <div style={{ color:C.muted, fontSize:T.base, marginTop:'5px' }}>
                     {selMeta?.vehicleCount || 0} vehicles · {fmtHour(slot)} slot
-                    {savedAt && <> · last saved {savedAt}</>}
+                    {selMeta?.isRedistributed && selMeta.fromEmployee && (
+                      <span style={{ color:C.purple }}> · handed over by {selMeta.fromEmployee}</span>
+                    )}
+                    {/* Said either way round. "Last saved 3:14 pm" only appears
+                        when there is something to say, so its absence used to
+                        be the only sign that a client had never been touched. */}
+                    {selDone
+                      ? (savedAt ? <> · <span style={{ color:C.accent }}>updated at {savedAt}</span></> : null)
+                      : <> · <span style={{ color: upcoming ? C.muted : C.red, fontWeight:600 }}>
+                          {upcoming ? 'not started yet' : 'still not updated'}
+                        </span></>}
                   </div>
                 </div>
                 <div style={{ display:'flex', gap:SP[2] }}>

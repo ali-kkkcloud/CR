@@ -17,6 +17,19 @@ function label(h) {
   return `${to12(h)}${h >= 12 ? 'PM' : 'AM'}`
 }
 
+function LegendDot({ color, label, ring }) {
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:'5px' }}>
+      <span style={{
+        width:'7px', height:'7px', borderRadius:'50%', flexShrink:0,
+        background: ring ? 'transparent' : color,
+        border: ring ? `2px solid ${color}` : 'none',
+      }} />
+      <span style={{ color:C.muted, fontSize:'9.5px', whiteSpace:'nowrap' }}>{label}</span>
+    </span>
+  )
+}
+
 export default function HourRail({ timeline, currentHour, value, onChange, liveCounts }) {
   const ref = useRef(null)
 
@@ -100,6 +113,17 @@ export default function HourRail({ timeline, currentHour, value, onChange, liveC
             </button>
           )
         })}
+      </div>
+
+      {/* What the colours mean. The old My Day timeline carried this legend and
+          the strip encodes the same four states, so it says them out loud
+          rather than leaving them to be inferred. Dropped below 1120px, where
+          the hours themselves need the width more. */}
+      <div className="hide-narrow" style={{ flexShrink:0, alignItems:'center', gap:'11px', paddingRight:'2px' }}>
+        <LegendDot color={C.accent} label="Done" />
+        <LegendDot color={C.accent} label="Now" ring />
+        <LegendDot color={C.red} label="Missed" />
+        <LegendDot color={C.border2} label="Upcoming" />
       </div>
 
       {value !== currentHour && (

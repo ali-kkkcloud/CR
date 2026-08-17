@@ -7,7 +7,7 @@ import Icon from '../components/Icons'
 import { C, parseSheetDate } from '../components/Widgets'
 import { AccountButton, NotifyButton } from '../components/Shell'
 import { Card, Button, Pill, Tag, Field, Segmented, Banner, EmptyState, Modal, T, R, SP, SURF } from '../components/ui'
-import MyDayTab from '../components/tabs/MyDayTab'
+import CautioWordmark from '../components/Wordmark'
 import HourRail from '../components/HourRail'
 import TodayRail from '../components/TodayRail'
 import EmpDashboardTab from '../components/tabs/EmpDashboardTab'
@@ -34,6 +34,13 @@ function greeting() {
   const h = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Kolkata' })).getHours()
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
 }
+// Read in IST, like every other time on this platform. The browser's own date
+// is a different day for anyone working either side of midnight.
+function istDateLabel() {
+  return new Date().toLocaleDateString('en-GB', {
+    timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric',
+  })
+}
 function fmtShift(startHour, endHour) {
   if (startHour==null || endHour==null) return '—'
   const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
@@ -56,6 +63,8 @@ export default function Dashboard() {
   // Lands on the Board — the work — rather than on charts. An operator
   // clocking in wants their clients, not a trend line.
   const [activeTab, setActiveTab] = useState('board')
+  // A request from the rail to put one client in the board's detail pane.
+  const [focusRequest, setFocusRequest] = useState(null)
   const [showMore, setShowMore]   = useState(false)
   // Which hour the board is showing. Follows the clock until the operator
   // picks another one from the rail, then stays where they put it.
@@ -63,7 +72,6 @@ export default function Dashboard() {
   // { [hour]: { [client]: record } } — what has been saved into an earlier
   // hour this session, so the board reflects it before the next my-day poll.
   const [pastEdits, setPastEdits] = useState({})
-  const [saving, setSaving] = useState({})
   const [showReport, setShowReport] = useState(false)
   const [report, setReport] = useState(null)
   const [endShiftStep, setEndShiftStep] = useState(null)
@@ -370,47 +378,13 @@ export default function Dashboard() {
     await doEndShift()
   }
 
-  async function saveUpdate(client, field, value, hourOverride) {
-    const key = `${client}_${field}`
-    editingRef.current[client] = Date.now()   // protect from background refresh
-    const targetHour = hourOverride ?? currentHour
-    const isCurrentHourEdit = targetHour === currentHour
-    setSaving(p => ({...p, [key]: true}))
-    let updated
-    if (isCurrentHourEdit) {
-      const current = filled[client] || {}
-      updated = { ...current, [field]: value }
-      if (field === 'fatigue' && value === 'No') updated.fatigueCount = ''
-      setFilled(p => ({ ...p, [client]: updated }))
-    } else {
-      updated = { [field]: value }
-    }
-    const res = await fetch('/api/crm/update', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client, slot: targetHour, ...updated }),
-    })
-    const data = await res.json()
-    if (isCurrentHourEdit && data.updatedAt) setFilled(p => ({ ...p, [client]: { ...p[client], updatedAt: data.updatedAt } }))
-    setSaving(p => { const n = {...p}; delete n[key]; return n })
-    // "status" is what actually marks a client as done — refresh the
-    // dashboard summary shortly after so My Targets / trend don't sit stale
-    // until the next 30s poll. Debounced since other fields (alerts, etc.)
-    // can fire several saves in quick succession.
-    if (field === 'status' && data.success) {
-      clearTimeout(summaryRefreshRef.current)
-      summaryRefreshRef.current = setTimeout(() => { loadSummary(summaryRangeRef.current); loadMyDay() }, 1200)
-    }
-    return data
-  }
-
   // Save a client's whole record in ONE request.
   //
-  // saveUpdate above fires per field, and the grid it was written for called
-  // it on every onChange — so typing a vehicle number into the misalignment
-  // box was one Google Sheets write per letter. That is what made the
-  // platform feel slow, and it spent quota the whole team shares on work
-  // that was thrown away a keystroke later. The client screen now holds a
-  // draft and posts it once.
+  // The screen this replaced saved per field, on every onChange — so typing a
+  // vehicle number into the misalignment box was one Google Sheets write per
+  // letter. That is what made the platform feel slow, and it spent quota the
+  // whole team shares on work that was thrown away a keystroke later. The
+  // client screen now holds a draft and posts it once.
   //
   // /api/crm/update rewrites the entire row, so the record passed in must
   // carry every field — which is exactly what the draft is.
@@ -695,7 +669,14 @@ export default function Dashboard() {
     ? clients
     : (viewEntry?.clients || [])
         .filter(c => !c.redistributedAway)
-        .map(c => ({ client:c.client, vehicleCount:c.vehicleCount, isSpecific:c.isSpecific, isCustom:c.isCustom }))
+        // isRedistributed/fromEmployee come through too. An earlier hour can
+        // contain clients handed over by a colleague who went home, and
+        // dropping those two fields here lost the only sign of where the work
+        // came from.
+        .map(c => ({
+          client:c.client, vehicleCount:c.vehicleCount, isSpecific:c.isSpecific, isCustom:c.isCustom,
+          isRedistributed:c.isRedistributed, fromEmployee:c.fromEmployee,
+        }))
 
   const boardFilled = isNowHour
     ? filled
@@ -720,19 +701,55 @@ export default function Dashboard() {
   const liveClients = clients.filter(c => !c.isCustom)
   const liveDone    = liveClients.filter(c => (filled[c.client]?.status || '').toString().trim()).length
 
+  // The next client of the hour in progress with nothing recorded against it —
+  // My Day's "Current task", now in the rail beside the board.
+  const upNext = isActive
+    ? liveClients.find(c => !(filled[c.client]?.status || '').toString().trim()) || null
+    : null
+
+  // Every update saved today, newest first. Same source and same eight-row
+  // window as the panel this replaces.
+  //
+  // Ordered by hour first, then by the clock inside that hour. The old version
+  // took whatever order the clients happened to sit in, which put 9:53am above
+  // 4:20am above 5:46pm — a list of timestamps in no order at all. Sorting on
+  // the hour rather than on the raw time is what keeps a night shift right:
+  // its 11pm updates belong before its 1am ones, not after.
+  const secsOfDay = (s) => {
+    const m = (s || '').toString().trim().match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(am|pm)?$/i)
+    if (!m) return 0
+    let h = parseInt(m[1], 10)
+    const ap = (m[4] || '').toLowerCase()
+    if (ap === 'pm' && h !== 12) h += 12
+    if (ap === 'am' && h === 12) h = 0
+    return h * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10)
+  }
+  const recentActivity = []
+  timeline.forEach((t, order) => {
+    const inHour = (t.clients || [])
+      .filter(c => c.filled && c.updatedAt)
+      .map(c => ({ time: c.updatedAt, hour: t.hour, client: c.client, order, at: secsOfDay(c.updatedAt) }))
+      .sort((a, b) => a.at - b.at)
+    recentActivity.push(...inHour)
+  })
+  const recent = recentActivity.slice(-8).reverse()
+
   const TITLES = {
-    board:'Board', myday:'My Day', dashboard:'Dashboard',
+    board:'Board', dashboard:'Dashboard',
     footage:'Footage Requests', followup:'Follow-ups',
     performance:'My Performance', notifications:'Notifications',
     help:'Help & Support', settings:'Settings',
   }
 
-  // Every destination the sidebar used to hold. The five that carry real work
+  // Every destination the sidebar used to hold. The four that carry real work
   // sit in the switch; the four that are still placeholders sit behind More,
   // so nothing is unreachable and the bar stays readable.
+  //
+  // My Day is gone as a destination, not as a feature: the hour strip, the
+  // whole-shift board, the day's totals, the next hour, the current task and
+  // the day's activity all sit on the Board now, which is where the work is.
   const MAIN_TABS = [
     { value:'board',     label:'Board',      count: realBoard.length },
-    { value:'myday',     label:'My Day' },
     { value:'dashboard', label:'Dashboard' },
     { value:'footage',   label:'Footage',    count: footage.pending.length },
     { value:'followup',  label:'Follow-ups', count: footage.followups.length },
@@ -762,9 +779,16 @@ export default function Dashboard() {
                 style={{ width:'30px', height:'30px', objectFit:'contain' }}
                 onError={e => (e.target.style.display = 'none')}
               />
-              <div style={{ minWidth:0 }}>
-                <div className="ellip" style={{ color:C.text, fontSize:T.md, fontWeight:800, lineHeight:1.25 }}>
+              {/* The wordmark the sidebar used to carry. Dropped below 1120px,
+                  where the operator's own name matters more than the brand. */}
+              <div className="hide-narrow" style={{ flexDirection:'column', gap:'2px', paddingRight:'4px' }}>
+                <CautioWordmark size={15} color={C.text} weight={800} letterSpacing="0.3px" />
+                <span style={{ color:C.dim, fontSize:'8.5px', letterSpacing:'0.5px' }}>OPERATIONS</span>
+              </div>
+              <div style={{ minWidth:0, borderLeft:`1px solid ${C.border2}`, paddingLeft:'10px' }}>
+                <div className="ellip" style={{ color:C.text, fontSize:T.md, fontWeight:800, lineHeight:1.25, display:'flex', alignItems:'center', gap:'6px' }}>
                   {user?.name}
+                  {isActive && <span className="live-dot" style={{ width:'5px', height:'5px', background:C.accent }} />}
                 </div>
                 <div style={{ color:C.muted, fontSize:'10px', lineHeight:1.3 }}>
                   {user?.empId} · {fmtShift(summary?.shiftStart, summary?.shiftEnd)}
@@ -778,6 +802,13 @@ export default function Dashboard() {
               {isActive
                 ? <Pill icon="check-circle" color={summary?.attendanceStatus==='Late' ? C.amber : C.accent}>In {startTime}</Pill>
                 : <Pill icon="clock" color={C.amber}>{shiftStatus === 'ended' ? 'Shift ended' : 'Not started'}</Pill>}
+              {/* Today's date. It was a top-bar pill before the redesign and
+                  it matters on a night shift, where the calendar day rolls
+                  over mid-shift and the clock alone doesn't say which day
+                  the work is being filed against. */}
+              <span className="hide-narrow">
+                <Pill icon="calendar">{istDateLabel()}</Pill>
+              </span>
               <Pill icon="clock">{clock}</Pill>
               <NotifyButton
                 count={footage.pending.length + footage.followups.length}
@@ -871,6 +902,26 @@ export default function Dashboard() {
             {/* ── Board: the hour in front of you ── */}
             {activeTab === 'board' && (
               <>
+                {/* The greeting the old top bar opened with. One line, above
+                    the work rather than in place of it. */}
+                <div style={{
+                  display:'flex', alignItems:'baseline', justifyContent:'space-between',
+                  gap:SP[3], flexWrap:'wrap', marginBottom:SP[3],
+                }}>
+                  <div style={{ color:C.text, fontSize:T.lg, fontWeight:800, letterSpacing:'-0.3px' }}>
+                    {greeting()}, {user?.name?.split(' ')[0] || 'there'}
+                  </div>
+                  <div style={{ color:C.muted, fontSize:T.sm }}>
+                    {isActive
+                      ? liveClients.length === 0
+                        ? 'Nothing assigned this hour.'
+                        : liveClients.length - liveDone === 0
+                          ? 'This hour is fully updated — nice work.'
+                          : `${liveClients.length - liveDone} client${liveClients.length - liveDone === 1 ? '' : 's'} still to update this hour.`
+                      : 'Start your shift to begin updating.'}
+                  </div>
+                </div>
+
                 <div style={{ marginBottom:SP[3] }}>
                   <HourRail
                     timeline={timeline}
@@ -891,6 +942,7 @@ export default function Dashboard() {
                       hour={shownHour}
                       hourState={viewEntry?.state || (isNowHour ? 'current' : 'done')}
                       canEdit={isActive}
+                      focusRequest={focusRequest}
                       {...(isNowHour ? clientContext : {})}
                     />
                   </div>
@@ -901,19 +953,18 @@ export default function Dashboard() {
                     onGoToTab={setActiveTab}
                     onOpenStats={()=>setActiveTab('dashboard')}
                     isActive={isActive}
+                    upNext={upNext}
+                    recent={recent}
+                    onFocusClient={(client) => {
+                      // Asking for a client only makes sense against the hour
+                      // it belongs to, so the board comes back to the live hour
+                      // first if it had been moved.
+                      if (!isNowHour) selectHour(currentHour)
+                      setFocusRequest({ client, at: Date.now() })
+                    }}
                   />
                 </div>
               </>
-            )}
-
-            {/* ── My Day: the whole shift, and everything that used to live here ── */}
-            {activeTab === 'myday' && (
-              <MyDayTab
-                currentHour={currentHour} currentClients={clients} filled={filled} myDay={myDay}
-                saveUpdate={saveUpdate} saving={saving}
-                footagePending={footage.pending.length} followupsPending={footage.followups.length}
-                onGoToTab={setActiveTab} canEdit={isActive}
-              />
             )}
 
             {activeTab === 'dashboard' && (
@@ -938,6 +989,11 @@ export default function Dashboard() {
                 />
               </Card>
             )}
+
+            {/* The sidebar's footer line. Small, but it was there. */}
+            <div style={{ color:'#4a4a4a', fontSize:'9.5px', textAlign:'center', marginTop:SP[6], lineHeight:1.6 }}>
+              © {new Date().getFullYear()} Cautio Telematics. All rights reserved.
+            </div>
           </div>
         </main>
       </div>

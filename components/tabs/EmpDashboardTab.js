@@ -37,7 +37,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
   const notifications = []
   if (footagePending>0) notifications.push({ icon:'footage', color:C.red, title:'Footage Pending', desc:`${footagePending} footage request(s) awaiting upload`, tab:'footage' })
   if (followupsPending>0) notifications.push({ icon:'followups', color:C.amber, title:'Follow-up Pending', desc:`${followupsPending} follow-up(s) need attention`, tab:'followup' })
-  if (updatesMissed>0) notifications.push({ icon:'clock', color:C.amber, title:'Missed Updates', desc:`${updatesMissed} update(s) missed this period`, tab:'myday' })
+  if (updatesMissed>0) notifications.push({ icon:'clock', color:C.amber, title:'Missed Updates', desc:`${updatesMissed} update(s) missed this period`, tab:'board' })
 
   return (
     <div>
@@ -66,7 +66,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
             </div>
           </div>
           <button
-            onClick={()=>onGoToTab('myday')}
+            onClick={()=>onGoToTab('board')}
             className="pressable"
             style={{
               display:'flex', alignItems:'center', gap:SP[3],
@@ -77,7 +77,7 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
             <Donut segments={[{value:completionPct,color:C.accent},{value:100-completionPct,color:'#2a2a2a'}]} size={62} thickness={8} centerLabel={`${completionPct}%`} />
             <span style={{ textAlign:'left' }}>
               <span className="eyebrow" style={{ display:'block' }}>Today's progress</span>
-              <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'5px' }}>View my day →</span>
+              <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'5px' }}>Back to my board →</span>
             </span>
           </button>
         </Card>
