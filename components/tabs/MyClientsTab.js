@@ -45,7 +45,15 @@ function countVehicles(cell) {
 // An empty list has three quite different meanings, and saying only "no
 // clients" leaves the employee guessing which one they're looking at —
 // most often after clocking in early, when the page looks broken.
-function emptyMessage({ scheduledThisHour, clockedOut, myWindow }) {
+// Is `hour` inside this window? The window may wrap past midnight.
+function inWindow(w, hour) {
+  if (!w || w.start == null || w.end == null || hour == null) return true
+  return w.end <= w.start
+    ? (hour >= w.start || hour < w.end)
+    : (hour >= w.start && hour < w.end)
+}
+
+function emptyMessage({ scheduledThisHour, clockedOut, myWindow, currentHour }) {
   if (clockedOut) {
     return {
       icon: 'check-circle', tone: 'good',
@@ -54,6 +62,18 @@ function emptyMessage({ scheduledThisHour, clockedOut, myWindow }) {
     }
   }
   if (scheduledThisHour === false && myWindow) {
+    // Outside the window has two quite different meanings, and saying the
+    // wrong one is worse than saying nothing: somebody still clocked in at
+    // half past eight in the evening was being told their shift starts at ten
+    // in the morning, as though they had turned up eleven hours early.
+    const beforeStart = !inWindow(myWindow, currentHour) && currentHour < myWindow.start && myWindow.end > myWindow.start
+    if (!beforeStart) {
+      return {
+        icon: 'clock', tone: 'warn',
+        title: `Your shift window ended at ${fmtHour(myWindow.end)}.`,
+        detail: 'Nothing further is assigned to you — later hours belong to whoever is on shift now. End your shift so your hours are recorded, or use OT if you are staying on.',
+      }
+    }
     return {
       icon: 'clock', tone: 'warn',
       title: `Your shift starts at ${fmtHour(myWindow.start)}.`,
@@ -270,7 +290,7 @@ export default function MyClientsTab({
 
   // ── Nothing assigned ──
   if (realClients.length === 0) {
-    const m = emptyMessage({ scheduledThisHour, clockedOut, myWindow })
+    const m = emptyMessage({ scheduledThisHour, clockedOut, myWindow, currentHour })
     return (
       <Card pad={false} style={{ minHeight:'420px', display:'flex', flexDirection:'column' }}>
         {!canEdit && <ReadOnlyStrip clockedOut={clockedOut} />}

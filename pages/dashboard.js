@@ -41,6 +41,25 @@ function istDateLabel() {
     timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric',
   })
 }
+// Whether the clock has passed the end of this shift's window.
+//
+// The window is the EFFECTIVE one — clocking in early or late moves it — and
+// the server always sets it so that the hour somebody arrived in is inside it.
+// So for a shift that is still open, "the current hour is not in the window"
+// can only mean the window has run out.
+function windowHasEnded(startHour, endHour, nowHour) {
+  if (startHour == null || endHour == null) return false
+  const wraps = endHour <= startHour
+  const inWindow = wraps
+    ? (nowHour >= startHour || nowHour < endHour)
+    : (nowHour >= startHour && nowHour < endHour)
+  return !inWindow
+}
+function fmtHour12(h) {
+  if (h == null) return '—'
+  const to12 = h % 12 === 0 ? 12 : h % 12
+  return `${to12}:00 ${h >= 12 ? 'PM' : 'AM'}`
+}
 function fmtShift(startHour, endHour) {
   if (startHour==null || endHour==null) return '—'
   const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
@@ -655,6 +674,13 @@ export default function Dashboard() {
   // ── MAIN APP ──
   const isActive = shiftStatus === 'active'
 
+  // Clocked in, but the shift window has already run out. Nothing closes a
+  // shift by itself — the end time in Shift_Log is the employee's own click —
+  // so a forgotten one stays open, the attendance row never gets an end time
+  // or a duration, and the platform goes on counting that person as on the
+  // floor. Saying so, loudly, is what stops it going unnoticed for hours.
+  const shiftOverdue = isActive && windowHasEnded(summary?.shiftStart, summary?.shiftEnd, currentHour)
+
   // ── The board's hour ──
   // The rail can select any hour of the shift. The hour in progress is served
   // by the live split (/api/clients/current); any other hour comes from the
@@ -817,6 +843,11 @@ export default function Dashboard() {
 
               {isActive ? (
                 <>
+                  {/* Past the window, ending the shift is the one thing left to
+                      do, so it stops looking like a quiet secondary action. */}
+                  {shiftOverdue && (
+                    <Button variant="primary" onClick={handleEndShiftClick}>End shift now</Button>
+                  )}
                   <Button variant="danger" icon="clock" onClick={startBreak} disabled={breakActionLoading}>Break</Button>
                   <Button
                     variant="ghost" icon="clock"
@@ -884,6 +915,18 @@ export default function Dashboard() {
 
         <main style={{ padding:`${SP[4]} ${SP[5]} ${SP[8]}` }}>
           <div style={{ maxWidth:'var(--content-max)', margin:'0 auto', minWidth:0 }}>
+            {shiftOverdue && (
+              <div style={{ marginBottom:SP[3] }}>
+                <Banner
+                  tone="warn" icon="clock"
+                  action={<Button size="sm" variant="primary" onClick={handleEndShiftClick}>End shift</Button>}
+                >
+                  Your shift ended at {fmtHour12(summary?.shiftEnd)} — you clocked in at {startTime} and
+                  the shift is still open. End it so your hours are recorded, or use OT if you are staying on.
+                </Banner>
+              </div>
+            )}
+
             {!isActive && (
               <div style={{ marginBottom:SP[3] }}>
                 <Banner

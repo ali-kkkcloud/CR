@@ -2,7 +2,8 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, appendRow, appendRows, updateRowCells,
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, findOpenShiftRow
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
+  getAwayOnBreakNames, findOpenShiftRow
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, distributeClientsForHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -80,9 +81,19 @@ export default async function handler(req, res) {
     // handing them to whoever the roster lists just parks them with
     // someone who may never log in and never update them.
     const onShiftNames = getOnShiftNamesFromLog(shiftRows, [today, yesterday])
+    // Away on a long break counts as not there. Handing the leaver's unfinished
+    // clients to somebody who has been on an auto-break since the morning is
+    // the same failure redistribution exists to prevent, one step removed.
+    //
+    // The leaver themselves is never "away" for this purpose: their own break
+    // was closed a few lines above, and they have to stay in the pool for the
+    // split below to work out what they are still holding.
+    const awayNames = new Set(
+      [...getAwayOnBreakNames(breakRows, [today, yesterday])].filter(n => n !== user.name)
+    )
     const stillWorking = getScheduledEmployeesAtHour(currentHour, leaveMap, overridesMap)
       .map(e => e.name)
-      .filter(n => n !== user.name && onShiftNames.has(n))
+      .filter(n => n !== user.name && onShiftNames.has(n) && !awayNames.has(n))
     const vehicleMap = await fetchClientVehicleCounts()
 
     // What this employee is actually still holding, taken from the live
@@ -97,6 +108,7 @@ export default async function handler(req, res) {
     const { poolNames } = buildHourPool({
       hour: currentHour, leaveMap, overridesMap, onShiftNames,
       clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterday]),
+      awayNames,
       alwaysInclude: user.name,
     })
     const locked = buildLockedAssignments(updateRows, shiftDate, currentHour)

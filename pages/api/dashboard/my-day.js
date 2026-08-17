@@ -1,9 +1,12 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog
+  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts,
+  getLeaveMapForDate, getShiftOverridesForDate,
+  getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
 } from '../../../lib/sheets'
-import { employees, getScheduledEmployeesAtHour, distributeClientsForHour, customTextFor } from '../../../lib/schedule'
+import { employees, distributeClientsForHour, customTextFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
+import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -43,14 +46,19 @@ export default async function handler(req, res) {
     // Who is clocked in right now — used to project hours that have no
     // rows yet, matching how the live current-hour view splits the work.
     const onShiftNames = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
+    const clockedOutNames = getClockedOutNamesFromLog(shiftLogRows, [today, yesterday])
 
-    const [updateRows, redistRows, vehicleMap, leaveMap, overridesMap] = await Promise.all([
+    const [updateRows, redistRows, breakRows, vehicleMap, leaveMap, overridesMap] = await Promise.all([
       readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 8000),
       readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 8000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
       fetchClientVehicleCounts(),
       getLeaveMapForDate(date),
       getShiftOverridesForDate(date),
     ])
+    // Somebody away on a long break is not owed this hour's work — same rule
+    // the live board and the Command Center apply.
+    const awayNames = getAwayOnBreakNames(breakRows, [today, yesterday])
 
     // Find this employee's scheduled hours
     const emp = employees().find(e => e.name === user.name)
@@ -173,16 +181,17 @@ export default async function handler(req, res) {
         }))
       } else {
         // No rows yet (an hour still ahead of me, or one I never opened):
-        // fall back to a projection using the same rules as the live view.
-        const scheduledNames = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap).map(e => e.name)
-        const onShiftScheduled = scheduledNames.filter(n => onShiftNames.has(n))
-        const poolNames = onShiftScheduled.length > 0 ? onShiftScheduled : scheduledNames
+        // fall back to a projection using the same rules as the live view —
+        // literally the same function, rather than a fourth hand-rolled copy of
+        // it. This one had drifted: it never excluded anybody who had gone home,
+        // and it applied System-marked leave to people who were clocked in, so
+        // the hour strip could promise clients the live board would not give.
+        const { poolNames } = buildHourPool({
+          hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames,
+        })
 
         // Only genuinely completed work is pinned — see /api/clients/current.
-        const lockedAssignments = {}
-        updateRows.slice(1)
-          .filter(r => r[0] === date && parseInt(r[4]) === hour && (r[5] || '').toString().trim())
-          .forEach(r => { lockedAssignments[r[3]] = r[2] })
+        const lockedAssignments = buildLockedAssignments(updateRows, date, hour)
 
         const dist = distributeClientsForHour(hour, poolNames, vehicleMap, lockedAssignments, true)
         myClients = (dist[user.name] || []).map(c => ({

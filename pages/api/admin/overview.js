@@ -1,9 +1,10 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
-  getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, fetchClientVehicleCounts,
+  getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
+  getAwayOnBreakNames, fetchClientVehicleCounts,
 } from '../../../lib/sheets'
-import { employees, isScheduledAtHour, distributeClientsForHour } from '../../../lib/schedule'
+import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 
@@ -22,9 +23,10 @@ export default async function handler(req, res) {
     const today       = todayStr()
     const currentHour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours()
 
-    const [credRows, shiftRows, updateRows, redistRows, footageRows, overridesMap] = await Promise.all([
+    const [credRows, shiftRows, breakRows, updateRows, redistRows, footageRows, overridesMap] = await Promise.all([
       readSheetCached(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`, 60000),
       readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.BREAKS}!A:H`, 15000),
       readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`, 15000),
       readSheetCached(CRM_SHEET_ID,   `${TABS.REDISTRIB}!A:G`, 15000),
       readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000),
@@ -59,20 +61,51 @@ export default async function handler(req, res) {
       workByEmp[owner].assigned += 1
     })
 
+    // Hours with work scheduled and nobody rostered to do it.
+    //
+    // A client's hours come from Client_Timings and the roster comes from
+    // Employee_Hours, and nothing has ever checked that the two line up. Today
+    // 145 clients fall at seven in the evening and no shift covers that hour,
+    // so those slots cannot be assigned to anybody — they were absent from
+    // every board and from this screen too, which is indistinguishable from the
+    // platform having lost them.
+    let coverageGaps = []
+
+    // A night shift is logged under the day it began, so both days count as
+    // "clocked in right now".
+    const istNowTop = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+    const yTop = new Date(istNowTop.getTime() - 24 * 3600000)
+    const yesterdayTop = `${String(yTop.getDate()).padStart(2,'0')}/${String(yTop.getMonth()+1).padStart(2,'0')}/${yTop.getFullYear()}`
+    // The same definition of "on shift" the employee's own screen uses: an
+    // Active row, and not one left open so long that it is plainly forgotten.
+    // The admin used to read the raw row instead, so somebody whose own
+    // dashboard said "Not started" was listed here as on duty — two answers
+    // about the same person on the same platform.
+    const onShiftNamesTop = getOnShiftNamesFromLog(shiftRows, [today, yesterdayTop])
+    const awayNamesTop    = getAwayOnBreakNames(breakRows, [today, yesterdayTop])
+
     // The hour in progress, worked out exactly as the employee's own board
     // works it out — same pool, same locks, same vehicle-count balancing.
     try {
       const leaveMap   = await getLeaveMapForDate(today)
+      for (let h = 0; h < 24; h++) {
+        const due = Object.entries(clientTimings()).filter(([, hs]) => hs.includes(h)).length
+        if (due === 0) continue
+        if (getScheduledEmployeesAtHour(h, leaveMap, overridesMap).length === 0) {
+          coverageGaps.push({ hour: h, clients: due })
+        }
+      }
       const vehicleMap = await fetchClientVehicleCounts()
       // A night shift is logged under the day it began, so both days count
       // as "clocked in right now".
-      const istNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-      const y = new Date(istNow.getTime() - 24 * 3600000)
-      const yesterday = `${String(y.getDate()).padStart(2,'0')}/${String(y.getMonth()+1).padStart(2,'0')}/${y.getFullYear()}`
-      const onShiftNames = getOnShiftNamesFromLog(shiftRows, [today, yesterday])
+      const yesterday = yesterdayTop
       const { poolNames } = buildHourPool({
-        hour: currentHour, leaveMap, overridesMap, onShiftNames,
+        hour: currentHour, leaveMap, overridesMap, onShiftNames: onShiftNamesTop,
         clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterday]),
+        // Somebody on a long break is not working this hour, so the hour is
+        // not theirs — the boards apply the same rule, and the two must never
+        // disagree about who holds a client.
+        awayNames: awayNamesTop,
       })
       const locked = buildLockedAssignments(updateRows, today, currentHour)
       const dist = distributeClientsForHour(currentHour, poolNames, vehicleMap, locked, true)
@@ -97,17 +130,22 @@ export default async function handler(req, res) {
       const isWeekOff  = weekOffEmps.has(emp.name)
       const hasStarted = !!shiftLog?.[3]
       const hasEnded   = shiftLog?.[6] === 'Ended'
+      // Row still says Active, but not recently enough to be believed — the
+      // shift was never closed and the day has moved on. It is neither "on
+      // duty" nor "ended"; it is a row somebody has to tidy up.
+      const shiftStale = hasStarted && !hasEnded && !onShiftNamesTop.has(emp.name)
 
       const myWork = workByEmp[emp.name] || { assigned: 0, completed: 0 }
       const assignedCount  = myWork.assigned
       const completedCount = myWork.completed
 
       let statusLabel = 'Not Started'
-      if (isWeekOff)       statusLabel = 'Week Off'
-      else if (hasEnded)   statusLabel = 'Ended'
-      else if (hasStarted) statusLabel = 'Active'
-      else if (isActive)   statusLabel = 'Not Started'
-      else                 statusLabel = 'Off Shift'
+      if (isWeekOff)        statusLabel = 'Week Off'
+      else if (hasEnded)    statusLabel = 'Ended'
+      else if (shiftStale)  statusLabel = 'Left Open'
+      else if (hasStarted)  statusLabel = 'Active'
+      else if (isActive)    statusLabel = 'Not Started'
+      else                  statusLabel = 'Off Shift'
 
       return {
         name:         emp.name,
@@ -122,6 +160,15 @@ export default async function handler(req, res) {
         // Is this employee inside their shift window at this very hour?
         // Drives the live "right now" health reading.
         isScheduledNow: isActive,
+        // Clocked in, but their window has already run out. Nothing closes a
+        // shift on its own, so this is somebody the admin has to chase: the
+        // attendance row has no end time and no duration until it is closed.
+        shiftOverdue: statusLabel === 'Active' && !isActive,
+        // A shift row still open from long enough ago that nobody is coming
+        // back to it. Shown separately so it reads as data to clean up rather
+        // than as somebody standing on the floor.
+        shiftStale,
+        onBreakLong:  awayNamesTop.has(emp.name),
         isNight:      emp.isNight,
         isWeekOff,
         statusLabel,
@@ -153,6 +200,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       employees:      empStatus,
+      coverageGaps,
       redistribution: todayRedistrib,
       footage: { pending: pendingFootage, done: doneFootage },
       kpis: {

@@ -11,10 +11,17 @@ import { useState, useMemo } from 'react'
 import Icon from '../Icons'
 import { C } from '../Widgets'
 import { Card, SearchInput, Segmented, Tag, Meter, EmptyState, T, R, SP, SURF } from '../ui'
+import { liveBreakMinutes } from './BreaksTab'
+
+function fmtMins(m) {
+  const h = Math.floor((m || 0) / 60), mm = (m || 0) % 60
+  return h > 0 ? `${h}h ${mm}m` : `${mm}m`
+}
 
 const STATE = {
   'Active':      { color: C.accent, label: 'On shift',    rank: 0 },
   'Not Started': { color: C.red,    label: 'Not started', rank: 1 },
+  'Left Open':   { color: C.amber,  label: 'Shift left open', rank: 2 },
   'Ended':       { color: C.blue,   label: 'Ended',       rank: 3 },
   'Week Off':    { color: C.purple, label: 'Week off',    rank: 4 },
   'Off Shift':   { color: C.dim,    label: 'Off shift',   rank: 5 },
@@ -35,13 +42,23 @@ export default function FloorPanel({ employees, breaks, onPick }) {
     [breaks]
   )
 
+  // How long each open break has been running. "BREAK" on its own hid the case
+  // that matters: an auto-break opened at ten in the morning and still open in
+  // the evening means that person has not been at their desk all day, and until
+  // it showed as a duration nothing on this screen said so.
+  const breakMinutes = useMemo(() => {
+    const m = {}
+    ;(breaks?.employees || []).filter(e => e.currentlyOnBreak).forEach(e => { m[e.name] = liveBreakMinutes(e) })
+    return m
+  }, [breaks])
+
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase()
     return employees
       .filter(e => {
         if (term && !e.name.toLowerCase().includes(term)) return false
         if (filter === 'onduty')  return e.statusLabel === 'Active' || e.statusLabel === 'Not Started'
-        if (filter === 'issues')  return e.statusLabel === 'Not Started' || onBreakNames.has(e.name) || e.pendingCount > 0
+        if (filter === 'issues')  return e.statusLabel === 'Not Started' || e.statusLabel === 'Left Open' || e.shiftOverdue || onBreakNames.has(e.name) || e.pendingCount > 0
         return true
       })
       // Whoever needs looking at first, then by outstanding work.
@@ -55,7 +72,7 @@ export default function FloorPanel({ employees, breaks, onPick }) {
 
   const counts = {
     onduty: employees.filter(e => e.statusLabel === 'Active' || e.statusLabel === 'Not Started').length,
-    issues: employees.filter(e => e.statusLabel === 'Not Started' || onBreakNames.has(e.name) || e.pendingCount > 0).length,
+    issues: employees.filter(e => e.statusLabel === 'Not Started' || e.statusLabel === 'Left Open' || e.shiftOverdue || onBreakNames.has(e.name) || e.pendingCount > 0).length,
     all:    employees.length,
   }
 
@@ -106,7 +123,12 @@ export default function FloorPanel({ employees, breaks, onPick }) {
               <span style={{ flex:1, minWidth:0 }}>
                 <span style={{ display:'flex', alignItems:'center', gap:'7px' }}>
                   <span className="ellip" style={{ color:C.text, fontSize:T.base, fontWeight:700 }}>{e.name}</span>
-                  {on && <Tag color={C.red} dot>BREAK</Tag>}
+                  {on && (
+                    <Tag color={C.red} dot>
+                      BREAK{breakMinutes[e.name] ? ` ${fmtMins(breakMinutes[e.name])}` : ''}
+                    </Tag>
+                  )}
+                  {e.shiftOverdue && <Tag color={C.amber} dot>SHIFT NOT CLOSED</Tag>}
                   {e.isAdjusted && <Tag color={C.amber}>ADJ</Tag>}
                 </span>
                 <span style={{ display:'block', color:st.color, fontSize:'9.5px', marginTop:'2px' }}>
