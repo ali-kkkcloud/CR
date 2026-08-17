@@ -1,11 +1,18 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate
+  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts,
+  getLeaveMapForDate, getShiftOverridesForDate,
+  getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
 } from '../../../lib/sheets'
 import {
-  employees, getScheduledEmployeesAtHour, distributeClientsForHour, customTextFor
+  employees, distributeClientsForHour, customTextFor
 } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
+import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
+
+function ddmmyyyyFromDate(d) {
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
+}
 
 // "KA01AB1234, KA02CD5678" -> 2. Anything blank counts as none.
 function countListed(cell) {
@@ -24,14 +31,47 @@ export default async function handler(req, res) {
 
     const date = (req.query.date || todayStr()).toString()
 
-    const [updateRows, shiftRows, leaveMap, redistRows, vehicleMap, overridesMap] = await Promise.all([
+    const [updateRows, shiftRows, breakRows, leaveMap, redistRows, vehicleMap, overridesMap] = await Promise.all([
       readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 10000),
       readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
       getLeaveMapForDate(date),
       readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 10000),
       fetchClientVehicleCounts(),
       getShiftOverridesForDate(date),
     ])
+
+    // ── Who this day's hours are actually shared between ──────────────────
+    //
+    // This used to split every hour across everyone the ROSTER said should be
+    // working, while the employees' boards split it across whoever is actually
+    // clocked in. The two therefore disagreed on nearly every hour, and the
+    // disagreement was not cosmetic: the admin would show a client sitting
+    // PENDING against a named employee who had never been given it, and hand
+    // fourteen clients at six in the evening to somebody who clocked out at
+    // ten in the morning. An admin cannot chase work that the boards never
+    // handed out.
+    //
+    // Both sides now answer it with the same function. That is the whole point
+    // of lib/distribution — see the note at the top of it.
+    const today = todayStr()
+    const isToday = date === today
+    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+
+    // For today, presence means "clocked in right now". For a day already
+    // finished, nobody is Active any more, so presence means "turned up at all
+    // that day" — otherwise the live rules would report a past day as though
+    // the entire roster had been absent.
+    const onShiftNames = isToday
+      ? getOnShiftNamesFromLog(shiftRows, [today, yesterday])
+      : new Set(shiftRows.slice(1).filter(r => r[2] === date).map(r => (r[1] || '').toString().trim()).filter(Boolean))
+    const clockedOutNames = isToday
+      ? getClockedOutNamesFromLog(shiftRows, [today, yesterday])
+      : new Set()
+    // Only meaningful for the live day: a break that is still open now.
+    const awayNames = isToday
+      ? getAwayOnBreakNames(breakRows, [today, yesterday])
+      : new Set()
 
     // Index updates by emp+hour
     const updateIdx = {}
@@ -52,15 +92,18 @@ export default async function handler(req, res) {
         }
       })
 
-    // Locked assignments per hour (from CRM_Updates)
+    // Locked assignments per hour — from buildLockedAssignments, so only rows
+    // carrying a REAL update pin a client. This used to key off every row
+    // including the blank placeholders written whenever a board loads, which
+    // froze each hour's split to whoever happened to open their page first and
+    // is how one client at one hour ended up listed under two employees.
     const lockedByHour = {}
-    updateRows.slice(1)
-      .filter(r => r[0] === date)
-      .forEach(r => {
-        const h = parseInt(r[4])
-        if (!lockedByHour[h]) lockedByHour[h] = {}
-        lockedByHour[h][r[3]] = r[2]
-      })
+    const hoursSeen = new Set(
+      updateRows.slice(1).filter(r => r[0] === date).map(r => parseInt(r[4]))
+    )
+    for (let h = 0; h < 24; h++) {
+      if (hoursSeen.has(h)) lockedByHour[h] = buildLockedAssignments(updateRows, date, h)
+    }
 
     // Login map
     const loginMap = {}
@@ -109,12 +152,16 @@ export default async function handler(req, res) {
           return { hour, isOnLeave: true, leaveReason: leaveEntry?.reason || '', clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
         }
 
-        // Distribution for this hour using locked assignments
-        const scheduledEmps = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
-        const scheduledNames = scheduledEmps.map(e => e.name)
+        // The same split the boards computed, worked out the same way.
+        // reserveOffShiftLocks=true matches /api/clients/current: work somebody
+        // finished before going home stays theirs instead of bouncing onto a
+        // colleague.
+        const { poolNames } = buildHourPool({
+          hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames,
+        })
         const lockedAssignments = lockedByHour[hour] || {}
 
-        const dist = distributeClientsForHour(hour, scheduledNames, vehicleMap, lockedAssignments)
+        const dist = distributeClientsForHour(hour, poolNames, vehicleMap, lockedAssignments, true)
         const assignedClients = dist[emp.name] || []
 
         // Add redistributed TO this employee (real reason + timestamp from Redistribution_Log)
@@ -181,6 +228,12 @@ export default async function handler(req, res) {
         endTime:    shiftLog?.endTime   || '',
         duration:   shiftLog?.duration  || '',
         status:     shiftLog?.status    || 'not_started',
+        // Clocked in and never clocked out, long enough ago that nobody is
+        // coming back to it. The same rule the employee's own screen uses, so
+        // the two cannot describe the same person differently.
+        shiftStale: isToday
+          && !!shiftLog?.startTime && !shiftLog?.endTime
+          && !onShiftNames.has(emp.name),
         leaves,
         hours,
         totalAssigned:  hours.reduce((s,h) => s + h.totalClients,     0),

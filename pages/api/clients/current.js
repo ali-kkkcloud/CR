@@ -1,7 +1,8 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate,
+  getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
 } from '../../../lib/sheets'
 import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, employees, isScheduledAtHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -37,13 +38,14 @@ export default async function handler(req, res) {
     // YESTERDAY and merged (today wins). This is what makes a night shift
     // that started yesterday evening still resolve correctly after
     // midnight, when the calendar date has already rolled over. ──
-    const [leaveMapToday, leaveMapYesterday, overridesToday, overridesYesterday, updateRows, shiftLogRows] = await Promise.all([
+    const [leaveMapToday, leaveMapYesterday, overridesToday, overridesYesterday, updateRows, shiftLogRows, breakRows] = await Promise.all([
       getLeaveMapForDate(today),
       getLeaveMapForDate(yesterday),
       getShiftOverridesForDate(today),
       getShiftOverridesForDate(yesterday),
       readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 8000),
       readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
     ])
 
     // ── Resolve MY operating "shift date" — the date my shift actually
@@ -147,9 +149,15 @@ export default async function handler(req, res) {
     )
     const iHaveClockedOut = myShiftRows.length > 0 && !myShiftRows.some(r => r[6] === 'Active')
 
+    // Anyone away on a long break is left out of the split. Their clients had
+    // been sitting on a board nobody was looking at — invisible to every
+    // colleague, and only discovered as a missed hour after the fact.
+    const awayNames = getAwayOnBreakNames(breakRows, [today, yesterday])
+
     const { poolNames, scheduledNames } = buildHourPool({
       hour, leaveMap, overridesMap, onShiftNames,
       clockedOutNames: getClockedOutNamesFromLog(shiftLogRows, [today, yesterday]),
+      awayNames,
       alwaysInclude: iHaveClockedOut ? null : user.name,
     })
 

@@ -16,6 +16,13 @@ import FootageTab from '../components/tabs/FootageTab'
 import BreaksTab, { liveBreakMinutes } from '../components/tabs/BreaksTab'
 import FloorPanel from '../components/tabs/FloorPanel'
 
+// "7pm", for listing hours compactly inside a sentence.
+function fmtHourShort(h) {
+  if (h == null) return '—'
+  const to12 = h % 12 === 0 ? 12 : h % 12
+  return `${to12}${h >= 12 ? 'pm' : 'am'}`
+}
+
 function todayISO() {
   const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
   return d.toISOString().split('T')[0]
@@ -135,18 +142,35 @@ export default function Admin() {
     } catch (e) { console.error('loadProgress failed:', e) }
   }, [])
 
-  const loadFullDay = useCallback(async (dateISO) => {
-    setFullDayLoading(true)
-    setFullDayData(null)
+  // Which date's data is on screen, so a slow response for a date the admin has
+  // already moved off cannot land on top of a newer one.
+  const fullDayReqRef = useRef('')
+
+  const loadFullDay = useCallback(async (dateISO, { silent = false } = {}) => {
+    // A background refresh keeps what is on screen.
+    //
+    // This used to clear the whole day and raise the loading flag every time —
+    // including on its own 45-second poll — so the Full Day View wiped itself
+    // to a spinner and rebuilt, twice a minute, while the admin was reading it.
+    // Any drawer open at that moment lost its numbers with it. Only the first
+    // load of a date announces itself now.
+    if (!silent) {
+      setFullDayLoading(true)
+      setFullDayData(null)
+    }
+    fullDayReqRef.current = dateISO
     const ddmmyyyy = dateISO.split('-').reverse().join('/')
     try {
       const data = await fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`).then(r => r.json())
-      setFullDayData(data && Array.isArray(data.employees) ? data : { employees: [] })
+      if (fullDayReqRef.current !== dateISO) return   // the admin moved on
+      if (data && Array.isArray(data.employees)) setFullDayData(data)
+      else if (!silent) setFullDayData({ employees: [] })
     } catch (e) {
       console.error('loadFullDay failed:', e)
-      setFullDayData({ employees: [] })
+      if (!silent) setFullDayData({ employees: [] })
+    } finally {
+      if (fullDayReqRef.current === dateISO) setFullDayLoading(false)
     }
-    setFullDayLoading(false)
   }, [])
 
   // Generic, promise-returning day-view fetch (used by ProgressTab to drill
@@ -183,7 +207,7 @@ export default function Admin() {
         else if (breakRange === 'all') loadBreaks('all', '2000-01-01', todayISO())
         else loadBreaks('custom', breakFrom, breakTo)
       }
-      else if (activeTab === 'fullday') loadFullDay(fullDayDate)
+      else if (activeTab === 'fullday') loadFullDay(fullDayDate, { silent: true })
       else if (activeTab === 'progress') loadProgress(fromDate, toDate)
       else if (activeTab === 'footage') loadData()
     }, every)
@@ -374,11 +398,24 @@ export default function Admin() {
 
   const activeEmployees     = employees.filter(e => e.statusLabel === 'Active')
   const notStartedEmployees = employees.filter(e => e.statusLabel === 'Not Started')
+  // Clocked in with the window already over. Nothing closes a shift by itself,
+  // so these rows sit open with no end time and no duration until somebody
+  // acts — and the platform keeps counting them as on the floor.
+  const overdueEmployees    = employees.filter(e => e.shiftOverdue)
+  // Rows still marked Active from long enough ago that nobody is coming back.
+  const staleShiftEmployees = employees.filter(e => e.shiftStale)
+  // Hours where clients are due and the roster has nobody at all.
+  const coverageGaps = overview?.coverageGaps || []
+  const gapClients   = coverageGaps.reduce((s,g) => s + (g.clients||0), 0)
+  // Away long enough that the split has stopped giving them work.
+  const longBreakEmployees  = (breaks?.employees || [])
+    .filter(e => e.currentlyOnBreak && liveBreakMinutes(e) >= 20)
 
   const statusCounts = employees.reduce((acc,e)=>{ acc[e.statusLabel]=(acc[e.statusLabel]||0)+1; return acc }, {})
   const statusDonutSegs = [
     { label:'Active',      value:statusCounts['Active']||0,      color:C.accent },
     { label:'Ended',       value:statusCounts['Ended']||0,       color:C.blue },
+    { label:'Left open',   value:statusCounts['Left Open']||0,   color:C.amber },
     { label:'Week Off',    value:statusCounts['Week Off']||0,    color:C.amber },
     { label:'Not Started', value:statusCounts['Not Started']||0, color:C.red },
     { label:'Off Shift',   value:statusCounts['Off Shift']||0,   color:C.dim },
@@ -391,7 +428,19 @@ export default function Admin() {
   // rather than a separate "View details" button at the bottom of the card
   // that only ever pointed at one of them.
   const aiAlerts = []
+  if (coverageGaps.length>0) aiAlerts.push({
+    sev:'high', icon:'alerts', title:'Hours with nobody rostered',
+    desc:`${gapClients} client slot${gapClients===1?'':'s'} fall in ${coverageGaps.length} hour${coverageGaps.length===1?'':'s'} no shift covers (${coverageGaps.map(g=>fmtHourShort(g.hour)).join(', ')}) — nobody can be given them`,
+    tab:'fullday',
+  })
   if (kpis.notStarted>0) aiAlerts.push({ sev:'high', icon:'offline', title:'Not started', desc:`${kpis.notStarted} employee${kpis.notStarted===1?' has':'s have'} not clocked in yet`, tab:'fullday' })
+  if (staleShiftEmployees.length>0) aiAlerts.push({
+    sev:'warn', icon:'clock', title:'Shift rows left open',
+    desc:`${staleShiftEmployees.map(e=>e.name).join(', ')} — clocked in and never clocked out, so the attendance row has no end time`,
+    tab:'fullday',
+  })
+  if (overdueEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Shift not closed', desc:`${overdueEmployees.map(e=>e.name).join(', ')} ${overdueEmployees.length===1?'is':'are'} past the end of the shift and still clocked in`, tab:'fullday' })
+  if (longBreakEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Away a long time', desc:`${longBreakEmployees.map(e=>`${e.name} (${Math.floor(liveBreakMinutes(e)/60)>0?`${Math.floor(liveBreakMinutes(e)/60)}h `:''}${liveBreakMinutes(e)%60}m)`).join(', ')} — their hours are being shared out to whoever is working`, tab:'breaks' })
   if (breaks?.onBreakNow>0) aiAlerts.push({ sev:'warn', icon:'clock', title:'On break', desc:`${breaks.onBreakNow} employee${breaks.onBreakNow===1?' is':'s are'} away right now`, tab:'breaks' })
   if (footage.followups.length>0) aiAlerts.push({ sev:'warn', icon:'followups', title:'Follow-ups open', desc:`${footage.followups.length} follow-up${footage.followups.length===1?'':'s'} waiting to be closed`, tab:'followups' })
   if (footage.pending.length>0) aiAlerts.push({ sev:'info', icon:'footage', title:'Footage queue', desc:`${footage.pending.length} request${footage.pending.length===1?'':'s'} still open`, tab:'footage' })
@@ -402,7 +451,9 @@ export default function Admin() {
   // should be here and isn't outranks a queue that is merely long.
   const headline = (() => {
     const bits = []
+    if (gapClients > 0) bits.push(`${gapClients} slots in unstaffed hours`)
     if (kpis.notStarted > 0) bits.push(`${kpis.notStarted} not clocked in`)
+    if (overdueEmployees.length > 0) bits.push(`${overdueEmployees.length} shift${overdueEmployees.length===1?'':'s'} not closed`)
     if (breaks?.onBreakNow > 0) bits.push(`${breaks.onBreakNow} on break`)
     if (totalPendingToday > 0) bits.push(`${totalPendingToday} updates outstanding`)
     if (footage.pending.length > 0) bits.push(`${footage.pending.length} footage requests open`)
@@ -411,6 +462,11 @@ export default function Admin() {
       tone:'error', color:C.red, icon:'offline',
       title: `${kpis.notStarted} employee${kpis.notStarted === 1 ? '' : 's'} should be on shift and ${kpis.notStarted === 1 ? 'is' : 'are'}n't`,
       detail: bits.slice(1).join(' · ') || 'Everything else is running normally.',
+    }
+    if (overdueEmployees.length > 0) return {
+      tone:'warn', color:C.amber, icon:'clock',
+      title: `${overdueEmployees.length} shift${overdueEmployees.length === 1 ? '' : 's'} still open past the end of the window`,
+      detail: bits.filter(b => !b.includes('not closed')).join(' · ') || 'Everything else is running normally.',
     }
     if (totalPendingToday > 0 || footage.pending.length > 0) return {
       tone:'warn', color:C.amber, icon:'clock',

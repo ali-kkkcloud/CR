@@ -31,6 +31,10 @@ function statusOf(emp) {
   }
   if (!emp.loggedIn) return { label:'Not Started', color:C.red }
   if (emp.endTime) return { label:'Shift Ended', color:C.blue }
+  // Clocked in, never clocked out, and too long ago to still be believed. It
+  // used to read "Working", which is how a forgotten row from this morning went
+  // on presenting itself as somebody standing on the floor all evening.
+  if (emp.shiftStale) return { label:'Shift Left Open', color:C.amber }
   return { label:'Working', color:C.accent }
 }
 

@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, getShiftOverridesForDate,
-  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
+  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
 } from '../../../lib/sheets'
 import { employees, distributeClientsForHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -75,12 +75,13 @@ export default async function handler(req, res) {
     const todayOverride = await getShiftOverridesForDate(today)
     const myOverride = todayOverride[user.name]
 
-    const [updateRows, footageRows, followupRows, redistRows, shiftRows, leaveRows, vehicleMap] = await Promise.all([
+    const [updateRows, footageRows, followupRows, redistRows, shiftRows, breakRows, leaveRows, vehicleMap] = await Promise.all([
       readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 15000),
       readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000),
       readSheetCached(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, 15000),
       readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 15000),
       readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
       readSheetCached(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`, 30000),
       fetchClientVehicleCounts(),
     ])
@@ -294,6 +295,7 @@ export default async function handler(req, res) {
         hour: nowISTDate().getHours(), leaveMap: leaveMapNow, overridesMap: todayOverride,
         onShiftNames,
         clockedOutNames: getClockedOutNamesFromLog(shiftRows, [calendarToday, yesterday]),
+        awayNames: getAwayOnBreakNames(breakRows, [calendarToday, yesterday]),
         alwaysInclude: clockedOut ? null : user.name,
       })
       const locked = buildLockedAssignments(updateRows, today, nowISTDate().getHours())
