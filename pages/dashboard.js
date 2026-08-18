@@ -6,7 +6,7 @@ import LogoutModal from '../components/LogoutModal'
 import Icon from '../components/Icons'
 import { C, parseSheetDate } from '../components/Widgets'
 import { AccountButton, NotifyButton } from '../components/Shell'
-import { Card, Button, Pill, Tag, Field, Segmented, Banner, EmptyState, Modal, T, R, SP, SURF } from '../components/ui'
+import { Card, Button, Pill, Tag, Field, Segmented, Banner, EmptyState, Modal, T, R, SP, SURF, businessDayOf, istBusinessDateLabel } from '../components/ui'
 import CautioWordmark from '../components/Wordmark'
 import HourRail from '../components/HourRail'
 import TodayRail from '../components/TodayRail'
@@ -20,27 +20,31 @@ function hourLabel(h) {
   const suf  = (n) => n >= 12 ? 'PM' : 'AM'
   return `${to12(h)}:00 ${suf(h)} – ${to12((h+1)%24)}:00 ${suf((h+1)%24)}`
 }
-// shiftDateStr is "DD/MM/YYYY" (todayStr() format, the date this shift
-// started on). Compares calendar day, not raw string, so single- vs
-// zero-padded sheet dates still match correctly.
+// shiftDateStr is "DD/MM/YYYY" — the OPERATING day this shift belongs to.
+//
+// Compared as operating days, not calendar days: a request raised at two in
+// the morning carries the next calendar date but belongs to the shift that
+// began the evening before, and comparing the raw calendar dates dropped
+// exactly those requests out of the end-of-shift hand-over prompt — the ones a
+// night shift most needs to pass on.
 function sameDayAsShift(raisedAt, shiftDateStr) {
   if (!shiftDateStr) return true // shift date unknown — don't hide anything
   const raisedD = parseSheetDate(raisedAt)
   if (!raisedD) return false
-  const [d, m, y] = shiftDateStr.split('/').map(Number)
-  return raisedD.getFullYear() === y && raisedD.getMonth() === m - 1 && raisedD.getDate() === d
+  const raisedDay = businessDayOf(raisedD)
+  if (!raisedDay) return false
+  const [rd, rm, ry] = raisedDay.split('/').map(Number)
+  const [d, m, y]    = shiftDateStr.split('/').map(Number)
+  return rd === d && rm === m && ry === y
 }
 function greeting() {
   const h = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Kolkata' })).getHours()
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
 }
-// Read in IST, like every other time on this platform. The browser's own date
-// is a different day for anyone working either side of midnight.
-function istDateLabel() {
-  return new Date().toLocaleDateString('en-GB', {
-    timeZone:'Asia/Kolkata', day:'2-digit', month:'short', year:'numeric',
-  })
-}
+// The OPERATING day, read in IST — see istBusinessDateLabel. At two in the
+// morning this still reads as the previous date, which is the day every row
+// the shift writes is filed under.
+function istDateLabel() { return istBusinessDateLabel() }
 // Whether the clock has passed the end of this shift's window.
 //
 // The window is the EFFECTIVE one — clocking in early or late moves it — and
