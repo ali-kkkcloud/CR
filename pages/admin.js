@@ -7,7 +7,7 @@ import Icon from '../components/Icons'
 import { C, Donut, parseSheetDate } from '../components/Widgets'
 import { TopBar, PageBody, AccountButton, NotifyButton } from '../components/Shell'
 import {
-  Card, CardHead, Button, Pill, Tag, Field, Stat, Meter, Segmented,
+  Card, CardHead, Button, Pill, Tag, Field, Stat, Meter, Segmented, PageHead, Section, PickList,
   EmptyState, Modal, Table, T, R, SP, SURF, fmtRange, istBusinessDateLabel,
 } from '../components/ui'
 import FullDayTab from '../components/tabs/FullDayTab'
@@ -442,6 +442,11 @@ export default function Admin() {
   // Hours where clients are due and the roster has nobody at all.
   const coverageGaps = overview?.coverageGaps || []
   const gapClients   = coverageGaps.reduce((s,g) => s + (g.clients||0), 0)
+  // An hour that has already gone with nobody on it is work that was missed.
+  // One still ahead is a roster gap worth fixing, not an emergency — saying
+  // both in the same red made the screen shout at seven in the morning about a
+  // day that had not happened yet.
+  const gapsAreLive  = coverageGaps.some(g => g.past)
   // Away long enough that the split has stopped giving them work.
   const longBreakEmployees  = (breaks?.employees || [])
     .filter(e => e.currentlyOnBreak && liveBreakMinutes(e) >= 20)
@@ -573,117 +578,74 @@ export default function Admin() {
           {/* ══════════ OVERVIEW ══════════ */}
           {activeTab === 'overview' && (
             <>
-              {/* ── The headline ──
-                  An admin opens this to answer one question: does anything
-                  need me right now? It used to take eight stat cards and a
-                  scroll to find out. It is one sentence now, and the two
-                  panels under it are the answer. */}
-              <div style={{
-                display:'flex', alignItems:'center', gap:SP[3], flexWrap:'wrap',
-                background: headline.tone === 'good' ? '#94EC8E0f' : headline.tone === 'warn' ? '#FFC1070f' : '#FF4D4D12',
-                border:`1px solid ${headline.color}2e`, borderRadius:R.lg,
-                padding:'14px 18px', marginBottom:SP[3],
-              }}>
-                <Icon name={headline.icon} size={19} color={headline.color} />
-                <div style={{ flex:1, minWidth:'200px' }}>
-                  <div style={{ color:headline.color, fontSize:T.lg, fontWeight:800, letterSpacing:'-0.2px' }}>
-                    {headline.title}
-                  </div>
-                  <div style={{ color:C.muted, fontSize:T.base, marginTop:'3px' }}>{headline.detail}</div>
-                </div>
-                <div style={{ display:'flex', gap:SP[2], flexWrap:'wrap' }}>
-                  <Button size="sm" variant="ghost" icon="download" onClick={downloadDailyReport}>Daily report</Button>
-                  <Button size="sm" variant="primary" iconRight="arrow-right" onClick={()=>setActiveTab('fullday')}>Full day</Button>
-                </div>
-              </div>
+              {/* ── One sentence, then the numbers that change what you do ──
+                  This screen used to open with two stacked alert banners, a
+                  six-number grid, and a queue that repeated both of them in
+                  words — the same handful of facts said three times before any
+                  of the floor was visible. It is one line now, with the figures
+                  beside it, and the floor itself starts at the top of the
+                  screen instead of below the fold. */}
+              <PageHead
+                title={headline.title}
+                sub={headline.detail}
+                facts={[
+                  { label:'on duty',  value:`${activeNowCnt}/${onDutyNow.length}`, tone: commandHealthPct < 80 ? 'warn' : 'good',
+                    onClick:()=>setRosterModal({ title:'Clocked in now', empty:'Nobody is clocked in right now.', rows:activeEmployees }) },
+                  { label:'done',     value:totalUpdatesToday, tone:'good' },
+                  { label:'pending',  value:totalPendingToday, tone: totalPendingToday ? 'warn' : undefined },
+                  kpis.notStarted > 0 && { label:'not in', value:kpis.notStarted, tone:'bad',
+                    onClick:()=>setRosterModal({ title:'Not started', empty:'Everyone scheduled has clocked in.', rows:notStartedEmployees }) },
+                  breaks?.onBreakNow > 0 && { label:'on break', value:breaks.onBreakNow, tone:'warn', onClick:()=>setActiveTab('breaks') },
+                  { label:'footage open', value:footage.pending.length, tone: footage.pending.length ? 'warn' : undefined,
+                    onClick:()=>setActiveTab('footage') },
+                  redistribution.length > 0 && { label:'moved', value:redistribution.length, onClick:()=>setActiveTab('redistribution') },
+                ]}
+                actions={
+                  <>
+                    <Button size="sm" variant="ghost" icon="download" onClick={downloadDailyReport}>Daily report</Button>
+                    <Button size="sm" variant="primary" iconRight="arrow-right" onClick={()=>setActiveTab('fullday')}>Full day</Button>
+                  </>
+                }
+              />
 
               {/* ── Clients nobody can be given ──
-                  The one failure this platform must never hide. A client that
-                  reaches no board cannot be missed by an employee, so without
-                  this panel nothing anywhere would ever mention it. Sits above
-                  everything else because it is the only problem on this screen
-                  that no amount of chasing people will fix — it needs the
-                  roster or the client's hours changed in the sheet. */}
+                  Kept, because work reaching no board is the one failure
+                  nothing else would report. Made small: it used to be a block
+                  of twenty-three red chips that filled the fold and shouted the
+                  same alarm whether one hour or the whole day was affected. */}
               {coverageGaps.length > 0 && (
-                <Card
-                  pad={false}
-                  style={{ borderColor:C.red+'55', background:'#FF4D4D0a', marginBottom:SP[3] }}
-                >
-                  <div style={{ display:'flex', alignItems:'center', gap:SP[3], padding:`${SP[4]} ${SP[4]} ${SP[3]}`, flexWrap:'wrap' }}>
-                    <Icon name="alerts" size={18} color={C.red} />
-                    <div style={{ flex:1, minWidth:'220px' }}>
-                      <div style={{ color:C.red, fontSize:T.md, fontWeight:800 }}>
-                        {gapClients} client slot{gapClients===1?'':'s'} are on nobody's board
-                      </div>
-                      <div style={{ color:C.muted, fontSize:T.sm, marginTop:'3px' }}>
-                        Scheduled in {coverageGaps.length} hour{coverageGaps.length===1?'':'s'} with nobody rostered to take them.
-                        Fix the roster or the client's hours in the sheet and they appear immediately.
-                      </div>
-                    </div>
-                    <Button size="sm" variant="danger" onClick={()=>setGapModal(coverageGaps)}>See which</Button>
-                  </div>
-                  <div style={{
-                    display:'flex', gap:SP[2], flexWrap:'wrap',
-                    padding:`0 ${SP[4]} ${SP[4]}`,
-                  }}>
-                    {coverageGaps.map(g => (
-                      <span key={g.hour} style={{
-                        background:'#FF4D4D14', border:`1px solid ${C.red}33`, borderRadius:R.md,
-                        padding:'6px 11px', color:C.text2, fontSize:T.sm, fontWeight:600,
-                      }}>
-                        {fmtHourShort(g.hour)} · <span style={{ color:C.red }}>{g.clients}</span>
-                      </span>
-                    ))}
-                  </div>
-                </Card>
+                <div style={{
+                  display:'flex', alignItems:'center', gap:SP[3], flexWrap:'wrap',
+                  background: gapsAreLive ? '#FF4D4D0d' : '#FFC1070d',
+                  border:`1px solid ${(gapsAreLive ? C.red : C.amber)}33`,
+                  borderRadius:R.md, padding:'11px 15px', marginBottom:SP[4],
+                }}>
+                  <Icon name="alerts" size={15} color={gapsAreLive ? C.red : C.amber} />
+                  <span style={{ color: gapsAreLive ? C.red : C.amber, fontSize:T.base, fontWeight:700 }}>
+                    {gapClients} client slot{gapClients===1?'':'s'} on nobody's board
+                  </span>
+                  <span className="ellip" style={{ color:C.muted, fontSize:T.sm, flex:1, minWidth:'160px' }}>
+                    {gapsAreLive
+                      ? `${coverageGaps.filter(g=>g.past).length} hour${coverageGaps.filter(g=>g.past).length===1?'':'s'} already gone · no shift covered them`
+                      : `${coverageGaps.length} hour${coverageGaps.length===1?'':'s'} later today have no shift covering them`}
+                  </span>
+                  <Button size="sm" variant={gapsAreLive ? 'danger' : 'subtle'} onClick={()=>setGapModal(coverageGaps)}>See which</Button>
+                </div>
               )}
 
-              {/* ── Needs you, and the floor ── */}
+              {/* ── What needs doing, and who is on the floor ── */}
               <div className="floor-split" style={{ marginBottom:SP[5] }}>
                 <Card pad={false} style={{ display:'flex', flexDirection:'column' }}>
-                  <div style={{ padding:SP[4], borderBottom:`1px solid ${C.border}` }}>
+                  <div style={{ padding:`${SP[4]} ${SP[4]} ${SP[2]}` }}>
                     <span className="eyebrow">Needs you</span>
                   </div>
                   {aiAlerts.length === 0 ? (
                     <EmptyState icon="check-circle" tone="good" title="All clear." detail="Nothing on the floor needs you right now." />
                   ) : (
-                    <div style={{ padding:'6px' }}>
-                      {aiAlerts.map((a,i) => <AlertRow key={i} alert={a} onClick={()=>setActiveTab(a.tab)} />)}
+                    <div style={{ padding:'6px 6px 10px' }}>
+                      {aiAlerts.map((a,i) => <AlertRow key={i} alert={a} onClick={()=>a.tab && setActiveTab(a.tab)} />)}
                     </div>
                   )}
-
-                  {/* The day's shape, kept small and underneath — it is
-                      context for the queue above, not the headline. */}
-                  <div style={{
-                    marginTop:'auto', borderTop:`1px solid ${C.border}`,
-                    padding:SP[4], display:'grid',
-                    gridTemplateColumns:'repeat(auto-fit, minmax(96px, 1fr))', gap:SP[3],
-                  }}>
-                    {/* Two of these open the roster behind the number — who is
-                        actually clocked in, and who should be but isn't. The
-                        old KPI cards did, and the modal was still here after
-                        the redesign with nothing left to open it. */}
-                    <MiniFact
-                      label="On duty" value={`${activeNowCnt}/${onDutyNow.length}`}
-                      color={commandHealthPct < 80 ? C.amber : C.accent}
-                      onClick={()=>setRosterModal({ title:'Clocked in now', empty:'Nobody is clocked in right now.', rows:activeEmployees })}
-                    />
-                    <MiniFact label="Done"      value={totalUpdatesToday} color={C.accent} />
-                    <MiniFact label="Pending"   value={totalPendingToday} color={totalPendingToday ? C.amber : C.muted} />
-                    <MiniFact
-                      label="Not in" value={kpis.notStarted}
-                      color={kpis.notStarted ? C.red : C.muted}
-                      onClick={()=>setRosterModal({ title:'Not started', empty:'Everyone scheduled has clocked in.', rows:notStartedEmployees })}
-                    />
-                    <MiniFact label="On break"  value={breaks?.onBreakNow || 0} color={breaks?.onBreakNow ? C.red : C.muted} onClick={()=>setActiveTab('breaks')} />
-                    <MiniFact label="Week off"  value={kpis.weekOff} color={C.purple} />
-                    <MiniFact
-                      label="Footage" value={footage.pending.length}
-                      color={footage.pending.length ? C.amber : C.muted}
-                      onClick={()=>setActiveTab('footage')}
-                    />
-                    <MiniFact label="Moved"     value={redistribution.length} color={C.blue} onClick={redistribution.length ? ()=>setActiveTab('redistribution') : undefined} />
-                  </div>
                 </Card>
 
                 <FloorPanel
@@ -694,8 +656,11 @@ export default function Admin() {
               </div>
 
               {/* Output */}
-              <div className="eyebrow" style={{ marginBottom:SP[3] }}>Today's output</div>
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(260px, 1fr))', gap:SP[3], marginBottom:SP[5] }}>
+              <Section title="Today's output">
+              {/* start, not stretch: a card saying "nothing yet" was being
+                  inflated to the height of the tallest one beside it, so an
+                  empty day showed as four tall boxes of blank space. */}
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(260px, 1fr))', gap:SP[3], alignItems:'start' }}>
                 <Card>
                   <CardHead title="Top performers" icon="trend-up" />
                   {/* maxUpdates is floored at 1 so the bar maths can't divide
@@ -775,6 +740,7 @@ export default function Admin() {
                   )}
                 </Card>
               </div>
+              </Section>
 
               {/* Activity */}
               <Card>
@@ -1060,23 +1026,6 @@ export default function Admin() {
 // ─────────────────────────────────────────────────────────────────────────
 // Presentational helpers (Overview-tab specific — shared ones live in Widgets.js)
 // ─────────────────────────────────────────────────────────────────────────
-
-function MiniFact({ label, value, color, onClick }) {
-  const Tag = onClick ? 'button' : 'div'
-  return (
-    <Tag
-      onClick={onClick}
-      className={onClick ? 'pressable' : undefined}
-      style={{
-        background:'transparent', border:'none', textAlign:'left', padding:0,
-        cursor: onClick ? 'pointer' : 'default', minWidth:0,
-      }}
-    >
-      <div style={{ color: color || C.text, fontSize:T.lg, fontWeight:800, lineHeight:1 }}>{value}</div>
-      <div className="ellip" style={{ color:C.muted, fontSize:'9.5px', marginTop:'4px' }}>{label}</div>
-    </Tag>
-  )
-}
 
 function AlertRow({ alert, onClick }) {
   const sevColor = { high:C.red, warn:C.amber, info:C.blue, success:C.accent }[alert.sev] || C.muted

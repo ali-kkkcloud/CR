@@ -1,14 +1,36 @@
 import { useState, useEffect, useMemo } from 'react'
 import Icon from '../Icons'
 import { C, MiniStat, AttendanceDots, ScoreBadge, HBarList } from '../Widgets'
-import { Card, Button, SearchInput, Stat, T, R, SP, SURF, istDayISO } from '../ui'
+import { Card, Button, SearchInput, Stat, PageHead, PickList, T, R, SP, SURF, istDayISO } from '../ui'
+
+// One date format on this screen. It had three: 17/08/2026 in one heading,
+// 2026-08-17 in the next, and the pickers' own format above both.
+function fmtDay(iso) {
+  if (!iso) return '—'
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y) return iso
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })
+}
 
 function initials(name) { return (name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase() }
 
 // Heuristic 0-100 performance score. Weighs attendance most heavily since
 // it's the most reliable signal we have; the rest are penalty-based off
 // real counters already returned by /api/admin/employee-progress.
+// Has anything happened for this person in this range at all? A day that has
+// not been worked yet has nothing to judge, and scoring it anyway rated every
+// employee "Critical" at half past seven in the morning — an alarming red
+// verdict on a day that had not started.
+export function hasDataInRange(emp) {
+  return (emp.daysPresent || 0) > 0
+      || (emp.rangeUpdatesCount || 0) > 0
+      || (emp.rangeClientsCount || 0) > 0
+      || (emp.rangeAlerts || 0) > 0
+      || (emp.rangeMisaligns || 0) > 0
+}
+
 function computeScore(emp) {
+  if (!hasDataInRange(emp)) return null
   const totalDays = emp.totalDaysInRange || 1
   const attendance = (emp.daysPresent / totalDays) * 40
   const misalignPenalty = Math.min(20, emp.rangeMisaligns * 2)
@@ -98,57 +120,68 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
           <Button size="sm" variant="subtle" onClick={()=>{ const x=istDayISO(-1); setFromDate(x); setToDate(x) }}>Yesterday</Button>
           <Button size="sm" variant="subtle" onClick={()=>{ setFromDate(istDayISO(-6)); setToDate(istDayISO()) }}>Last 7 days</Button>
           <Button size="sm" variant="subtle" onClick={()=>{ setFromDate(istDayISO(-29)); setToDate(istDayISO()) }}>Last 30 days</Button>
-          <div style={{ flex:1, minWidth:'170px' }}>
-            <SearchInput value={search} onChange={setSearch} placeholder="Search employee…" />
-          </div>
+          <div style={{ flex:1 }} />
           <Button size="sm" variant="ghost" icon="download" onClick={exportPerformance}>Export</Button>
         </div>
       </Card>
 
-      {/* KPI strip */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(148px, 1fr))', gap:SP[3], marginBottom:SP[4] }}>
-        <Stat icon="users" label="Employees" value={kpis.employees} sub={`${kpis.days} day${kpis.days===1?'':'s'} in range`} />
-        <Stat icon="shield" label="Avg attendance" value={`${kpis.avgAttendance}%`} sub="Present vs range days" progress={kpis.avgAttendance} />
-        <Stat icon="check-circle" label="Updates recorded" value={kpis.updates} sub="Across selected range" />
-        <Stat icon="analytics" label="Misaligns found" value={kpis.misaligns} subColor={kpis.misaligns>0?C.amber:C.muted} accent={kpis.misaligns>0?C.amber:C.accent} />
-        <Stat icon="alerts" label="Alerts" value={kpis.alerts} subColor={kpis.alerts>0?C.amber:C.muted} accent={kpis.alerts>0?C.amber:C.accent} />
-        <Stat icon="camera" label="Footage pending" value={kpis.footagePending} subColor={kpis.footagePending>0?C.amber:C.muted} accent={kpis.footagePending>0?C.amber:C.accent} />
-        <Stat icon="check-circle" label="Footage completed" value={kpis.footageDone} />
-      </div>
+      {/* Seven stat tiles became one line.
+          Three of them arrived with no sub-line at all, so the row read as a
+          set of empty boxes; all seven together cost the top third of the
+          screen to say things you glance at once. */}
+      <PageHead
+        title={`${kpis.employees} employee${kpis.employees===1?'':'s'} · ${fmtDay(fromDate)}${fromDate===toDate?'':` – ${fmtDay(toDate)}`}`}
+        sub={`${kpis.days} day${kpis.days===1?'':'s'} in range`}
+        facts={[
+          { label:'avg attendance', value:`${kpis.avgAttendance}%`, tone: kpis.avgAttendance >= 80 ? 'good' : 'warn' },
+          { label:'updates',        value:kpis.updates, tone:'good' },
+          { label:'misaligns',      value:kpis.misaligns, tone: kpis.misaligns ? 'warn' : undefined },
+          { label:'alerts',         value:kpis.alerts, tone: kpis.alerts ? 'warn' : undefined },
+          { label:'footage open',   value:kpis.footagePending, tone: kpis.footagePending ? 'warn' : undefined },
+          { label:'footage done',   value:kpis.footageDone },
+        ]}
+      />
 
       {/* Three fixed tracks overflowed the page below about 1250px — the
           300px list plus two columns whose contents have their own minimum
           widths added up to more than the content column had. */}
       <div className="progress-split">
         {/* Employee list */}
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'14px' }}>
-          <div className="eyebrow" style={{ marginBottom:'10px' }}>EMPLOYEES ({filtered.length})</div>
-          <div style={{ marginBottom:'10px' }}>
+        <Card pad={false} style={{ position:'sticky', top:'12px' }}>
+          <div style={{ padding:`${SP[3]} ${SP[3]} ${SP[2]}`, display:'flex', flexDirection:'column', gap:SP[2] }}>
+            <span className="eyebrow">Employees — {filtered.length}</span>
             <SearchInput value={search} onChange={setSearch} placeholder="Search employee…" />
           </div>
-          <div style={{ display:'flex', flexDirection:'column', gap:'6px', maxHeight:'560px', overflowY:'auto' }}>
-            {filtered.map(e => {
+          <PickList
+            value={selected && selected.name}
+            onPick={setSelectedEmpName}
+            empty="Nobody matches that search."
+            maxHeight="60vh"
+            items={filtered.map(e => {
               const score = computeScore(e)
               const live = isToday ? overviewEmployees?.find(o=>o.name===e.name) : null
-              const active = e.name === (selected && selected.name)
-              return (
-                <div key={e.name} onClick={()=>setSelectedEmpName(e.name)} style={{
-                  display:'flex', alignItems:'center', gap:'10px', padding:'9px 10px', borderRadius:'9px', cursor:'pointer',
-                  background: active ? C.accentDark+'55' : 'transparent', border:`1px solid ${active?C.accent+'55':'transparent'}`,
-                }}>
-                  <div style={{ width:'30px', height:'30px', borderRadius:'50%', background:C.accentDark, color:C.accent, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'10.5px', fontWeight:700, flexShrink:0 }}>{initials(e.name)}</div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ color:C.text, fontSize:'12px', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{e.name}</div>
-                    <div style={{ color:C.muted, fontSize:'9.5px' }}>{live ? live.statusLabel : `${e.daysPresent}/${e.totalDaysInRange}d present`}</div>
-                  </div>
-                  <div style={{ textAlign:'right' }}>
-                    <div style={{ color: score>=85?C.accent:score>=70?C.amber:C.red, fontSize:'12.5px', fontWeight:800 }}>{score}</div>
-                  </div>
-                </div>
-              )
+              return {
+                key: e.name,
+                label: e.name,
+                sub: live ? live.statusLabel : `${e.daysPresent}/${e.totalDaysInRange} days present`,
+                badge: (
+                  <span style={{
+                    width:'30px', height:'30px', borderRadius:'50%', flexShrink:0,
+                    background:C.accentDark, color:C.accent,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    fontSize:'10.5px', fontWeight:700,
+                  }}>{initials(e.name)}</span>
+                ),
+                right: (
+                  <span style={{
+                    color: score == null ? C.dim : score>=85?C.accent:score>=70?C.amber:C.red,
+                    fontSize: score == null ? T.xs : T.base, fontWeight:800, flexShrink:0,
+                  }}>{score == null ? '—' : score}</span>
+                ),
+              }
             })}
-          </div>
-        </div>
+          />
+        </Card>
 
         {/* Selected employee detail */}
         {!selected ? (
@@ -166,26 +199,39 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
                   {selected.isNight?'Night':'Day'} shift · {selected.shiftStart}:00–{selected.shiftEnd}:00
                 </div>
               </div>
-              <div style={{ marginLeft:'auto' }}><ScoreBadge score={computeScore(selected)} /></div>
+              <div style={{ marginLeft:'auto' }}>
+                {computeScore(selected) == null
+                  ? <span style={{ color:C.muted, fontSize:T.sm }}>No activity in this range yet</span>
+                  : <ScoreBadge score={computeScore(selected)} />}
+              </div>
             </div>
 
             <div style={{ display:'flex', gap:'20px', flexWrap:'wrap', marginBottom:'16px', paddingBottom:'14px', borderBottom:`1px solid ${C.border}` }}>
-              <MiniStat label="CLIENTS TOUCHED" val={selected.rangeClientsCount} />
               <MiniStat label="UPDATES DONE" val={selected.rangeUpdatesCount} />
               <MiniStat label="PENDING" val={selected.rangePendingCount} warn={selected.rangePendingCount>0} />
               <MiniStat label="MISALIGNS" val={selected.rangeMisaligns} warn={selected.rangeMisaligns>0} />
               <MiniStat label="ALERTS" val={selected.rangeAlerts} warn={selected.rangeAlerts>0} />
-              <MiniStat label="FOOTAGE PENDING" val={selected.footagePending} warn={selected.footagePending>0} />
-              <MiniStat label="FOOTAGE DONE" val={selected.footageCompletedInRange} />
+              <MiniStat label="FOOTAGE OPEN" val={selected.footagePending} warn={selected.footagePending>0} />
               <MiniStat label="DAYS ABSENT" val={selected.daysAbsent} warn={selected.daysAbsent>0} />
             </div>
 
-            <div className="eyebrow" style={{ marginBottom:'8px' }}>ATTENDANCE — {progress.from} to {progress.to}</div>
+            <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:SP[2], marginBottom:'8px', flexWrap:'wrap' }}>
+              <span className="eyebrow">Attendance — {fmtDay(fromDate)}{fromDate===toDate?'':` to ${fmtDay(toDate)}`}</span>
+              {/* A row of unlabelled coloured squares is a puzzle, not a chart. */}
+              <span style={{ display:'flex', alignItems:'center', gap:SP[3], color:C.muted, fontSize:'9.5px' }}>
+                <span style={{ display:'flex', alignItems:'center', gap:'5px' }}>
+                  <span style={{ width:8, height:8, borderRadius:2, background:C.accent }} /> present
+                </span>
+                <span style={{ display:'flex', alignItems:'center', gap:'5px' }}>
+                  <span style={{ width:8, height:8, borderRadius:2, background:C.red }} /> absent
+                </span>
+              </span>
+            </div>
             <div style={{ marginBottom:'16px' }}><AttendanceDots attendance={selected.attendance} /></div>
 
             {isSingleDay ? (
               <>
-                <div className="eyebrow" style={{ marginBottom:'8px' }}>CLIENTS ASSIGNED — {fromDate}</div>
+                <div className="eyebrow" style={{ marginBottom:'8px' }}>Clients assigned — {fmtDay(fromDate)}</div>
                 {dayLoading ? (
                   <div style={{display:'flex',justifyContent:'center',padding:'1.5rem'}}><div className="spinner"></div></div>
                 ) : !selectedDayHours ? (
@@ -215,7 +261,13 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
         {selected && (
           <div style={{ display:'flex', flexDirection:'column', gap:'14px' }}>
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-              <div className="eyebrow" style={{ marginBottom:'10px' }}>SCORE BREAKDOWN</div>
+              <div className="eyebrow" style={{ marginBottom:'10px' }}>Score breakdown</div>
+              {!hasDataInRange(selected) && (
+                <div style={{ color:C.muted, fontSize:T.sm, marginBottom:'10px', lineHeight:1.6 }}>
+                  Nothing has been recorded for {selected.name} in this range, so there is
+                  nothing to score yet. The bars below show what each part would contribute.
+                </div>
+              )}
               <HBarList items={[
                 { label:'Attendance', value:Math.round((selected.daysPresent/(selected.totalDaysInRange||1))*40), color:C.accent },
                 { label:'Alignment', value:Math.max(0,20-Math.min(20,selected.rangeMisaligns*2)), color:C.blue },
@@ -228,7 +280,7 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
             </div>
 
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-              <div className="eyebrow" style={{ marginBottom:'10px' }}>NOTES</div>
+              <div className="eyebrow" style={{ marginBottom:'10px' }}>Notes — not saved yet</div>
               {notes[selected.name] && notes[selected.name].map((n,i) => (
                 <div key={i} style={{ background:C.s2, borderRadius:'8px', padding:'8px 10px', marginBottom:'6px' }}>
                   <div style={{ color:C.text2, fontSize:'11px' }}>{n.text}</div>
@@ -249,8 +301,14 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
 
       {/* Team comparison */}
       <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginTop:'14px' }}>
-        <div className="eyebrow" style={{ marginBottom:'12px' }}>TOP ALERT + MISALIGN LOAD (this range)</div>
-        <HBarList items={[...list].sort((a,b)=>(b.rangeAlerts+b.rangeMisaligns)-(a.rangeAlerts+a.rangeMisaligns)).slice(0,8).map(e=>({ label:e.name, value:e.rangeAlerts+e.rangeMisaligns, color:C.amber }))} />
+        <div className="eyebrow" style={{ marginBottom:'12px' }}>Most alerts and misalignments in this range</div>
+        {list.every(e => (e.rangeAlerts||0) + (e.rangeMisaligns||0) === 0) ? (
+          <div style={{ color:C.muted, fontSize:T.base }}>
+            Nothing flagged in this range — no alerts and no misalignments recorded.
+          </div>
+        ) : (
+          <HBarList items={[...list].sort((a,b)=>(b.rangeAlerts+b.rangeMisaligns)-(a.rangeAlerts+a.rangeMisaligns)).slice(0,8).map(e=>({ label:e.name, value:e.rangeAlerts+e.rangeMisaligns, color:C.amber }))} />
+        )}
       </div>
     </div>
   )

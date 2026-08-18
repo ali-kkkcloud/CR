@@ -305,8 +305,14 @@ input[type=date] { color-scheme: dark; }
 @media (max-width: 1330px) { .progress-split { grid-template-columns: 280px minmax(0, 1fr); } }
 @media (max-width: 900px)  { .progress-split { grid-template-columns: minmax(0, 1fr); } }
 
+/* The day: who on the left, their day on the right. The list stays on screen
+   so picking somebody never means scrolling back past their own day to reach
+   the list again. */
+.day-split { display: grid; gap: 14px; grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+@media (max-width: 1100px) { .day-split { grid-template-columns: minmax(0, 1fr); } }
+
 /* The queue and the floor, side by side above the fold. */
-.floor-split { display: grid; gap: 12px; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: stretch; }
+.floor-split { display: grid; gap: 12px; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: start; }
 @media (max-width: 1080px) { .floor-split { grid-template-columns: minmax(0, 1fr); } }
 
 /* Trend / calendar / notifications */

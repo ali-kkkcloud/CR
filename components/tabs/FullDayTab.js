@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import Icon from '../Icons'
 import { C, MiniStat, ScoreBadge } from '../Widgets'
-import { Card, Button, SearchInput, Tag, T, R, SP, SURF, istDayISO } from '../ui'
+import { Card, Button, SearchInput, Tag, PageHead, PickList, T, R, SP, SURF, istDayISO } from '../ui'
 
 function hourLabel(h) {
   const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
@@ -252,12 +252,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
           </div>
 
           <Button size="sm" variant="ghost" icon="download" onClick={exportReport}>Export</Button>
-          {selectedEmp && (
-            <Button size="sm" variant="ghost" icon="leaves"
-              style={{ color:C.amber, borderColor:C.amber+'44', background:C.amber+'12' }}
-              onClick={()=>onMarkLeave(selectedEmp)}>Mark leave — {selectedEmp.name}</Button>
-          )}
-          {!playbackOn && <Button size="sm" variant="primary" onClick={startPlayback}>▶ Replay day</Button>}
+          {!playbackOn && <Button size="sm" variant="subtle" onClick={startPlayback}>▶ Replay day</Button>}
         </div>
 
         <div style={{ display:'flex', gap:SP[2], alignItems:'center', flexWrap:'wrap' }}>
@@ -313,31 +308,70 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
         </div>
       )}
 
-      {/* KPI strip — clickable */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(110px, 1fr))', gap:'8px', marginBottom:'14px' }}>
-        {[
-          { icon:'users', label:'Scheduled', val:kpis.scheduled, onClick:()=>setStatusFilter('all') },
-          { icon:'check-circle', label:'Active Now', val:kpis.active, onClick:()=>setStatusFilter('working') },
-          { icon:'leaves', label:'On Leave', val:kpis.onLeave, onClick:()=>setStatusFilter('leave') },
-          { icon:'overview', label:'Total Clients', val:kpis.totalClients },
-          { icon:'camera', label:'Total Vehicles', val:kpis.totalVehicles },
-          { icon:'check-circle', label:'Completed', val:kpis.completed },
-          { icon:'clock', label:'Pending', val:kpis.pending, warn:kpis.pending>0, onClick:()=>setOnlyPending(v=>!v) },
-          { icon:'footage', label:'Footage Pending', val:kpis.footagePendingToday, warn:kpis.footagePendingToday>0 },
-          { icon:'shuffle', label:'Redistributions', val:kpis.redistCount, onClick:()=>setOnlyRedistributed(v=>!v) },
-        ].map((s,i) => (
-          <div key={i} onClick={s.onClick} style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'10px', padding:'10px 12px', display:'flex', alignItems:'center', gap:'8px', cursor:s.onClick?'pointer':'default' }}>
-            <Icon name={s.icon} size={14} color={s.warn?C.amber:C.accent}/>
-            <div><div style={{ color:s.warn?C.amber:C.text, fontSize:'15px', fontWeight:800, lineHeight:1 }}>{s.val}</div><div style={{ color:C.muted, fontSize:'8.5px', marginTop:'2px' }}>{s.label}</div></div>
-          </div>
-        ))}
-      </div>
+      {/* The day in one line.
+          This was nine stat tiles across the top — "39288 Total Vehicles" among
+          them, which nobody acts on — and they pushed the employees themselves
+          below the fold on every screen size. The three that change what you do
+          here are still clickable, and they still filter. */}
+      <PageHead
+        title={`${filtered.length} employee${filtered.length===1?'':'s'} on this day`}
+        sub={kpis.pending > 0
+          ? `${kpis.completed} of ${kpis.completed + kpis.pending} client slots updated`
+          : kpis.completed > 0 ? 'Every assigned slot was updated.' : 'Nothing recorded yet.'}
+        facts={[
+          { label:'on shift now', value:kpis.active, tone:'good', onClick:()=>setStatusFilter('working') },
+          { label:'on leave',     value:kpis.onLeave, tone: kpis.onLeave ? 'warn' : undefined, onClick:()=>setStatusFilter('leave') },
+          { label:'done',         value:kpis.completed, tone:'good' },
+          { label:'pending',      value:kpis.pending, tone: kpis.pending ? 'warn' : undefined, onClick:()=>setOnlyPending(v=>!v) },
+          kpis.footagePendingToday > 0 && { label:'footage open', value:kpis.footagePendingToday, tone:'warn' },
+          kpis.redistCount > 0 && { label:'moved', value:kpis.redistCount, onClick:()=>setOnlyRedistributed(v=>!v) },
+        ]}
+      />
 
       {!selectedEmp ? (
         <div style={{color:C.muted,textAlign:'center',padding:'2rem'}}>No employees match this filter.</div>
       ) : (
-        <div style={{ display:'grid', gridTemplateColumns:'2.4fr 1fr', gap:'14px', alignItems:'start' }}>
-          <div>
+        <div className="day-split">
+          {/* Who — always on screen, so picking somebody never means scrolling
+              past their own day to find the list again. One line each: the
+              seven numbers that used to sit on every row said nothing you could
+              act on without opening the person anyway. */}
+          <Card pad={false} style={{ position:'sticky', top:'12px' }}>
+            <div style={{ padding:`${SP[3]} ${SP[3]} ${SP[2]}` }}>
+              <span className="eyebrow">Employees — {filtered.length}</span>
+            </div>
+            <PickList
+              value={selectedEmp?.name}
+              onPick={(name)=>{ setSelectedEmpName(name); setDrawerClient(null) }}
+              empty="Nobody matches this filter."
+              maxHeight="70vh"
+              items={filtered.map(e => {
+                const es = statusOf(e)
+                const pct = e.totalAssigned > 0 ? Math.round((e.totalCompleted / e.totalAssigned) * 100) : 0
+                return {
+                  key: e.name,
+                  label: e.name,
+                  sub: `${es.label} · ${e.totalCompleted}/${e.totalAssigned}`,
+                  subColor: es.color,
+                  badge: <span style={{ width:8, height:8, borderRadius:'50%', background:es.color, flexShrink:0 }} />,
+                  right: (
+                    <span style={{ textAlign:'right', flexShrink:0 }}>
+                      <span style={{
+                        display:'block',
+                        color: e.totalMissed > 0 ? C.amber : e.totalAssigned > 0 ? C.accent : C.dim,
+                        fontSize:T.base, fontWeight:800,
+                      }}>{pct}%</span>
+                      {e.totalMissed > 0 && (
+                        <span style={{ display:'block', color:C.muted, fontSize:'9px', marginTop:'1px' }}>{e.totalMissed} left</span>
+                      )}
+                    </span>
+                  ),
+                }
+              })}
+            />
+          </Card>
+
+          <div style={{ minWidth:0 }}>
             {/* Expanded employee card */}
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'12px' }}>
               <div style={{ display:'flex', alignItems:'center', gap:'12px', flexWrap:'wrap' }}>
@@ -353,16 +387,20 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                     {selectedEmp.loggedIn && ` · In ${selectedEmp.startTime}${selectedEmp.endTime?` → Out ${selectedEmp.endTime}`:''}`}
                   </div>
                 </div>
-                <div style={{ display:'flex', gap:'16px', marginLeft:'auto', flexWrap:'wrap' }}>
-                  <MiniStat label="CLIENTS" val={selectedEmp.totalAssigned} />
-                  <MiniStat label="COMPLETED" val={selectedEmp.totalCompleted} />
-                  <MiniStat label="PENDING" val={selectedEmp.totalMissed} warn={selectedEmp.totalMissed>0} />
-                  <MiniStat label="REDIST." val={selectedEmp.totalRedistributed} />
-                  <MiniStat label="FOOTAGE" val={footageCountFor(selectedEmp.name)} />
-                  <div style={{ textAlign:'center' }}>
-                    <div style={{ color:C.accent, fontSize:'14px', fontWeight:800 }}>{selectedEmp.totalAssigned>0?Math.round((selectedEmp.totalCompleted/selectedEmp.totalAssigned)*100):0}%</div>
-                    <div style={{ color:C.muted, fontSize:'8px' }}>COMPLETION</div>
-                  </div>
+                {/* Their day in a sentence, not six labelled numbers. The other
+                    three — redistributions, footage, completion percent — are on
+                    the person's own drawer, one click away, where there is room
+                    to say what they mean. */}
+                <div style={{ display:'flex', alignItems:'center', gap:SP[3], marginLeft:'auto', flexWrap:'wrap' }}>
+                  <span style={{ color:C.text2, fontSize:T.base }}>
+                    <strong style={{ color: selectedEmp.totalCompleted ? C.accent : C.text, fontSize:T.lg, fontWeight:800 }}>
+                      {selectedEmp.totalCompleted}
+                    </strong>
+                    {' '}of {selectedEmp.totalAssigned} done
+                    {selectedEmp.totalMissed > 0 && <span style={{ color:C.amber }}> · {selectedEmp.totalMissed} left</span>}
+                    {footageCountFor(selectedEmp.name) > 0 && <span style={{ color:C.muted }}> · {footageCountFor(selectedEmp.name)} footage</span>}
+                  </span>
+                  <Button size="sm" variant="subtle" icon="leaves" onClick={()=>onMarkLeave(selectedEmp)}>Mark leave</Button>
                 </div>
               </div>
 
@@ -466,64 +504,14 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
               </div>
             )}
 
-            {/* Employee summary chips — compact, click to open full detail above */}
-            <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'12px' }}>
-              <div className="eyebrow" style={{ marginBottom:'12px' }}>EMPLOYEES — {filtered.length}</div>
-              <div style={{ display:'flex', flexDirection:'column', gap:'6px' }}>
-                {filtered.map(e => {
-                  const es = statusOf(e)
-                  const isSelected = e.name === selectedEmp.name
-                  const empFootage = [...footageAll.pending, ...footageAll.completed].filter(f => f.raisedBy===e.name && matchDateFlexible(f.raisedAt, date))
-                  const empFootageResolved = empFootage.filter(f => f.resolved).length
-                  const empFootagePending = empFootage.length - empFootageResolved
-                  return (
-                    <div
-                      key={e.name}
-                      onClick={()=>setSelectedEmpName(e.name)}
-                      style={{
-                        display:'flex', alignItems:'center', gap:'16px', flexWrap:'wrap', cursor:'pointer',
-                        background: isSelected ? '#16321f' : C.s2, border:`1px solid ${isSelected?C.accent+'55':C.border2}`,
-                        borderRadius:'10px', padding:'9px 14px',
-                      }}
-                    >
-                      <span style={{ width:8, height:8, borderRadius:'50%', background:es.color, flexShrink:0 }}></span>
-                      <div style={{ minWidth:'110px' }}>
-                        <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
-                          <span style={{ color:C.text, fontSize:'12.5px', fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'110px' }}>{e.name}</span>
-                          {e.usedOT && <span style={{ background:C.accentDark, color:C.accent, fontSize:'8px', fontWeight:800, borderRadius:'4px', padding:'1px 5px' }}>OT</span>}
-                        </div>
-                        <div style={{ color:C.muted, fontSize:'9.5px' }}>{es.label}</div>
-                      </div>
-                      <div style={{ display:'flex', gap:'16px', flexWrap:'wrap', marginLeft:'auto' }}>
-                        <MiniStat label="CLIENTS" val={e.totalAssigned} />
-                        <MiniStat label="DONE" val={e.totalCompleted} />
-                        <MiniStat label="PENDING" val={e.totalMissed} warn={e.totalMissed>0} />
-                        <MiniStat label="FOOTAGE IN" val={empFootage.length} />
-                        <MiniStat label="RESOLVED" val={empFootageResolved} />
-                        <MiniStat label="FOOTAGE PENDING" val={empFootagePending} warn={empFootagePending>0} />
-                        <div style={{ textAlign:'center' }}>
-                          <div style={{ color: e.totalAssigned>0 && e.totalCompleted===e.totalAssigned ? C.accent : C.text, fontSize:'13px', fontWeight:800 }}>
-                            {e.totalAssigned>0?Math.round((e.totalCompleted/e.totalAssigned)*100):0}%
-                          </div>
-                          <div style={{ color:C.muted, fontSize:'8px' }}>DONE</div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* Right: client timeline / recent activity */}
-          <div style={{ display:'flex', flexDirection:'column', gap:'14px', position:'sticky', top:'12px' }}>
+            {/* A client's own hour-by-hour trail — shown only once one is
+                picked. It used to be a permanent panel holding the sentence
+                "Select View Timeline on any client card", which is a third of
+                the screen spent explaining itself. */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))', gap:'14px' }}>
+            {drawerClient && (
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
-              {!drawerClient ? (
-                <div style={{ color:C.muted, fontSize:'11.5px', textAlign:'center', padding:'20px 6px' }}>
-                  Select "View Timeline" on any client card to see its hour-by-hour activity here.
-                </div>
-              ) : (
-                <>
+              <>
                   <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px' }}>
                     <div style={{ color:C.text, fontSize:'13px', fontWeight:700 }}>{drawerClient.client}</div>
                     <button onClick={()=>setDrawerClient(null)} style={{ background:'transparent', border:'none', color:C.muted, cursor:'pointer', fontSize:'16px' }}>×</button>
@@ -541,8 +529,8 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                     ))}
                   </div>
                 </>
-              )}
             </div>
+            )}
 
             <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px' }}>
               <div className="eyebrow" style={{ marginBottom:'10px' }}>RECENT ACTIVITIES{playbackOn?' (up to '+hourLabel(playHour)+')':''}</div>
@@ -561,6 +549,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                   ))}
                 </div>
               )}
+            </div>
             </div>
           </div>
         </div>
