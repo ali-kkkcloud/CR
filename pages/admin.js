@@ -392,6 +392,7 @@ export default function Admin() {
 
   const { employees, kpis, redistribution } = overview
   const rosterIssues = overview?.rosterIssues || []
+  const clientIssues = overview?.clientIssues || []
 
   const statusMeta = (st) => ({
     'Active':      { color:C.accent, label:'Active' },
@@ -478,6 +479,12 @@ export default function Admin() {
   if (kpis.notStarted>0) aiAlerts.push({ sev:'high', icon:'offline', title:'Not started', desc:`${kpis.notStarted} employee${kpis.notStarted===1?' has':'s have'} not clocked in yet`, tab:'fullday' })
   // Somebody who can log in but is on no roster gets no clients and shows on
   // no screen. Nothing else would ever mention them.
+  // A client with no hours in the sheet is never scheduled, never assigned and
+  // never counted as missed — invisible unless something says so.
+  if (clientIssues.length>0) aiAlerts.push({
+    sev:'high', icon:'alerts', title:'Clients that reach nobody',
+    desc:`${clientIssues.length} client${clientIssues.length===1?'':'s'} have no hours in Client_Timings, so they are never put in front of anyone: ${clientIssues.slice(0,4).map(c=>c.client).join(', ')}${clientIssues.length>4?` and ${clientIssues.length-4} more`:''}.`,
+  })
   if (rosterIssues.length>0) aiAlerts.push({
     sev:'high', icon:'users', title:'Invisible to the roster',
     desc:`${rosterIssues.map(r=>`${r.name} (${r.reason})`).join(', ')} — they can sign in, but get no clients and appear in no total. Fix the Credentials row.`,

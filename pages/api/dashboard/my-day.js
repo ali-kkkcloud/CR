@@ -47,6 +47,11 @@ export default async function handler(req, res) {
     // rows yet, matching how the live current-hour view splits the work.
     const onShiftNames = getOnShiftNamesFromLog(shiftLogRows, [today, yesterday])
     const clockedOutNames = getClockedOutNamesFromLog(shiftLogRows, [today, yesterday])
+    // Exactly the rule /api/clients/current uses — see the note there.
+    const iAmOnShift = shiftLogRows.slice(1).some(r =>
+      (r[0] || '').toString().trim() === user.empId.toString().trim() &&
+      (r[2] === today || r[2] === yesterday) && r[6] === 'Active'
+    )
 
     const [updateRows, redistRows, breakRows, vehicleMap, leaveMap, overridesMap] = await Promise.all([
       readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 8000),
@@ -237,8 +242,14 @@ export default async function handler(req, res) {
         // their own hours, and splitting the afternoon between only the people
         // already logged in told somebody at nine in the morning that they were
         // due 234 clients when their real day holds 178.
+        // alwaysInclude mirrors /api/clients/current exactly. Without it an
+        // employee looking at their own day saw an empty current hour while
+        // their board, one tab away, showed seventy-seven clients — the board
+        // keeps the person reading it in the pool, and the two screens have to
+        // answer the same question the same way.
         const livePool = () => buildHourPool({
           hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames,
+          alwaysInclude: iAmOnShift ? user.name : null,
         }).poolNames
         let poolNames
         if (date === today && hour !== nowHour && !hourHasPassed(hour, nowHour)) {

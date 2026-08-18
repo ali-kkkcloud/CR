@@ -1,6 +1,6 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
-import { appendRow, readSheet, readSheetCached, updateRowCells, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
+import { appendRow, readSheet, readSheetCached, updateRowCells, invalidateSheetCache, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
 import { getEmployeeShift, computeShiftWindow } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
@@ -123,6 +123,12 @@ export default async function handler(req, res) {
     // Shift_Log always records the REAL clock-in time (attendance truth) —
     // the effective scheduling window lives separately in Shift_Overrides.
     await appendRow(CRM_SHEET_ID, TABS.SHIFT_LOG, [user.empId, user.name, today, now, '', '', 'Active', ''])
+    // The board, the employee's own day and the Command Center all decide who
+    // holds an hour from this tab. Dropping the cached copy means the very next
+    // read sees this arrival instead of a snapshot taken seconds ago — which is
+    // what lets the split include somebody the moment they start, without any
+    // screen having to make an exception for the person looking at it.
+    invalidateSheetCache(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!`)
     return res.status(200).json({ success: true, startTime: now, shiftDate: today, earlyStart, lateStart })
 
   } catch (err) {
