@@ -158,6 +158,16 @@ export default async function handler(req, res) {
       (r[2] === today || r[2] === yesterday)
     )
     const iHaveClockedOut = myShiftRows.length > 0 && !myShiftRows.some(r => r[6] === 'Active')
+    // Am I actually clocked in? Not "am I not clocked out" — those differ for
+    // the person who never started at all, and the difference mattered: with no
+    // Shift_Log row whatsoever they were force-added to the pool and handed the
+    // entire hour, seventy-seven clients, without ever pressing Start Shift.
+    // Their own day and the admin both showed zero for the same hour, because
+    // only this screen was bending the rule. Start Shift clears the cached
+    // attendance read, so a genuine arrival is in the pool on the next poll
+    // rather than waiting out a stale cache — which is all the exception was
+    // ever for.
+    const iAmOnShift = myShiftRows.some(r => r[6] === 'Active')
 
     // Anyone away on a long break is left out of the split. Their clients had
     // been sitting on a board nobody was looking at — invisible to every
@@ -168,7 +178,7 @@ export default async function handler(req, res) {
       hour, leaveMap, overridesMap, onShiftNames,
       clockedOutNames: getClockedOutNamesFromLog(shiftLogRows, [today, yesterday]),
       awayNames,
-      alwaysInclude: iHaveClockedOut ? null : user.name,
+      alwaysInclude: iAmOnShift ? user.name : null,
     })
 
     const vehicleMap = await fetchClientVehicleCounts()

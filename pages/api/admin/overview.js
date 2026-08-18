@@ -85,6 +85,16 @@ export default async function handler(req, res) {
           : 'not on the roster',
       }))
 
+    // ── Clients the schedule can never deliver ────────────────────────────
+    // A row in Client_Timings with no usable hours is a client that reaches
+    // nobody on any day: it is on no board, so no employee can miss it, and
+    // every total on this platform is measured against the schedule — so it
+    // does not even count as work that was not done. It is invisible, which is
+    // the worst way for a client to be dropped. Named here so it is not.
+    const clientIssues = Object.entries(clientTimings())
+      .filter(([, hours]) => !hours || hours.length === 0)
+      .map(([client]) => ({ client, reason: 'no hours set in Client_Timings' }))
+
     const todayShifts = shiftRows.slice(1).filter(r => r[2] === today)
     // Anyone who actually clocked in is here, whatever any flag says.
     todayShifts.forEach(r => { if (r[3]) weekOffEmps.delete(r[1]) })
@@ -521,6 +531,7 @@ export default async function handler(req, res) {
       employees:      empStatus,
       workload,
       rosterIssues,
+      clientIssues,
       coverageGaps,
       redistribution: todayRedistrib,
       footage: { pending: pendingFootage, done: doneFootage },
