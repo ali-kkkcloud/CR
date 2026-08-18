@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
-  fetchClientVehicleCounts, parseISTDateTime, getShiftOverridesForDate,
+  fetchClientVehicleCounts, parseISTDateTime, parseOperatingDateTime, getShiftOverridesForDate,
   getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, yesterdayStr,
 } from '../../../lib/sheets'
 import { employees, distributeClientsForHour } from '../../../lib/schedule'
@@ -163,7 +163,7 @@ export default async function handler(req, res) {
     if (latestShift) {
       loginTime = latestShift[3] || null
       if (emp && loginTime) {
-        const loginDate = parseISTDateTime(today, loginTime)
+        const loginDate = parseOperatingDateTime(today, loginTime)
         if (loginDate) {
           const graceMinutes = 10
           const scheduledStart = new Date(loginDate)
@@ -172,7 +172,11 @@ export default async function handler(req, res) {
         }
       }
       if (latestShift[6] === 'Active' && loginTime) {
-        const loginDate = parseISTDateTime(today, loginTime)
+        // Operating-day aware. The date column is the operating day, so a
+        // clock-in in the small hours belongs to the calendar day after it —
+        // read literally, somebody who started at 00:21 had been "working"
+        // for twenty-four hours before they touched a client.
+        const loginDate = parseOperatingDateTime(today, loginTime)
         // nowISTDate(), not Date.now(): parseISTDateTime builds its Date from
         // IST wall-clock components, so it only lines up with a "now" built
         // the same way. Comparing it against the real epoch subtracted the
@@ -180,8 +184,10 @@ export default async function handler(req, res) {
         // half an hour as having worked minus thirty minutes.
         if (loginDate) workingMinutes = Math.round((nowISTDate().getTime() - loginDate.getTime())/60000)
       } else if (latestShift[4]) {
-        const endDate = parseISTDateTime(today, latestShift[4])
-        const loginDate = parseISTDateTime(today, loginTime)
+        // Both resolved the same way, so a night shift clocking in at 22:00
+        // and out at 06:00 reads as eight hours rather than as minus sixteen.
+        const endDate = parseOperatingDateTime(today, latestShift[4])
+        const loginDate = parseOperatingDateTime(today, loginTime)
         if (loginDate && endDate) workingMinutes = Math.round((endDate.getTime()-loginDate.getTime())/60000)
       }
     }

@@ -15,6 +15,7 @@ import ProgressTab from '../components/tabs/ProgressTab'
 import FootageTab from '../components/tabs/FootageTab'
 import BreaksTab, { liveBreakMinutes } from '../components/tabs/BreaksTab'
 import FloorPanel from '../components/tabs/FloorPanel'
+import AttendancePanel from '../components/tabs/AttendancePanel'
 import WorkloadPanel from '../components/tabs/WorkloadPanel'
 
 // "7pm", for listing hours compactly inside a sentence.
@@ -659,6 +660,15 @@ export default function Admin() {
                     <Button size="sm" variant="primary" iconRight="arrow-right" onClick={()=>setActiveTab('fullday')}>Full day</Button>
                   </>
                 }
+              />
+
+              {/* ── Who turned up, when, and how long they were away ──
+                  Top of the screen, before anything analytical: the register
+                  a supervisor reads first. Clock-in, clock-out and total break
+                  used to live on three different screens. */}
+              <AttendancePanel
+                employees={employees}
+                onPick={()=>setActiveTab('breaks')}
               />
 
               {/* ── Clients nobody can be given ──
