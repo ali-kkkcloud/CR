@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import Icon from '../Icons'
 import { C, slaBadge, parseSheetDate } from '../Widgets'
-import { Card, Button, SearchInput, Segmented, T, R, SP, SURF } from '../ui'
+import { Card, Button, SearchInput, Segmented, T, R, SP, SURF , businessDayOf } from '../ui'
 
 const PAGE_SIZE = 10
 
@@ -94,7 +94,11 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     const resolveTimes = completedAll.map(i=>i.resolveHours).filter(v=>v!=null)
     const avgResolve = resolveTimes.length ? resolveTimes.reduce((a,b)=>a+b,0)/resolveTimes.length : null
     const oldestPending = pendingAll.reduce((max,i)=> (i.ageHours!=null && i.ageHours>(max||0)) ? i.ageHours : max, null)
-    const closedToday = completedAll.filter(i => i.resolvedD && ddmmyyyy(i.resolvedD)===ddmmyyyy(new Date())).length
+    // The operating day, not the calendar one: a request closed at one in the
+    // morning belongs to the shift that was still running, and counting it
+    // against the new calendar date made the night's work vanish from "today"
+    // the moment midnight passed.
+    const closedToday = completedAll.filter(i => i.resolvedD && businessDayOf(i.resolvedD) === businessDayOf(new Date())).length
     const forwardedCount = searchScoped.filter(i=>i.status==='Forwarded').length
     return {
       total: searchScoped.length, pending: pendingAll.length, completed: completedAll.length,

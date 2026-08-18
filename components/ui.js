@@ -33,6 +33,26 @@ export function istDayISO(offsetDays = 0) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 
+// The operating day a moment belongs to, as DD/MM/YYYY — the same rule the
+// server writes every row with. Anything before 07:00 belongs to the day
+// before, so a night shift's 2am is filed under the day it clocked in on.
+export function businessDayOf(date) {
+  const d = new Date(date)
+  if (isNaN(d)) return null
+  if (d.getHours() < 7) d.setDate(d.getDate() - 1)
+  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
+}
+
+// Today's operating day, written the way people read it: "18 Aug 2026".
+// At two in the morning this still says yesterday's date, because that is the
+// day the work on screen is being filed under — showing the calendar date
+// instead would disagree with every record the shift produces.
+export function istBusinessDateLabel() {
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  if (d.getHours() < 7) d.setDate(d.getDate() - 1)
+  return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })
+}
+
 export const SURF = {
   raised: '#1E1E1E',
   sunken: '#131313',

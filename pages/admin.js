@@ -8,7 +8,7 @@ import { C, Donut, parseSheetDate } from '../components/Widgets'
 import { TopBar, PageBody, AccountButton, NotifyButton } from '../components/Shell'
 import {
   Card, CardHead, Button, Pill, Tag, Field, Stat, Meter, Segmented,
-  EmptyState, Modal, Table, T, R, SP, SURF, fmtRange,
+  EmptyState, Modal, Table, T, R, SP, SURF, fmtRange, istBusinessDateLabel,
 } from '../components/ui'
 import FullDayTab from '../components/tabs/FullDayTab'
 import ProgressTab from '../components/tabs/ProgressTab'
@@ -541,7 +541,7 @@ export default function Admin() {
             sub={tabMeta.sub}
             right={
               <>
-                <Pill icon="calendar">{new Date().toLocaleDateString('en-GB',{ day:'2-digit', month:'short', year:'numeric' })}</Pill>
+                <Pill icon="calendar">{istBusinessDateLabel()}</Pill>
                 <Pill icon="clock">{clock} <span style={{ color:C.dim }}>IST</span></Pill>
                 <NotifyButton count={notifCount} onClick={()=>setActiveTab('footage')} />
                 <AccountButton name={user?.name || 'Admin'} sub="Super Admin" onClick={()=>setShowLogout(true)} />
