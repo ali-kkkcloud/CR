@@ -3,51 +3,52 @@ import { C } from './Widgets'
 import { SideNav, SideCard } from './Shell'
 import { T, R } from './ui'
 
-// Eleven items in one undifferentiated column was the single biggest
-// source of "the admin screen is confusing". They are the same eleven —
-// grouped by what the supervisor is actually doing when they reach for
-// them, with the not-yet-live modules last.
-const GROUPS = [
-  {
-    label: 'Live',
-    items: [
-      { key:'overview', label:'Overview',       icon:'overview' },
-      { key:'fullday',  label:'Full Day View',  icon:'fullday'  },
-      { key:'breaks',   label:'Breaks',          icon:'clock'    },
-    ],
-  },
-  {
-    label: 'People & work',
-    items: [
-      { key:'progress',       label:'Employee Progress',  icon:'progress'       },
-      { key:'footage',        label:'Footage Requests',   icon:'footage'        },
-      { key:'followups',      label:'Follow-ups',         icon:'followups'      },
-      { key:'redistribution', label:'Redistribution Log', icon:'redistribution' },
-      { key:'leaves',         label:'Leaves',              icon:'leaves'         },
-    ],
-  },
-  {
-    label: 'More',
-    items: [
-      { key:'reports',   label:'Reports',   icon:'reports'   },
-      { key:'analytics', label:'Analytics', icon:'analytics' },
-      { key:'alerts',    label:'Alerts',    icon:'alerts'    },
-      { key:'settings',  label:'Settings',  icon:'settings'  },
-    ],
-  },
+// Five destinations, not twelve.
+//
+// A column of twelve items asks the supervisor to know the whole product
+// before they can find anything in it, and half of those items answered the
+// same question as the item above them — footage and follow-ups are one queue,
+// attendance and breaks are one question about a person, the hour grid and the
+// redistribution log are two views of one day. Nothing has been removed: each
+// of those screens is still exactly itself, one click deeper, behind a switch
+// at the top of the section it belongs to.
+//
+// The order is the order the questions get asked: is the floor all right, what
+// happened today, what is queued, how are people doing.
+export const SECTIONS = [
+  { key:'live',     label:'Live floor', icon:'overview',  leaf:'overview' },
+  { key:'day',      label:'The day',    icon:'fullday',   leaf:'fullday'  },
+  { key:'requests', label:'Requests',   icon:'footage',   leaf:'footage'  },
+  { key:'people',   label:'People',     icon:'progress',  leaf:'progress' },
+  { key:'more',     label:'More',       icon:'settings',  leaf:'reports'  },
 ]
 
+// Which section each screen lives in. Screens keep their own keys, so every
+// link and every render condition in the app still points at the same place.
+export const TAB_SECTION = {
+  overview:'live',
+  fullday:'day', redistribution:'day',
+  footage:'requests', followups:'requests',
+  progress:'people', breaks:'people', leaves:'people',
+  reports:'more', analytics:'more', alerts:'more', settings:'more',
+}
+
 export default function Sidebar({ activeTab, setActiveTab, counts = {}, employeesMonitored }) {
-  const groups = GROUPS.map(g => ({
-    ...g,
-    items: g.items.map(i => ({ ...i, badge: counts[i.key] })),
-  }))
+  const activeSection = TAB_SECTION[activeTab] || 'live'
+  const groups = [{
+    items: SECTIONS.map(s => ({
+      key: s.key, label: s.label, icon: s.icon, badge: counts[s.key],
+    })),
+  }]
 
   return (
     <SideNav
       groups={groups}
-      activeTab={activeTab}
-      setActiveTab={setActiveTab}
+      activeTab={activeSection}
+      setActiveTab={(key) => {
+        const s = SECTIONS.find(x => x.key === key)
+        if (s) setActiveTab(s.leaf)
+      }}
       tagline="Command Center"
       footer={
         <div style={{ display:'flex', flexDirection:'column', gap:'9px' }}>
@@ -60,24 +61,6 @@ export default function Sidebar({ activeTab, setActiveTab, counts = {}, employee
               Monitoring {typeof employeesMonitored === 'number' ? `${employeesMonitored} employees` : 'your workforce'}
             </div>
           </SideCard>
-          <button
-            onClick={() => setActiveTab('analytics')}
-            className="pressable"
-            style={{
-              display:'flex', alignItems:'center', gap:'8px', width:'100%',
-              background:C.accentSoft, border:`1px solid ${C.accent}2e`, borderRadius:R.md,
-              padding:'10px 12px', textAlign:'left',
-            }}
-          >
-            <Icon name="sparkles" size={15} color={C.accent} />
-            <span style={{ flex:1, minWidth:0 }}>
-              <span className="ellip" style={{ display:'block', color:C.accent, fontSize:T.sm, fontWeight:700 }}>
-                Cautio AI
-              </span>
-              <span style={{ display:'block', color:C.muted, fontSize:'9.5px' }}>Insights · Beta</span>
-            </span>
-            <Icon name="arrow-right" size={13} color={C.accent} />
-          </button>
           <div style={{ color:'#4a4a4a', fontSize:'9.5px', lineHeight:1.5, padding:`4px ${R.sm}` }}>
             © {new Date().getFullYear()} Cautio Telematics.<br />All rights reserved.
           </div>

@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts,
+  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowIST, fetchClientVehicleCounts,
   getLeaveMapForDate, getShiftOverridesForDate,
   getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
 } from '../../../lib/sheets'
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
     await loadScheduleData()
 
     const today = todayStr()
-    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+    const yesterday = yesterdayStr()
     const explicitDate = req.query.date ? req.query.date.toString() : null
 
     // If the caller asked for a specific date (e.g. admin), use it as-is.

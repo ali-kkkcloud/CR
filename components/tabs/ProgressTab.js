@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Icon from '../Icons'
 import { C, MiniStat, AttendanceDots, ScoreBadge, HBarList } from '../Widgets'
-import { Card, Button, SearchInput, Stat, T, R, SP, SURF } from '../ui'
+import { Card, Button, SearchInput, Stat, T, R, SP, SURF, istDayISO } from '../ui'
 
 function initials(name) { return (name||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase() }
 
@@ -95,9 +95,9 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
           <span className="eyebrow">To</span>
           <input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={{ width:'auto' }} />
           <Button size="sm" variant="subtle" onClick={()=>{setFromDate(todayISO());setToDate(todayISO())}}>Today</Button>
-          <Button size="sm" variant="subtle" onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-1); const x=d.toISOString().split('T')[0]; setFromDate(x); setToDate(x) }}>Yesterday</Button>
-          <Button size="sm" variant="subtle" onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-6); setFromDate(d.toISOString().split('T')[0]); setToDate(todayISO()) }}>Last 7 days</Button>
-          <Button size="sm" variant="subtle" onClick={()=>{ const d=new Date(); d.setDate(d.getDate()-29); setFromDate(d.toISOString().split('T')[0]); setToDate(todayISO()) }}>Last 30 days</Button>
+          <Button size="sm" variant="subtle" onClick={()=>{ const x=istDayISO(-1); setFromDate(x); setToDate(x) }}>Yesterday</Button>
+          <Button size="sm" variant="subtle" onClick={()=>{ setFromDate(istDayISO(-6)); setToDate(istDayISO()) }}>Last 7 days</Button>
+          <Button size="sm" variant="subtle" onClick={()=>{ setFromDate(istDayISO(-29)); setToDate(istDayISO()) }}>Last 30 days</Button>
           <div style={{ flex:1, minWidth:'170px' }}>
             <SearchInput value={search} onChange={setSearch} placeholder="Search employee…" />
           </div>

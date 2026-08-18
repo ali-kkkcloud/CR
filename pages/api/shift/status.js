@@ -1,6 +1,6 @@
 // pages/api/shift/status.js
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -13,7 +13,7 @@ export default async function handler(req, res) {
 
   try {
     const today = todayStr()
-    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+    const yesterday = yesterdayStr()
     // Cached: every dashboard polls this on a loop, and an uncached read per
     // poll per employee is most of Google's per-minute read quota on its own.
     // Clocking in or out writes to this tab, which drops the cache, so the

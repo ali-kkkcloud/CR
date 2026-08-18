@@ -19,6 +19,20 @@ export const T  = { xs:'10.5px', sm:'11.5px', base:'12.5px', md:'13.5px', lg:'15
 export const R  = { sm:'6px', md:'9px', lg:'13px', full:'999px' }
 export const SP = { 1:'4px', 2:'8px', 3:'12px', 4:'16px', 5:'20px', 6:'24px', 8:'32px' }
 
+// The operating day as YYYY-MM-DD, offset by whole days.
+//
+// The day turns over at 07:00 IST, matching every date the server writes, so
+// before seven in the morning "today" is still the previous date. Built from
+// the IST calendar parts rather than toISOString(), which converts to UTC and
+// silently walks the date back for any IST time before 05:30 — the exact hours
+// this rule exists for.
+export function istDayISO(offsetDays = 0) {
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  if (d.getHours() < 7) d.setDate(d.getDate() - 1)
+  d.setDate(d.getDate() + offsetDays)
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+
 export const SURF = {
   raised: '#1E1E1E',
   sunken: '#131313',

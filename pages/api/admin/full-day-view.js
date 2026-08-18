@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowIST, fetchClientVehicleCounts,
+  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowIST, hourHasPassed, fetchClientVehicleCounts,
   getLeaveMapForDate, getShiftOverridesForDate,
   getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
 } from '../../../lib/sheets'
@@ -56,7 +56,8 @@ export default async function handler(req, res) {
     // of lib/distribution — see the note at the top of it.
     const today = todayStr()
     const isToday = date === today
-    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+    const yesterday = yesterdayStr()
+    const nowHour = nowIST().getHours()
 
     // For today, presence means "clocked in right now". For a day already
     // finished, nobody is Active any more, so presence means "turned up at all
@@ -152,17 +153,35 @@ export default async function handler(req, res) {
           return { hour, isOnLeave: true, leaveReason: leaveEntry?.reason || '', clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
         }
 
-        // The same split the boards computed, worked out the same way.
-        // reserveOffShiftLocks=true matches /api/clients/current: work somebody
-        // finished before going home stays theirs instead of bouncing onto a
-        // colleague.
-        const { poolNames } = buildHourPool({
-          hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames,
-        })
-        const lockedAssignments = lockedByHour[hour] || {}
+        // An hour that has rows in CRM_Updates is settled: a row is written the
+        // moment a client lands in front of somebody, so those rows are the
+        // record of what that employee actually held. Only an hour with no rows
+        // yet — the one in progress, or one still to come — is worked out from
+        // the live split.
+        //
+        // This is the same rule the employee's own day uses, and it is what
+        // stops a finished morning being re-attributed every time somebody
+        // clocks in or out: at the end of the day, when everyone has gone home,
+        // a live recompute reported the entire day as belonging to nobody.
+        const empHourRows = updateIdx[`${emp.name}__${hour}`] || {}
+        const rowClients = Object.keys(empHourRows)
+        const settled = rowClients.length > 0 && (!isToday || hourHasPassed(hour, nowHour))
 
-        const dist = distributeClientsForHour(hour, poolNames, vehicleMap, lockedAssignments, true)
-        const assignedClients = dist[emp.name] || []
+        let assignedClients
+        if (settled) {
+          assignedClients = rowClients.map(client => ({
+            client, vehicleCount: vehicleMap[(client || '').toLowerCase()]?.vehicleCount || 0,
+          }))
+        } else {
+          // reserveOffShiftLocks=true matches /api/clients/current: work somebody
+          // finished before going home stays theirs instead of bouncing onto a
+          // colleague.
+          const { poolNames } = buildHourPool({
+            hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames,
+          })
+          const lockedAssignments = lockedByHour[hour] || {}
+          assignedClients = (distributeClientsForHour(hour, poolNames, vehicleMap, lockedAssignments, true)[emp.name] || [])
+        }
 
         // Add redistributed TO this employee (real reason + timestamp from Redistribution_Log)
         const redistToEmp = redistRows.slice(1)

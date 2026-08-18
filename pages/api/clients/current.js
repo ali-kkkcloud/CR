@@ -1,12 +1,13 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
+  readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate,
   getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
 } from '../../../lib/sheets'
 import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, employees, isScheduledAtHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
+import { sweepShiftAutoClose } from '../../../lib/attendance'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -29,10 +30,19 @@ export default async function handler(req, res) {
     // request is working from the current ones.
     await loadScheduleData()
 
+    // ── Close shifts that ran past their window and were never ended ──
+    // Half an hour's grace, then the row is closed at the time the shift was
+    // due to finish. It runs from here because this is the request that fires
+    // every thirty seconds for anybody still working, so a colleague who has
+    // gone home is tidied up by the people still on the floor. Before the
+    // reads below, so this response already reflects it.
+    try { await sweepShiftAutoClose(employees()) }
+    catch (e) { console.error('shift auto-close sweep failed:', e.message) }
+
     const hour  = nowIST().getHours()
     const today = todayStr()
     const now   = nowStr()
-    const yesterday = ddmmyyyyFromDate(new Date(nowIST().getTime() - 24*3600000))
+    const yesterday = yesterdayStr()
 
     // ── Leave map + Early Start/OT overrides — fetched for TODAY and
     // YESTERDAY and merged (today wins). This is what makes a night shift
