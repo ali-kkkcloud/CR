@@ -172,6 +172,53 @@ export default async function handler(req, res) {
       })
     }
 
+    // ── Is the ordinary share actually equal? ────────────────────────────
+    // The rule the operation runs on: everybody who is NOT holding a named
+    // client and NOT on custom duty that hour splits the rest of the hour by
+    // vehicle count, as evenly as the clients allow. "As evenly as the clients
+    // allow" is the honest caveat — a single client with 553 vehicles cannot
+    // be cut in half, so one person must carry it and their hour is larger by
+    // however much that client exceeds an even share. This measures the real
+    // spread, and separates the part the algorithm could have avoided from the
+    // part no algorithm could.
+    const balance = []
+    for (const hour of businessHourOrder()) {
+      const due = dueAt(hour)
+      if (due.size === 0) continue
+      const rostered = getScheduledEmployeesAtHour(hour, {}, {}).map(e => e.name)
+      const ordinary = rostered.filter(n => !customTextFor(n, hour) && !specificClientsFor(n, hour))
+      if (ordinary.length < 2) continue
+
+      const dist = distributeClientsForHour(hour, rostered, vehicleMap, {}, true)
+      const loads = ordinary.map(n => (dist[n] || []).reduce((s, c) => s + (c.vehicleCount || 0), 0))
+      const total = loads.reduce((a, b) => a + b, 0)
+      const mean  = total / ordinary.length
+      const min = Math.min(...loads), max = Math.max(...loads)
+
+      // The biggest single client in the ordinary rotation this hour. Nothing
+      // can split it, so no split can be fairer than this.
+      const ordinaryClients = ordinary.flatMap(n => (dist[n] || []).filter(c => !c.isSpecific))
+      const biggest = ordinaryClients.reduce((m, c) => Math.max(m, c.vehicleCount || 0), 0)
+      const unavoidable = Math.max(0, biggest - mean)
+
+      balance.push({
+        hour, people: ordinary.length, clients: ordinaryClients.length,
+        totalVehicles: total, mean: Math.round(mean), min, max,
+        spread: max - min,
+        // How far the worst-loaded person is above the even share, and how
+        // much of that one indivisible client already explains.
+        overMean: Math.round(max - mean),
+        unavoidable: Math.round(unavoidable),
+        avoidable: Math.round(Math.max(0, (max - mean) - unavoidable)),
+        biggestClient: biggest,
+      })
+      // The split must never leave somebody more than one indivisible client
+      // above the even share — that is the most a greedy balance can cost.
+      if (max - mean > biggest + 1) {
+        note(`balance h${hour}: worst load ${max} is ${Math.round(max-mean)} over the even share ${Math.round(mean)}, and the biggest single client is only ${biggest}`)
+      }
+    }
+
     // Every client in the sheet is scheduled for at least one hour, and every
     // hour it is scheduled for places it.
     const everyClient = Object.keys(clientTimings())
@@ -189,6 +236,7 @@ export default async function handler(req, res) {
       totalPlacedWhenFullyStaffed: totalPlaced,
       hoursCovered: perHour.length,
       perHour,
+      balance,
       failures: fails,
     })
   } catch (e) {
