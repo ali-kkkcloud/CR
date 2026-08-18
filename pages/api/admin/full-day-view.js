@@ -9,6 +9,7 @@ import {
 } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
+import { computeDayPlan, employeeDayHours } from '../../../lib/dayplan'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -107,81 +108,14 @@ export default async function handler(req, res) {
       if (hoursSeen.has(h)) lockedByHour[h] = buildLockedAssignments(updateRows, date, h)
     }
 
-    // One owner per (client, hour) for every hour that has rows, grouped by
-    // employee — see the note where this is used below.
-    const settledOwners = {}
-    collapseSlotOwners(updateRows, r => r[0] === date).forEach(({ owner, client, hour }) => {
-      const h = parseInt(hour)
-      if (!Number.isFinite(h)) return
-      ;(settledOwners[h] ||= {})
-      ;(settledOwners[h][owner] ||= []).push(client)
+    // ── The day, worked out once ─────────────────────────────────────────
+    // Shared with the Dashboard and with every employee's own day, so all
+    // three print the same number for the same person. See lib/dayplan.js.
+    const plan = computeDayPlan({
+      date, today, nowHour, yesterday,
+      shiftRows, updateRows, breakRows, leaveMap, overridesMap, vehicleMap,
+      weekOffNames: new Set(employees().filter(e => e.isWeekOff).map(e => e.name)),
     })
-
-    // ── Who owns an hour, chosen by where that hour sits in the day ──────
-    //
-    // Three different questions wear the same words. "Who has this hour" means
-    // something different for an hour that is over, the one running now, and
-    // one still to come, and answering all three with live presence is what
-    // made this screen disagree with the Command Center by a hundred clients.
-    //
-    //   gone      — who was actually at work then, read back from the
-    //               attendance log's own start and end times.
-    //   now       — who is clocked in this minute, minus anyone away. Exactly
-    //               what the employee's own board does.
-    //   still due — the ROSTER. The night shift covers tonight whether or not
-    //               it has arrived yet; judging tonight by who happens to be at
-    //               a desk this morning handed the whole evening to the morning
-    //               crew, and dropped the 6am hour entirely because everyone
-    //               who covers it had gone home — ninety-six clients that
-    //               simply vanished off this screen.
-    const standingWeekOff = new Set(employees().filter(e => e.isWeekOff).map(e => e.name))
-    // Gone home for THIS operating day. An hour that has not happened yet is
-    // not theirs — they clocked out, and their share of it really does fall to
-    // whoever is still here. Without this, somebody who ended at half past
-    // twelve was still shown 247 clients "left" for the rest of the day, which
-    // is work no one was going to do and an alarm nobody could clear.
-    //
-    // Only rows dated today count. A night-shift employee who finished at six
-    // this morning has an Ended row under YESTERDAY's date and is due back
-    // tonight — reading those too would empty every night hour of its staff.
-    const startedTodayByName = {}
-    shiftRows.slice(1).filter(r => r[2] === today).forEach(r => {
-      const n = (r[1] || '').toString().trim()
-      if (!n) return
-      ;(startedTodayByName[n] ||= []).push(r)
-    })
-    const goneHomeToday = new Set(
-      Object.entries(startedTodayByName)
-        .filter(([, rows]) => rows.length > 0 && !rows.some(r => r[6] === 'Active'))
-        .map(([n]) => n)
-    )
-    const rosterPoolCache = {}
-    // Who the roster puts on this hour. Used as-is for an hour already gone —
-    // somebody who has since clocked out was still there at the time — and
-    // narrowed to the people still on the floor for hours yet to come.
-    const rosterPool = (hour) => (rosterPoolCache[hour] ||= (
-      getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
-        .map(e => e.name)
-        .filter(n => !standingWeekOff.has(n))
-    ))
-    const futurePool = (hour) => rosterPool(hour).filter(n => !(isToday && goneHomeToday.has(n)))
-    const hourPoolFor = (hour) => {
-      if (!isToday) {
-        return buildHourPool({ hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames }).poolNames
-      }
-      if (hour === nowHour) {
-        return buildHourPool({ hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames }).poolNames
-      }
-      if (hourHasPassed(hour, nowHour)) {
-        const wereHere = whoWasOnShiftAtHour(shiftRows, date, hour, nowHour)
-        const pool = rosterPool(hour).filter(n => wereHere.has(n))
-        // Nobody's attendance row covers that hour — fall back to the live
-        // reading rather than reporting an hour that was worked as unowned.
-        return pool.length > 0 ? pool
-          : buildHourPool({ hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames }).poolNames
-      }
-      return futurePool(hour)
-    }
 
     // Login map
     // One attendance row per person: a live one if there is one, otherwise the
@@ -210,40 +144,10 @@ export default async function handler(req, res) {
       // wrapping past midnight. Wraparound is derived from the EFFECTIVE
       // start/end (not the static isNight flag), since an Early/Late Start
       // or OT can push a normally-day shift across midnight too.
-      const isWrap = effectiveEmp.end <= effectiveEmp.start
-      const inMyDay = new Set()
-      if (isWrap) {
-        for (let h = effectiveEmp.start; h < 24; h++) inMyDay.add(h)
-        for (let h = 0; h < effectiveEmp.end; h++) inMyDay.add(h)
-      } else {
-        for (let h = effectiveEmp.start; h < effectiveEmp.end; h++) inMyDay.add(h)
-      }
-
-      // An hour this employee actually has rows in belongs to their day, even
-      // if their window no longer covers it.
-      //
-      // The window can move after the fact — a late start or an OT extension
-      // rewrites it — and when it did, every hour outside the NEW window was
-      // dropped from this screen. Somebody who worked from seven, ended their
-      // shift and started a second one at one o'clock had their whole morning
-      // erased: hour 11 showed nought of eighty-seven clients on anybody's
-      // board, because the only person who had held them was no longer
-      // considered to have been working then. Recorded work is not undone by a
-      // later change to the schedule.
-      Object.keys(updateIdx).forEach(k => {
-        const sep = k.lastIndexOf('__')
-        if (k.slice(0, sep) !== emp.name) return
-        const h = parseInt(k.slice(sep + 2))
-        if (Number.isFinite(h)) inMyDay.add(h)
-      })
-
-      // Walked forward from the shift's own start, so the hours read in shift
-      // order for a night shift as well as a day one.
-      const scheduledHours = []
-      for (let i = 0; i < 24; i++) {
-        const h = (effectiveEmp.start + i) % 24
-        if (inMyDay.has(h)) scheduledHours.push(h)
-      }
+      // Their hours, in operating-day order (7am → 7am), including any hour
+      // they have already recorded work in even if their window has since
+      // moved. See employeeDayHours.
+      const scheduledHours = employeeDayHours(plan, emp, effectiveEmp)
 
       const hours = scheduledHours.map(hour => {
         const isOnLeave = leaves.some(l => {
@@ -283,47 +187,10 @@ export default async function handler(req, res) {
         // losing one, in the opposite direction. If the hour is over and
         // anybody has rows in it, the rows are the record for everybody, and
         // an employee with none simply held none.
-        const empHourRows = updateIdx[`${emp.name}__${hour}`] || {}
-        const settled = hoursSeen.has(hour) && (!isToday || hourHasPassed(hour, nowHour))
-
-        let assignedClients
-        if (settled) {
-          // ONE owner per slot, not one row per hand-over. CRM_Updates is
-          // append-only and a placeholder is written every time a client lands
-          // in front of somebody, so a client shared between two people during
-          // an hour leaves a row in each of their names. Reading each
-          // employee's own rows therefore put the same client-hour on two
-          // boards — 48 of them in a single hour — and inflated the day's total
-          // by exactly that many. collapseSlotOwners settles it the way the
-          // Command Center does: whoever actually did the work owns it, and
-          // failing that the most recent person to hold it.
-          assignedClients = (settledOwners[hour]?.[emp.name] || []).map(client => ({
-            client, vehicleCount: vehicleMap[(client || '').toLowerCase()]?.vehicleCount || 0,
-          }))
-        } else {
-          // reserveOffShiftLocks=true matches /api/clients/current: work somebody
-          // finished before going home stays theirs instead of bouncing onto a
-          // colleague.
-          const poolNames = hourPoolFor(hour)
-          const lockedAssignments = lockedByHour[hour] || {}
-          assignedClients = (distributeClientsForHour(hour, poolNames, vehicleMap, lockedAssignments, true)[emp.name] || [])
-
-          // Work this employee has already FINISHED this hour, when the split
-          // no longer lists them — they stepped away on a break, or went home.
-          // The split reserves those clients so nobody redoes them, but it only
-          // returns lists for people in the pool, so the finished work fell off
-          // the screen entirely: six completed clients at ten o'clock were on
-          // no board and in no total, which reads exactly like six clients lost.
-          // They belong to whoever did them.
-          Object.entries(lockedAssignments).forEach(([client, owner]) => {
-            if (owner !== emp.name) return
-            if (assignedClients.some(c => c.client === client)) return
-            assignedClients.push({
-              client, vehicleCount: vehicleMap[(client || '').toLowerCase()]?.vehicleCount || 0,
-              isSpecific: false, isLocked: true,
-            })
-          })
-        }
+        // Who holds this hour, from the shared plan — the same answer the
+        // employee's own day and the Dashboard give.
+        const assignedClients = (plan.byEmployee[emp.name]?.hours?.[hour] || [])
+          .map(c => ({ client: c.client, vehicleCount: c.vehicleCount || 0 }))
 
         // Add redistributed TO this employee (real reason + timestamp from Redistribution_Log)
         const redistToEmp = redistRows.slice(1)

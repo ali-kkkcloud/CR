@@ -7,6 +7,7 @@ import {
 import { employees, distributeClientsForHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { collapseSlotOwners, buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
+import { computeDayPlan } from '../../../lib/dayplan'
 
 const ISSUE_TAB = 'Issues- Realtime'
 // Same real column layout as pages/api/footage/list.js
@@ -277,56 +278,57 @@ export default async function handler(req, res) {
 
     // The hour in progress is left out of the collapse above, because nothing
     // in it can have been missed yet — but the daily target still has to show
-    // what's on the board right now. That comes from the live split, the same
-    // one the client list itself is built from, so the target and the board
-    // can never disagree.
-    let currentHourOutstanding = []
-    try {
-      const onShiftNames = getOnShiftNamesFromLog(shiftRows, [calendarToday, yesterday])
-      const leaveMapNow  = await getLeaveMapForDate(today)
-      // Clocked out means the day's work is finished — no outstanding board.
-      const myShiftRows = shiftRows.slice(1).filter(r =>
-        (r[0] || '').toString().trim() === user.empId.toString().trim() &&
-        (r[2] === calendarToday || r[2] === yesterday)
-      )
-      const clockedOut = myShiftRows.length > 0 && !myShiftRows.some(r => r[6] === 'Active')
-      const { poolNames } = buildHourPool({
-        hour: nowISTDate().getHours(), leaveMap: leaveMapNow, overridesMap: todayOverride,
-        onShiftNames,
-        clockedOutNames: getClockedOutNamesFromLog(shiftRows, [calendarToday, yesterday]),
-        awayNames: getAwayOnBreakNames(breakRows, [calendarToday, yesterday]),
-        alwaysInclude: clockedOut ? null : user.name,
-      })
-      const locked = buildLockedAssignments(updateRows, today, nowISTDate().getHours())
-      const dist = distributeClientsForHour(nowISTDate().getHours(), poolNames, vehicleMap, locked, true)
-      currentHourOutstanding = (dist[user.name] || [])
-        .map(c => c.client)
-        .filter(c => locked[c] !== user.name)   // finished ones are counted already
-    } catch (e) {
-      console.error('summary: live split failed', e.message)
+    // ── Today's targets, from the shared day plan ────────────────────────
+    // The same computation the employee's own day, their board and the admin's
+    // two screens read, so the five figures in "My targets" cannot disagree
+    // with the hour strip six inches above them. They used to be counted here
+    // as DISTINCT CLIENT NAMES over the rows written so far, which is a
+    // different question with a different answer: 69 here against 207 on the
+    // admin's screen for the same person on the same afternoon.
+    //
+    // Counted in slots — one client in one hour is one piece of work — over
+    // the whole operating day, 7am to 7am.
+    let todayTargets = {
+      clientsAssigned: 0, clientsCompleted: 0,
+      vehiclesAssigned: 0, vehiclesCompleted: 0,
+      updatesAssigned: 0, updatesCompleted: 0,
+      footageAssigned: 0, footageCompleted: 0,
+      followupsAssigned: 0, followupsCompleted: 0,
     }
-    const todayCompleted = myUpdatesToday.filter(r => (r[5]||'').toString().trim())
-    const todayClientSet = new Set([...myUpdatesToday.map(r => r[3]), ...currentHourOutstanding])
-    const todayCompletedClientSet = new Set(todayCompleted.map(r => r[3]))
-    let todayVehicles = 0, todayVehiclesDone = 0
-    todayClientSet.forEach(c => { todayVehicles += vehicleMap[(c||'').toLowerCase()]?.vehicleCount || 0 })
-    todayCompletedClientSet.forEach(c => { todayVehiclesDone += vehicleMap[(c||'').toLowerCase()]?.vehicleCount || 0 })
+    try {
+      const plan = computeDayPlan({
+        date: today, today, nowHour: nowISTDate().getHours(), yesterday,
+        shiftRows, updateRows, breakRows,
+        leaveMap: await getLeaveMapForDate(today),
+        overridesMap: todayOverride,
+        vehicleMap,
+        weekOffNames: new Set(employees().filter(e => e.isWeekOff).map(e => e.name)),
+      })
+      const mine = plan.byEmployee[user.name]
+      todayTargets.clientsAssigned  = mine?.clients  || 0
+      todayTargets.vehiclesAssigned = mine?.vehicles || 0
+      todayTargets.clientsCompleted = mine?.clientsDone || 0
+      // Vehicles actually watched — what the employee typed into "Live
+      // vehicles checked", not the fleet size of whatever they happened to
+      // finish. Those are different numbers and only one of them is measured.
+      todayTargets.vehiclesCompleted = mine?.vehiclesChecked || 0
+      todayTargets.updatesAssigned   = mine?.clients || 0
+      todayTargets.updatesCompleted  = mine?.clientsDone || 0
+    } catch (e) {
+      console.error('summary: day plan failed', e.message)
+    }
+
     const todayFootage = footageRows.slice(1).filter(r => {
       const sub = (r[COL.SUB_REQUEST] || '').toString().toLowerCase()
       const by  = (r[COL.RAISED_BY]   || '').toString().trim().toLowerCase()
       return sub.includes('customer request for video') && by === user.name.toLowerCase() && (r[COL.RAISED_AT]||'').includes(today)
     })
-    const todayFootageDone = todayFootage.filter(footageResolved).length
+    todayTargets.footageAssigned  = todayFootage.length
+    todayTargets.footageCompleted = todayFootage.filter(footageResolved).length
     const todayFollowups = myFollowups.filter(r => r[0] === today)
-    const todayFollowupsClosed = todayFollowups.filter(r => (r[7]||'').toString().toLowerCase().startsWith('closed')).length
+    todayTargets.followupsAssigned  = todayFollowups.length
+    todayTargets.followupsCompleted = todayFollowups.filter(r => (r[7]||'').toString().toLowerCase().startsWith('closed')).length
 
-    const todayTargets = {
-      clientsAssigned: todayClientSet.size, clientsCompleted: todayCompletedClientSet.size,
-      vehiclesAssigned: todayVehicles, vehiclesCompleted: todayVehiclesDone,
-      updatesAssigned: todayClientSet.size, updatesCompleted: todayCompleted.length,
-      footageAssigned: todayFootage.length, footageCompleted: todayFootageDone,
-      followupsAssigned: todayFollowups.length, followupsCompleted: todayFollowupsClosed,
-    }
 
     return res.status(200).json({
       range,
