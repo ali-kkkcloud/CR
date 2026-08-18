@@ -113,6 +113,9 @@ export default function Admin() {
   // { title, rows } — roster drill-down opened from an Overview KPI card
   const [rosterModal, setRosterModal] = useState(null)
   const [gapModal, setGapModal] = useState(null)
+  // { title, sub, rows:[{primary, secondary, tone}] } — the detail behind an
+  // alert that is about data rather than about a screen.
+  const [listModal, setListModal] = useState(null)
 
   useEffect(() => {
     function tick() {
@@ -476,31 +479,55 @@ export default function Admin() {
   // Each one carries the tab it is about, so the row itself is the way in
   // rather than a separate "View details" button at the bottom of the card
   // that only ever pointed at one of them.
+  // Every row is a way in. Each one carries the thing it is about — a tab to
+  // open, a roster to list, or the items themselves — so nothing on this card
+  // is a dead end. Two of them used to be: the client and roster warnings had
+  // no target at all and simply did nothing when clicked, and "Clients nobody
+  // can be given" pointed at a tab named 'unassigned' that does not exist,
+  // which blanked the screen.
   const aiAlerts = []
   if (coverageGaps.length>0) aiAlerts.push({
     sev:'high', icon:'alerts', title:'Clients nobody can be given',
     desc:`${gapClients} client slot${gapClients===1?'':'s'} across ${coverageGaps.length} hour${coverageGaps.length===1?'':'s'} (${coverageGaps.map(g=>fmtHourShort(g.hour)).join(', ')}) — no one is rostered, so they are on nobody's board`,
-    tab:'unassigned',
+    act:()=>setGapModal(coverageGaps),
   })
-  if (kpis.notStarted>0) aiAlerts.push({ sev:'high', icon:'offline', title:'Not started', desc:`${kpis.notStarted} employee${kpis.notStarted===1?' has':'s have'} not clocked in yet`, tab:'fullday' })
+  if (kpis.notStarted>0) aiAlerts.push({
+    sev:'high', icon:'offline', title:'Not started',
+    desc:`${kpis.notStarted} employee${kpis.notStarted===1?' has':'s have'} not clocked in yet`,
+    act:()=>setRosterModal({ title:'Not started', empty:'Everyone scheduled has clocked in.', rows:notStartedEmployees }),
+  })
   // Somebody who can log in but is on no roster gets no clients and shows on
   // no screen. Nothing else would ever mention them.
   // A client with no hours in the sheet is never scheduled, never assigned and
   // never counted as missed — invisible unless something says so.
   if (clientIssues.length>0) aiAlerts.push({
-    sev:'high', icon:'alerts', title:'Clients that reach nobody',
-    desc:`${clientIssues.length} client${clientIssues.length===1?'':'s'} have no hours in Client_Timings, so they are never put in front of anyone: ${clientIssues.slice(0,4).map(c=>c.client).join(', ')}${clientIssues.length>4?` and ${clientIssues.length-4} more`:''}.`,
+    sev:'high', icon:'alerts', title:'Clients the sheet cannot deliver',
+    desc:`${clientIssues.length} client${clientIssues.length===1?'':'s'} are missing hours or a vehicle list: ${clientIssues.slice(0,3).map(c=>c.client).join(', ')}${clientIssues.length>3?` and ${clientIssues.length-3} more`:''}`,
+    act:()=>setListModal({
+      title:'Clients the sheet cannot deliver',
+      sub:'Each of these needs a change in the spreadsheet — the platform cannot guess it',
+      rows: clientIssues.map(c => ({ primary:c.client, secondary:c.reason, tone:C.red })),
+    }),
   })
   if (rosterIssues.length>0) aiAlerts.push({
     sev:'high', icon:'users', title:'Invisible to the roster',
-    desc:`${rosterIssues.map(r=>`${r.name} (${r.reason})`).join(', ')} — they can sign in, but get no clients and appear in no total. Fix the Credentials row.`,
+    desc:`${rosterIssues.map(r=>r.name).join(', ')} can sign in, but get no clients and appear in no total`,
+    act:()=>setListModal({
+      title:'Invisible to the roster',
+      sub:'They can sign in, but the roster skips their Credentials row, so they are given no clients and counted in no total',
+      rows: rosterIssues.map(r => ({ primary:`${r.name}${r.empId?` · ${r.empId}`:''}`, secondary:r.reason, tone:C.red })),
+    }),
   })
   if (staleShiftEmployees.length>0) aiAlerts.push({
     sev:'warn', icon:'clock', title:'Shift rows left open',
     desc:`${staleShiftEmployees.map(e=>e.name).join(', ')} — clocked in and never clocked out, so the attendance row has no end time`,
-    tab:'fullday',
+    act:()=>setRosterModal({ title:'Shift rows left open', empty:'No open rows.', rows:staleShiftEmployees }),
   })
-  if (overdueEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Shift not closed', desc:`${overdueEmployees.map(e=>e.name).join(', ')} ${overdueEmployees.length===1?'is':'are'} past the end of the shift and still clocked in`, tab:'fullday' })
+  if (overdueEmployees.length>0) aiAlerts.push({
+    sev:'high', icon:'clock', title:'Shift not closed',
+    desc:`${overdueEmployees.map(e=>e.name).join(', ')} ${overdueEmployees.length===1?'is':'are'} past the end of the shift and still clocked in`,
+    act:()=>setRosterModal({ title:'Past the end of their shift', empty:'Nobody is overdue.', rows:overdueEmployees }),
+  })
   if (longBreakEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Away a long time', desc:`${longBreakEmployees.map(e=>`${e.name} (${Math.floor(liveBreakMinutes(e)/60)>0?`${Math.floor(liveBreakMinutes(e)/60)}h `:''}${liveBreakMinutes(e)%60}m)`).join(', ')} — their clients are still on their board, waiting`, tab:'breaks' })
   if (breaks?.onBreakNow>0) aiAlerts.push({ sev:'warn', icon:'clock', title:'On break', desc:`${breaks.onBreakNow} employee${breaks.onBreakNow===1?' is':'s are'} away right now`, tab:'breaks' })
   if (footage.followups.length>0) aiAlerts.push({ sev:'warn', icon:'followups', title:'Follow-ups open', desc:`${footage.followups.length} follow-up${footage.followups.length===1?'':'s'} waiting to be closed`, tab:'followups' })
@@ -669,7 +696,7 @@ export default function Admin() {
                     <EmptyState icon="check-circle" tone="good" title="All clear." detail="Nothing on the floor needs you right now." />
                   ) : (
                     <div style={{ padding:'6px 6px 10px' }}>
-                      {aiAlerts.map((a,i) => <AlertRow key={i} alert={a} onClick={()=>a.tab && setActiveTab(a.tab)} />)}
+                      {aiAlerts.map((a,i) => <AlertRow key={i} alert={a} onClick={()=>{ if (a.act) a.act(); else if (a.tab) setActiveTab(a.tab) }} />)}
                     </div>
                   )}
                 </Card>
@@ -1022,6 +1049,29 @@ export default function Admin() {
             ))}
           </div>
         ))}
+      </Modal>
+
+      <Modal
+        open={!!listModal}
+        onClose={()=>setListModal(null)}
+        icon="alerts" iconColor={C.red}
+        title={listModal?.title}
+        sub={listModal?.sub}
+        width={560}
+      >
+        {listModal && (
+          <div style={{ maxHeight:'56vh', overflowY:'auto' }}>
+            {listModal.rows.map((r,i) => (
+              <div key={i} style={{ display:'flex', alignItems:'flex-start', gap:'10px', padding:'10px 0', borderBottom:`1px solid ${C.border}` }}>
+                <span style={{ width:'6px', height:'6px', borderRadius:'50%', background:r.tone||C.muted, marginTop:'6px', flexShrink:0 }} />
+                <span style={{ minWidth:0, flex:1 }}>
+                  <span className="ellip" style={{ display:'block', color:C.text, fontSize:T.base, fontWeight:700 }}>{r.primary}</span>
+                  <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'2px' }}>{r.secondary}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </Modal>
 
       <LogoutModal show={showLogout} onConfirm={handleLogoutConfirm} onCancel={()=>setShowLogout(false)} />
