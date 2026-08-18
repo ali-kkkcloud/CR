@@ -54,7 +54,7 @@ export default async function handler(req, res) {
 
     const [shiftRows, updateRows, footageRows] = await Promise.all([
       readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, 15000),
-      readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:K`, 15000),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:L`, 15000),
       readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000),
     ])
 

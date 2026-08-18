@@ -74,7 +74,7 @@ export default async function handler(req, res) {
     }
 
     // ── 2. Redistribute only THIS HOUR's unfilled clients ──
-    const updateRows = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 5000)
+    const updateRows = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 5000)
     const leaveMap = await getLeaveMapForDate(today)
     const overridesMap = await getShiftOverridesForDate(today)
     // Hand the leftovers to people who are actually still clocked in —

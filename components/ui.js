@@ -197,9 +197,16 @@ export function Segmented({ options, value, onChange, size = 'md' }) {
   const pad = size === 'sm' ? '5px 10px' : '7px 13px'
   const fs  = size === 'sm' ? T.sm : T.base
   return (
-    <div style={{
+    // The row scrolls inside itself rather than pushing the page sideways.
+    // Four choices fit a desktop and do not fit a phone: on a 390px screen the
+    // "All time / Today / Yesterday / Last 30 days" switch ran seventy pixels
+    // past the edge and took the whole page's horizontal scrollbar with it.
+    // maxWidth:100% is what actually stops an inline-flex row from growing to
+    // its content; overflow alone does nothing without it.
+    <div className="no-scrollbar" style={{
       display:'inline-flex', gap:'2px', padding:'3px',
       background:SURF.sunken, border:`1px solid ${C.border2}`, borderRadius:R.md,
+      maxWidth:'100%', overflowX:'auto', verticalAlign:'top',
     }}>
       {options.map(o => {
         const on = o.value === value

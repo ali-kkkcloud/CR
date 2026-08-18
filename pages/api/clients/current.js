@@ -53,7 +53,7 @@ export default async function handler(req, res) {
       getLeaveMapForDate(yesterday),
       getShiftOverridesForDate(today),
       getShiftOverridesForDate(yesterday),
-      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 8000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 8000),
       readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
       readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
     ])
@@ -212,6 +212,7 @@ export default async function handler(req, res) {
       filled[r[3]] = {
         status: r[5] || '', misalignVehicles: r[6] || '', alertCount: r[7] || '',
         fatigue: r[8] || '', fatigueCount: r[9] || '', notes: r[10] || '',
+        liveVehicles: r[11] || '',
         updatedAt: hasRealData ? (r[1] || '') : '',
       }
     })

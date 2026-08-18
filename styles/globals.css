@@ -342,3 +342,22 @@ input[type=date] { color-scheme: dark; }
   :root { --sidebar-w: 0px; }
   .sidebar { display: none !important; }
 }
+
+/* A row that scrolls inside itself — the scrollbar would be taller than the
+   control it belongs to, so it is hidden and the row still scrolls by drag,
+   wheel and keyboard. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* The hour's client list beside the one client being worked on.
+   Below ~820px there is not room for a 336px list AND a form, so the two
+   stack: the list keeps a bounded height and the form sits under it. Left as
+   a side-by-side flex row, the form was squeezed to about thirty pixels and
+   its contents ran a hundred pixels past the edge of the phone. */
+.board-two { display: flex; gap: 12px; align-items: stretch; }
+.board-two > .board-list { width: 336px; min-width: 270px; flex-shrink: 0; }
+@media (max-width: 820px) {
+  .board-two { flex-direction: column; height: auto !important; }
+  .board-two > .board-list { width: auto; min-width: 0; max-height: 300px; }
+  .board-two > .board-detail { min-height: 520px; }
+}

@@ -1,14 +1,14 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowIST, hourHasPassed, fetchClientVehicleCounts,
+  readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowIST, hourHasPassed, whoWasOnShiftAtHour, fetchClientVehicleCounts,
   getLeaveMapForDate, getShiftOverridesForDate,
   getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
 } from '../../../lib/sheets'
 import {
-  employees, distributeClientsForHour, customTextFor
+  employees, distributeClientsForHour, customTextFor, getScheduledEmployeesAtHour
 } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
-import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
+import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -32,7 +32,7 @@ export default async function handler(req, res) {
     const date = (req.query.date || todayStr()).toString()
 
     const [updateRows, shiftRows, breakRows, leaveMap, redistRows, vehicleMap, overridesMap] = await Promise.all([
-      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 10000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 10000),
       readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
       readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
       getLeaveMapForDate(date),
@@ -90,6 +90,7 @@ export default async function handler(req, res) {
           alertCount: r[7] || '',
           fatigue: r[8] || '',
           fatigueCount: r[9] || '',
+          liveVehicles: r[11] || '',
         }
       })
 
@@ -104,6 +105,58 @@ export default async function handler(req, res) {
     )
     for (let h = 0; h < 24; h++) {
       if (hoursSeen.has(h)) lockedByHour[h] = buildLockedAssignments(updateRows, date, h)
+    }
+
+    // One owner per (client, hour) for every hour that has rows, grouped by
+    // employee — see the note where this is used below.
+    const settledOwners = {}
+    collapseSlotOwners(updateRows, r => r[0] === date).forEach(({ owner, client, hour }) => {
+      const h = parseInt(hour)
+      if (!Number.isFinite(h)) return
+      ;(settledOwners[h] ||= {})
+      ;(settledOwners[h][owner] ||= []).push(client)
+    })
+
+    // ── Who owns an hour, chosen by where that hour sits in the day ──────
+    //
+    // Three different questions wear the same words. "Who has this hour" means
+    // something different for an hour that is over, the one running now, and
+    // one still to come, and answering all three with live presence is what
+    // made this screen disagree with the Command Center by a hundred clients.
+    //
+    //   gone      — who was actually at work then, read back from the
+    //               attendance log's own start and end times.
+    //   now       — who is clocked in this minute, minus anyone away. Exactly
+    //               what the employee's own board does.
+    //   still due — the ROSTER. The night shift covers tonight whether or not
+    //               it has arrived yet; judging tonight by who happens to be at
+    //               a desk this morning handed the whole evening to the morning
+    //               crew, and dropped the 6am hour entirely because everyone
+    //               who covers it had gone home — ninety-six clients that
+    //               simply vanished off this screen.
+    const standingWeekOff = new Set(employees().filter(e => e.isWeekOff).map(e => e.name))
+    const rosterPoolCache = {}
+    const rosterPool = (hour) => (rosterPoolCache[hour] ||= (
+      getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
+        .map(e => e.name)
+        .filter(n => !standingWeekOff.has(n))
+    ))
+    const hourPoolFor = (hour) => {
+      if (!isToday) {
+        return buildHourPool({ hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames }).poolNames
+      }
+      if (hour === nowHour) {
+        return buildHourPool({ hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames }).poolNames
+      }
+      if (hourHasPassed(hour, nowHour)) {
+        const wereHere = whoWasOnShiftAtHour(shiftRows, date, hour, nowHour)
+        const pool = rosterPool(hour).filter(n => wereHere.has(n))
+        // Nobody's attendance row covers that hour — fall back to the live
+        // reading rather than reporting an hour that was worked as unowned.
+        return pool.length > 0 ? pool
+          : buildHourPool({ hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames }).poolNames
+      }
+      return rosterPool(hour)
     }
 
     // Login map
@@ -163,24 +216,55 @@ export default async function handler(req, res) {
         // stops a finished morning being re-attributed every time somebody
         // clocks in or out: at the end of the day, when everyone has gone home,
         // a live recompute reported the entire day as belonging to nobody.
+        // An hour settles as a WHOLE, not one employee at a time. Deciding it
+        // per employee mixed two incompatible records in the same hour: the
+        // people who had rows were read from the rows, while a colleague with
+        // no rows was re-derived from the split — and the split handed that
+        // colleague clients already recorded against the others. One client at
+        // one hour then appeared on two boards, which is the same failure as
+        // losing one, in the opposite direction. If the hour is over and
+        // anybody has rows in it, the rows are the record for everybody, and
+        // an employee with none simply held none.
         const empHourRows = updateIdx[`${emp.name}__${hour}`] || {}
-        const rowClients = Object.keys(empHourRows)
-        const settled = rowClients.length > 0 && (!isToday || hourHasPassed(hour, nowHour))
+        const settled = hoursSeen.has(hour) && (!isToday || hourHasPassed(hour, nowHour))
 
         let assignedClients
         if (settled) {
-          assignedClients = rowClients.map(client => ({
+          // ONE owner per slot, not one row per hand-over. CRM_Updates is
+          // append-only and a placeholder is written every time a client lands
+          // in front of somebody, so a client shared between two people during
+          // an hour leaves a row in each of their names. Reading each
+          // employee's own rows therefore put the same client-hour on two
+          // boards — 48 of them in a single hour — and inflated the day's total
+          // by exactly that many. collapseSlotOwners settles it the way the
+          // Command Center does: whoever actually did the work owns it, and
+          // failing that the most recent person to hold it.
+          assignedClients = (settledOwners[hour]?.[emp.name] || []).map(client => ({
             client, vehicleCount: vehicleMap[(client || '').toLowerCase()]?.vehicleCount || 0,
           }))
         } else {
           // reserveOffShiftLocks=true matches /api/clients/current: work somebody
           // finished before going home stays theirs instead of bouncing onto a
           // colleague.
-          const { poolNames } = buildHourPool({
-            hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames,
-          })
+          const poolNames = hourPoolFor(hour)
           const lockedAssignments = lockedByHour[hour] || {}
           assignedClients = (distributeClientsForHour(hour, poolNames, vehicleMap, lockedAssignments, true)[emp.name] || [])
+
+          // Work this employee has already FINISHED this hour, when the split
+          // no longer lists them — they stepped away on a break, or went home.
+          // The split reserves those clients so nobody redoes them, but it only
+          // returns lists for people in the pool, so the finished work fell off
+          // the screen entirely: six completed clients at ten o'clock were on
+          // no board and in no total, which reads exactly like six clients lost.
+          // They belong to whoever did them.
+          Object.entries(lockedAssignments).forEach(([client, owner]) => {
+            if (owner !== emp.name) return
+            if (assignedClients.some(c => c.client === client)) return
+            assignedClients.push({
+              client, vehicleCount: vehicleMap[(client || '').toLowerCase()]?.vehicleCount || 0,
+              isSpecific: false, isLocked: true,
+            })
+          })
         }
 
         // Add redistributed TO this employee (real reason + timestamp from Redistribution_Log)
@@ -221,6 +305,7 @@ export default async function handler(req, res) {
           // kind of thing they are watching for.
           fatigue:           (empHourData[c.client]?.fatigue || '').toString().trim(),
           fatigueCount:      parseInt(empHourData[c.client]?.fatigueCount) || 0,
+          liveVehicles:      parseInt(empHourData[c.client]?.liveVehicles) || 0,
         }))
 
         return {
