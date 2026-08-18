@@ -698,7 +698,8 @@ export default function Dashboard() {
   const boardClients = isNowHour
     ? clients
     : (viewEntry?.clients || [])
-        .filter(c => !c.redistributedAway)
+        // Nothing is filtered out here any more. The redistribution log
+        // annotates a board, it does not empty one — see /api/dashboard/my-day.
         // isRedistributed/fromEmployee come through too. An earlier hour can
         // contain clients handed over by a colleague who went home, and
         // dropping those two fields here lost the only sign of where the work

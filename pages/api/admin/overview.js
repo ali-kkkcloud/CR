@@ -99,6 +99,21 @@ export default async function handler(req, res) {
     // Anyone who actually clocked in is here, whatever any flag says.
     todayShifts.forEach(r => { if (r[3]) weekOffEmps.delete(r[1]) })
 
+    // Gone home for this operating day: they have a row today and none of them
+    // is still Active. Hours still to come are not theirs. Rows dated
+    // yesterday are deliberately ignored — a night-shift employee who finished
+    // at six this morning is due back tonight.
+    const shiftsByNameToday = {}
+    todayShifts.forEach(r => {
+      const n = (r[1] || '').toString().trim()
+      if (n) (shiftsByNameToday[n] ||= []).push(r)
+    })
+    const goneHomeToday = new Set(
+      Object.entries(shiftsByNameToday)
+        .filter(([, rows]) => !rows.some(r => r[6] === 'Active'))
+        .map(([n]) => n)
+    )
+
     // ── One owner per slot, rather than one row per hand-over ──
     // For hours already gone this trail is the only record there is. For the
     // hour in progress it isn't good enough: a placeholder keeps the name of
@@ -219,7 +234,7 @@ export default async function handler(req, res) {
           // all — and the roster is the only thing that can answer it.
           const pool = getScheduledEmployeesAtHour(h, leaveMap, overridesMap)
             .map(e => e.name)
-            .filter(n => !weekOffEmps.has(n))
+            .filter(n => !weekOffEmps.has(n) && !goneHomeToday.has(n))
           const audit = auditHourAssignment(h, pool, vehicleMapForAudit, {}, true)
           unassigned = audit.unassigned
           reason = audit.reason
@@ -269,7 +284,13 @@ export default async function handler(req, res) {
     }
 
     const empStatus = employees().map(emp => {
-      const shiftLog   = todayShifts.find(r => r[1] === emp.name)
+      // The row that describes them NOW, not the first one of the day. An
+      // employee can have more than one attendance row today — they ended a
+      // shift and came back, or a forgotten row was auto-closed before they
+      // started again — and reading the first one showed somebody who was at
+      // their desk as "Ended". A live row wins; otherwise the most recent.
+      const myRowsToday = todayShifts.filter(r => r[1] === emp.name)
+      const shiftLog   = myRowsToday.find(r => r[6] === 'Active') || myRowsToday[myRowsToday.length - 1]
       const override   = overridesMap[emp.name]
       const effective  = override ? { ...emp, start: override.start, end: override.end } : emp
       const isActive   = isScheduledAtHour(effective, currentHour)
@@ -466,6 +487,11 @@ export default async function handler(req, res) {
         const pool = getScheduledEmployeesAtHour(h, leaveMap, overridesMap)
           .map(e => e.name)
           .filter(n => !weekOffEmps.has(n))
+          // Somebody who has already clocked out for the day is not owed an
+          // hour that has not happened yet — their share falls to whoever is
+          // still on the floor. Only applied to hours still ahead: an hour
+          // they worked before going home is still theirs.
+          .filter(n => !(!passed && goneHomeToday.has(n)))
         // distributeClientsForHour already keeps anyone holding a named client
         // or a custom-duty hour out of the ordinary share for that hour — they
         // get their one fixed client, or nothing, and the rest of the hour is

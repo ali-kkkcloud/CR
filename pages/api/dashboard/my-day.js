@@ -66,6 +66,21 @@ export default async function handler(req, res) {
     const awayNames = getAwayOnBreakNames(breakRows, [today, yesterday])
     // Nobody on a standing week off shares an hour that hasn't happened yet.
     const standingWeekOff = new Set(employees().filter(e => e.isWeekOff).map(e => e.name))
+    // Nor does anybody who has already gone home for this operating day — the
+    // same rule the admin's day view applies, so the two cannot disagree about
+    // how much work an hour tonight is going to be shared between. Rows dated
+    // yesterday are ignored: a night shift that ended at six this morning is
+    // due back this evening.
+    const shiftsTodayByName = {}
+    shiftLogRows.slice(1).filter(r => r[2] === today).forEach(r => {
+      const n = (r[1] || '').toString().trim()
+      if (n) (shiftsTodayByName[n] ||= []).push(r)
+    })
+    const goneHomeToday = new Set(
+      Object.entries(shiftsTodayByName)
+        .filter(([, rows]) => !rows.some(r => r[6] === 'Active'))
+        .map(([n]) => n)
+    )
 
     // Find this employee's scheduled hours
     const emp = employees().find(e => e.name === user.name)
@@ -81,12 +96,25 @@ export default async function handler(req, res) {
     // SHIFT ORDER (starting from their actual start hour) — not ascending
     // numeric order, which would put post-midnight hours (0, 1, 2...)
     // before the shift's real early-evening hours for a wrapping shift.
-    const scheduledHours = []
+    const inMyDay = new Set()
     if (isWrap) {
-      for (let h = effectiveEmp.start; h < 24; h++) scheduledHours.push(h)
-      for (let h = 0; h < effectiveEmp.end; h++) scheduledHours.push(h)
+      for (let h = effectiveEmp.start; h < 24; h++) inMyDay.add(h)
+      for (let h = 0; h < effectiveEmp.end; h++) inMyDay.add(h)
     } else {
-      for (let h = effectiveEmp.start; h < effectiveEmp.end; h++) scheduledHours.push(h)
+      for (let h = effectiveEmp.start; h < effectiveEmp.end; h++) inMyDay.add(h)
+    }
+    // An hour I actually have rows in is part of my day, whatever my window
+    // says now — a late start or an OT extension moves the window, and it must
+    // not erase a morning I have already worked. See the same note in
+    // /api/admin/full-day-view.
+    updateRows.slice(1)
+      .filter(r => r[0] === date && r[2] === user.name)
+      .forEach(r => { const h = parseInt(r[4]); if (Number.isFinite(h)) inMyDay.add(h) })
+
+    const scheduledHours = []
+    for (let i = 0; i < 24; i++) {
+      const h = (effectiveEmp.start + i) % 24
+      if (inMyDay.has(h)) scheduledHours.push(h)
     }
 
     // Build CRM_Updates index for this employee+date — keyed by hour+client
@@ -255,7 +283,7 @@ export default async function handler(req, res) {
         if (date === today && hour !== nowHour && !hourHasPassed(hour, nowHour)) {
           poolNames = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
             .map(e => e.name)
-            .filter(n => !standingWeekOff.has(n))
+            .filter(n => !standingWeekOff.has(n) && !goneHomeToday.has(n))
         } else if (date === today && hourHasPassed(hour, nowHour)) {
           // A finished hour with no rows at all. Judged on who was actually at
           // work then, from the attendance log — not on who is at a desk now.
@@ -296,27 +324,36 @@ export default async function handler(req, res) {
         })
       }
 
-      // Mark clients redistributed AWAY from me this hour
+      // A client the log says I handed on, that the split has given back to me.
+      //
+      // The log is an audit trail, not the board. If a client is still in my
+      // list then the live split still has it as mine — I ended a shift, came
+      // back, and it returned — so it counts as my work. It is only marked so
+      // the hand-over is visible; discounting it made my own total one short of
+      // what the admin, reading the same split, said I was holding.
       const awayThisHour = redistFromMe.filter(r => r.hour === hour)
       myClients = myClients.map(c => {
         const away = awayThisHour.find(a => a.client === c.client)
-        if (away) return { ...c, redistributedAway: true, toEmployee: away.toEmployee }
+        if (away) return { ...c, handedOverTo: away.toEmployee }
         return c
       })
 
-      // Add clients redistributed TO me this hour
+      // Mark clients that reached me because somebody handed them over.
+      //
+      // The log annotates; it never adds. It is an audit trail, and the live
+      // split is what actually moves the work — pushing a log row onto the
+      // board as well put the same client-hour on two people's days at once.
       const toMeThisHour = redistToMe.filter(r => r.hour === hour)
-      toMeThisHour.forEach(r => {
-        if (!myClients.some(c => c.client === r.client)) {
-          myClients.push({ client: r.client, isRedistributed: true, fromEmployee: r.fromEmployee })
-        }
+      myClients = myClients.map(c => {
+        const moved = toMeThisHour.find(r => r.client === c.client)
+        return moved ? { ...c, isRedistributed: true, fromEmployee: moved.fromEmployee } : c
       })
 
       // Merge with actual fill data
       const hourData = updatesByHour[hour] || {}
       const clientsWithStatus = myClients.map(c => ({
         ...c,
-        filled:    !c.redistributedAway && !!(hourData[c.client]?.filled),
+        filled:    !!(hourData[c.client]?.filled),
         status:    hourData[c.client]?.status || '',
         updatedAt: hourData[c.client]?.updatedAt || '',
         misalignVehicles: hourData[c.client]?.misalignVehicles || '',
@@ -325,7 +362,7 @@ export default async function handler(req, res) {
         fatigueCount: hourData[c.client]?.fatigueCount || '',
       }))
 
-      const realClients = clientsWithStatus.filter(c => !c.redistributedAway)
+      const realClients = clientsWithStatus
       const completed   = realClients.filter(c => c.filled).length
       const outstanding = realClients.filter(c => !c.filled).length
 

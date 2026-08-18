@@ -45,7 +45,7 @@ function fmt(h) {
 // away, who is missing, who was never coming, who is finished.
 const GROUPS = [
   { key:'working', label:'At work',      color:C.accent, hint:'clocked in and at the desk' },
-  { key:'break',   label:'On break',     color:C.red,    hint:'clocked in, away from the desk' },
+  { key:'break',   label:'On break',     color:C.amber,  hint:'away from the desk — their clients are still theirs' },
   { key:'missing', label:'Not in yet',   color:C.red,    hint:'their shift has started, they have not' },
   { key:'open',    label:'Shift left open', color:C.amber, hint:'clocked in and never clocked out' },
   { key:'weekoff', label:'Week off',     color:C.purple, hint:'not coming in today' },
@@ -179,10 +179,10 @@ export default function FloorPanel({ employees, breaks, workload, onPick }) {
                             {breakMinutes[e.name] ? `AWAY ${fmtMins(breakMinutes[e.name])}` : 'ON BREAK'}
                           </Tag>
                         )}
-                        {/* Away long enough that the split has stopped giving
-                            them clients — their share is on someone else's
-                            board right now, which is worth saying out loud. */}
-                        {on && e.onBreakLong && <Tag color={C.amber}>WORK REASSIGNED</Tag>}
+                        {/* A long break is worth flagging so the admin can
+                            check in — but the hour is still theirs and their
+                            clients are still on their board. */}
+                        {on && e.onBreakLong && <Tag color={C.amber}>AWAY A WHILE</Tag>}
                         {e.shiftOverdue && <Tag color={C.amber} dot>SHIFT NOT CLOSED</Tag>}
                         {e.isAdjusted && <Tag color={C.amber}>ADJ</Tag>}
                       </span>
