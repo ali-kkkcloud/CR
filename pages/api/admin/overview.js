@@ -8,6 +8,7 @@ import {
 import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
+import { computeDayPlan } from '../../../lib/dayplan'
 import { sweepShiftAutoClose } from '../../../lib/attendance'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -134,153 +135,66 @@ export default async function handler(req, res) {
       workByEmp[owner].assigned += 1
     })
 
-    // Every hour of the day, audited against the schedule itself: is each
-    // client due this hour actually on somebody's board?
-    //
-    // The one thing this platform must never do is lose a client, and a client
-    // that reaches nobody is invisible by definition — it is on no board, so no
-    // employee can miss it, and nothing would ever report it. This measures the
-    // split against Client_Timings directly and names anything unplaced.
-    let coverageGaps = []
-
-    // A night shift is logged under the day it began, so both days count as
-    // "clocked in right now".
+    // ── The day, worked out once ─────────────────────────────────────────
+    // Every number below — what each hour holds, who holds it, what has been
+    // recorded against it, and anything that reaches nobody — comes from one
+    // computation shared with Hour by hour and with every employee's own day.
+    // They used to be worked out separately and gave four different answers
+    // about the same person on the same afternoon.
     const yesterdayTop = yesterdayStr()
-    // The same definition of "on shift" the employee's own screen uses: an
-    // Active row, and not one left open so long that it is plainly forgotten.
-    // The admin used to read the raw row instead, so somebody whose own
-    // dashboard said "Not started" was listed here as on duty — two answers
-    // about the same person on the same platform.
     const onShiftNamesTop = getOnShiftNamesFromLog(shiftRows, [today, yesterdayTop])
     const awayNamesTop    = getAwayOnBreakNames(breakRows, [today, yesterdayTop])
 
-    // The hour in progress, worked out exactly as the employee's own board
-    // works it out — same pool, same locks, same vehicle-count balancing.
+    let plan = null
+    let coverageGaps = []
     try {
-      const vehicleMapForAudit = await fetchClientVehicleCounts()
-      // Which clients already reached somebody's board, hour by hour. A row in
-      // CRM_Updates is written the moment a client lands in front of an
-      // employee, so for an hour that has finished this trail IS the record of
-      // who had what — and it is the only honest one. Recomputing a finished
-      // hour from who happens to be on shift now reported the entire day as
-      // unassigned the moment the last person went home, which is both alarming
-      // and false: those hours were worked.
-      const seenByHour = {}
-      updateRows.slice(1).filter(r => r[0] === today).forEach(r => {
-        const h = parseInt(r[4])
-        if (!Number.isFinite(h)) return
-        if (!seenByHour[h]) seenByHour[h] = new Set()
-        seenByHour[h].add(r[3])
-      })
-
-      const nowHour = currentHour
-      for (let h = 0; h < 24; h++) {
-        const due = Object.entries(clientTimings()).filter(([, hs]) => hs.includes(h)).map(([n]) => n)
-        if (due.length === 0) continue
-
-        let unassigned, reason, dueTotal = due.length
-        if (hourHasPassed(h, nowHour)) {
-          // Finished. Judged on who was ACTUALLY at work during that hour, read
-          // back from the attendance log's own start and end times — not on who
-          // is clocked in now, which by the evening is nobody and would report a
-          // fully worked day as belonging to no one.
-          //
-          // A client counts as having reached somebody if it was placed by the
-          // split for that hour, or if a row was written for it. The second is
-          // what covers an hour whose staffing has since been edited.
-          const wereHere = whoWasOnShiftAtHour(shiftRows, today, h, nowHour)
-          const rostered = getScheduledEmployeesAtHour(h, leaveMap, overridesMap).map(e => e.name)
-          const pool = rostered.filter(n => wereHere.has(n))
-          const seen = seenByHour[h] || new Set()
-          if (pool.length === 0) {
-            unassigned = due.filter(c => !seen.has(c))
-            reason = 'no-staff'
-          } else {
-            const audit = auditHourAssignment(
-              h, pool, vehicleMapForAudit,
-              buildLockedAssignments(updateRows, today, h), true
-            )
-            unassigned = audit.unassigned.filter(c => !seen.has(c))
-            reason = audit.reason
-            dueTotal = audit.due
-          }
-        } else if (h === nowHour) {
-          // The hour in progress, split exactly as the employee's own board
-          // splits it: who is actually clocked in, minus anyone away.
-          const { poolNames } = buildHourPool({
-            hour: h, leaveMap, overridesMap,
-            onShiftNames: onShiftNamesTop,
-            clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterdayTop]),
-            awayNames: awayNamesTop,
-          })
-          const audit = auditHourAssignment(
-            h, poolNames, vehicleMapForAudit,
-            buildLockedAssignments(updateRows, today, h), true
-          )
-          unassigned = audit.unassigned
-          reason = audit.reason
-          dueTotal = audit.due
-        } else {
-          // Still to come. Judged on the ROSTER, not on who happens to be at a
-          // desk this minute — an hour tonight is covered by the night shift
-          // whether or not the night shift has arrived yet.
-          //
-          // Reading live presence here raised a false alarm every morning: the
-          // people who cover 6am had ended their shift a few hours earlier, so
-          // they counted as "gone home", the pool for 6am came out empty, and
-          // the screen announced ninety-six clients on nobody's board for an
-          // hour that is twenty hours away and fully staffed. What this reading
-          // is for is the genuine case — an hour the roster does not cover at
-          // all — and the roster is the only thing that can answer it.
-          const pool = getScheduledEmployeesAtHour(h, leaveMap, overridesMap)
-            .map(e => e.name)
-            .filter(n => !weekOffEmps.has(n) && !goneHomeToday.has(n))
-          const audit = auditHourAssignment(h, pool, vehicleMapForAudit, {}, true)
-          unassigned = audit.unassigned
-          reason = audit.reason
-          dueTotal = audit.due
-        }
-
-        if (unassigned.length > 0) {
-          coverageGaps.push({
-            hour: h,
-            clients: unassigned.length,
-            // From the same audit as the count above. Taking the numerator from
-            // the audit (which counts named clients whose owner is absent as
-            // work that is due) and the denominator from the schedule alone
-            // produced "127 of 126 unassigned".
-            due: dueTotal,
-            reason,
-            past: hourHasPassed(h, nowHour),
-            sample: unassigned.slice(0, 6),
-          })
-        }
-      }
       const vehicleMap = await fetchClientVehicleCounts()
-      // A night shift is logged under the day it began, so both days count
-      // as "clocked in right now".
-      const yesterday = yesterdayTop
-      const { poolNames } = buildHourPool({
-        hour: currentHour, leaveMap, overridesMap, onShiftNames: onShiftNamesTop,
-        clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterday]),
-        // Somebody on a long break is not working this hour, so the hour is
-        // not theirs — the boards apply the same rule, and the two must never
-        // disagree about who holds a client.
-        awayNames: awayNamesTop,
+      plan = computeDayPlan({
+        date: today, today, nowHour: currentHour, yesterday: yesterdayTop,
+        shiftRows, updateRows, breakRows, leaveMap, overridesMap, vehicleMap,
+        weekOffNames: weekOffEmps,
       })
-      const locked = buildLockedAssignments(updateRows, today, currentHour)
-      const dist = distributeClientsForHour(currentHour, poolNames, vehicleMap, locked, true)
-      Object.entries(dist).forEach(([name, clients]) => {
+
+      // Scheduled clients that are in no vehicle list. They are handed out and
+      // worked on, but they weigh nothing in the split and count for nothing in
+      // the vehicle totals, so a fleet of forty reads as a fleet of none. The
+      // schedule and the vehicle source disagree about them, and only a person
+      // can decide which one is right.
+      Object.keys(clientTimings()).forEach(client => {
+        const known = vehicleMap[(client || '').toString().trim().toLowerCase()]
+        if (!known) clientIssues.push({ client, reason: 'not in the vehicle list — counts as 0 vehicles' })
+      })
+
+      // Work that reaches nobody. The one failure nothing else would report:
+      // a client on no board cannot be missed by any employee, so without this
+      // it is simply absent from the platform.
+      coverageGaps = plan.hours
+        .filter(h => h.unassigned.length > 0)
+        .map(h => ({
+          hour: h.hour,
+          clients: h.unassigned.length,
+          due: h.dueCount,
+          reason: h.reason,
+          past: h.passed && h.hour !== currentHour,
+          sample: h.unassigned.slice(0, 6),
+        }))
+
+      // What each person is holding right now, for the floor list: finished
+      // work wherever it happened, plus what is still open on their board.
+      Object.entries(plan.byEmployee).forEach(([name, e]) => {
         if (!workByEmp[name]) workByEmp[name] = { assigned: 0, completed: 0 }
-        // Anything already finished is counted above; this adds what is
-        // still outstanding on their board right now.
-        const outstanding = clients.filter(c => locked[c.client] !== name).length
-        workByEmp[name].assigned += outstanding
       })
+      const nowHourEntry = plan.hours.find(h => h.hour === currentHour)
+      if (nowHourEntry) {
+        const locked = buildLockedAssignments(updateRows, today, currentHour)
+        Object.entries(nowHourEntry.owners).forEach(([name, clients]) => {
+          if (!workByEmp[name]) workByEmp[name] = { assigned: 0, completed: 0 }
+          workByEmp[name].assigned += clients.filter(c => locked[c.client] !== name).length
+        })
+      }
     } catch (e) {
-      // The live split is an improvement on the row trail, not a
-      // requirement — never take the whole Command Center down for it.
-      console.error('overview: live split failed', e.message)
+      // A missing plan must never take the whole Command Center down.
+      console.error('overview: day plan failed', e.message)
     }
 
     const empStatus = employees().map(emp => {
@@ -302,9 +216,11 @@ export default async function handler(req, res) {
       // duty" nor "ended"; it is a row somebody has to tidy up.
       const shiftStale = hasStarted && !hasEnded && !onShiftNamesTop.has(emp.name)
 
-      const myWork = workByEmp[emp.name] || { assigned: 0, completed: 0 }
-      const assignedCount  = myWork.assigned
-      const completedCount = myWork.completed
+      // Their whole day, from the shared plan — the same figures the table
+      // further down prints, so the floor list and the table cannot disagree.
+      const myPlan = plan?.byEmployee?.[emp.name]
+      const assignedCount  = myPlan?.clients ?? (workByEmp[emp.name]?.assigned || 0)
+      const completedCount = myPlan?.clientsDone ?? (workByEmp[emp.name]?.completed || 0)
 
       // What actually happened beats what was planned: somebody flagged week
       // off who turned up anyway is on the floor, and saying otherwise hides a
@@ -389,47 +305,22 @@ export default async function handler(req, res) {
     // ══════════════════════════════════════════════════════════════════
     let workload = null
     try {
-      const vehicleMap = await fetchClientVehicleCounts()
-      const vehiclesOf = (c) => vehicleMap[(c || '').toString().trim().toLowerCase()]?.vehicleCount || 0
-
-      // What was actually recorded today, per employee and in total.
-      const doneRows = updateRows.slice(1).filter(r => r[0] === today && (r[5] || '').toString().trim())
-      const perEmp = {}
-      const actualOf = (name) => (perEmp[name] ||= {
-        clientsDone: 0, vehiclesChecked: 0, alerts: 0, fatigue: 0,
-        footageRaised: 0, footageDone: 0,
-      })
-      let doneVehicles = 0, doneAlerts = 0, doneFatigue = 0
-      const doneKeys = new Set()
-      doneRows.forEach(r => {
-        const a = actualOf(r[2])
-        a.clientsDone      += 1
-        a.vehiclesChecked  += parseInt(r[11]) || 0
-        a.alerts           += parseInt(r[7])  || 0
-        a.fatigue          += parseInt(r[9])  || 0
-        doneVehicles  += parseInt(r[11]) || 0
-        doneAlerts    += parseInt(r[7])  || 0
-        doneFatigue   += parseInt(r[9])  || 0
-        doneKeys.add(`${r[4]}|${r[3]}`)
-      })
-      // Footage each person raised TODAY, and how much of it was delivered
-      // today. Column E(4) is when it was raised, H(7) who raised it, R(17)
-      // whether it is resolved and S(18) when — the same mapping
-      // /api/footage/list reads.
+      // Footage raised TODAY by each person, and how much of it they closed.
       //
-      // Scoped to the operating day, like everything else on this screen. The
-      // Issue Tracker goes back years, so counting every row ever raised told
-      // an employee they had raised 283 requests "today"; and the operating day
-      // is what makes a request raised at 3am belong to the night that is
-      // ending rather than to the morning that is starting.
-      const raisedOnOperatingDay = (stamp) => {
+      // Scoped to the operating day like everything else on this screen, and
+      // "delivered" is counted only among what they raised today. Counting
+      // every delivery of anything they had ever raised showed "1 / 0" against
+      // an employee whose shift had not even started — one request from days
+      // ago, closed by somebody else, reported as today's work.
+      const perEmpFootage = {}
+      const footageOf = (name) => (perEmpFootage[name] ||= { raised: 0, done: 0 })
+      const onOperatingDay = (stamp) => {
         const raw = (stamp || '').toString().trim()
         if (!raw) return false
         const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{2}))?/)
         if (!m) return false
         const [, dd, mo, yyyy, hh] = m
         const d = new Date(+yyyy, +mo - 1, +dd, hh ? +hh : 12, 0, 0, 0)
-        // Before 7am belongs to the previous operating day.
         if (hh !== undefined && +hh < DAY_START_HOUR) d.setDate(d.getDate() - 1)
         return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}` === today
       }
@@ -437,117 +328,49 @@ export default async function handler(req, res) {
         const sub = (r[9] || '').toString().toLowerCase()
         if (!sub.includes('customer request for video')) return
         const raisedBy = (r[7] || '').toString().trim()
-        if (!raisedBy) return
-        const resolved = (r[17] || '').toString().toLowerCase() === 'yes'
-        if (raisedOnOperatingDay(r[4])) actualOf(raisedBy).footageRaised += 1
-        // Delivered today counts wherever it was raised — closing out
-        // yesterday's queue is this shift's work, and hiding it would tell
-        // somebody who cleared ten old requests that they did nothing.
-        if (resolved && raisedOnOperatingDay(r[18])) actualOf(raisedBy).footageDone += 1
+        if (!raisedBy || !onOperatingDay(r[4])) return
+        const f = footageOf(raisedBy)
+        f.raised += 1
+        if ((r[17] || '').toString().toLowerCase() === 'yes') f.done += 1
       })
 
-      // What the day holds, hour by hour.
-      const expected = {}
-      const expectedOf = (name) => (expected[name] ||= { clients: 0, vehicles: 0, hours: 0 })
-      let dueClientsSoFar = 0, dueVehiclesSoFar = 0
-      let dueClientsAll   = 0, dueVehiclesAll   = 0
-      // Filled, counted the same way as due — one client in one hour is one
-      // slot — so "done" can never outrun "due" the way a raw row count could.
-      let doneClientsSoFar = 0, doneClientsAll = 0
-      const byHour = []
-
-      for (const h of businessHourOrder()) {
-        // Everything an employee will actually be handed this hour: the clients
-        // Client_Timings schedules, PLUS any client named against an employee in
-        // Employee_Hours that the schedule does not list. A named client always
-        // reaches its employee whether or not the timings sheet mentions it, so
-        // leaving it out of the day's total meant the totals here disagreed with
-        // the boards by exactly those clients.
-        const dueSet = new Set(
-          Object.entries(clientTimings()).filter(([, hs]) => hs.includes(h)).map(([n]) => n)
-        )
-        employees().forEach(e => (specificClientsFor(e.name, h) || []).forEach(c => dueSet.add(c)))
-        const dueNames = [...dueSet]
-        if (dueNames.length === 0) continue
-        const hourVehicles = dueNames.reduce((sum, c) => sum + vehiclesOf(c), 0)
-        const passed = hourHasPassed(h, currentHour) || h === currentHour
-
-        dueClientsAll  += dueNames.length
-        dueVehiclesAll += hourVehicles
-        if (passed) { dueClientsSoFar += dueNames.length; dueVehiclesSoFar += hourVehicles }
-
-        // Who this hour is planned for: rostered, minus anyone on leave, minus
-        // anyone off for the day. Not "who is clocked in" — this is what the
-        // day holds for each person, not what they are holding this minute.
-        //
-        // Somebody who is not coming in cannot be given a share of the hour:
-        // in reality their clients are split between the people who ARE here,
-        // so counting them in would tell every one of their colleagues they
-        // have less work than they are actually about to get.
-        const pool = getScheduledEmployeesAtHour(h, leaveMap, overridesMap)
-          .map(e => e.name)
-          .filter(n => !weekOffEmps.has(n))
-          // Somebody who has already clocked out for the day is not owed an
-          // hour that has not happened yet — their share falls to whoever is
-          // still on the floor. Only applied to hours still ahead: an hour
-          // they worked before going home is still theirs.
-          .filter(n => !(!passed && goneHomeToday.has(n)))
-        // distributeClientsForHour already keeps anyone holding a named client
-        // or a custom-duty hour out of the ordinary share for that hour — they
-        // get their one fixed client, or nothing, and the rest of the hour is
-        // divided by vehicle count between everybody else.
-        const dist = distributeClientsForHour(h, pool, vehicleMap, {}, false)
-        Object.entries(dist).forEach(([name, cs]) => {
-          if (cs.length === 0) return
-          const e = expectedOf(name)
-          e.clients  += cs.length
-          e.vehicles += cs.reduce((sum, c) => sum + (c.vehicleCount || 0), 0)
-          e.hours    += 1
-        })
-
-        const doneThisHour = dueNames.filter(c => doneKeys.has(`${h}|${c}`)).length
-        doneClientsAll += doneThisHour
-        if (passed) doneClientsSoFar += doneThisHour
-
-        byHour.push({
-          hour: h, passed,
-          clients: dueNames.length, vehicles: hourVehicles,
-          done: doneThisHour,
-        })
-      }
-
+      const t = plan.totals
       workload = {
-        byHour,
-        soFar: {
-          // Counted as slots, the same unit the "due" figures use: one client
-          // in one hour is one piece of work. Counting rows instead would
-          // double anything that was written twice after a hand-over.
-          clients: dueClientsSoFar, clientsDone: doneClientsSoFar,
-          vehicles: dueVehiclesSoFar, vehiclesChecked: doneVehicles,
-          alerts: doneAlerts, fatigue: doneFatigue, alertsTotal: doneAlerts + doneFatigue,
-        },
-        // 7am to 7am — the whole operating day, including the hours still to
-        // come. The "done" side is the same live tally as above, so this block
-        // fills in as the day is worked rather than only settling at the end.
-        fullDay: {
-          clients: dueClientsAll, clientsDone: doneClientsAll,
-          vehicles: dueVehiclesAll, vehiclesChecked: doneVehicles,
-          alerts: doneAlerts, fatigue: doneFatigue, alertsTotal: doneAlerts + doneFatigue,
-        },
-        perEmployee: employees().map(e => ({
-          name: e.name,
-          isWeekOff:        weekOffEmps.has(e.name),
-          expectedClients:  expected[e.name]?.clients  || 0,
-          expectedVehicles: expected[e.name]?.vehicles || 0,
-          expectedHours:    expected[e.name]?.hours    || 0,
-          clientsDone:      perEmp[e.name]?.clientsDone     || 0,
-          vehiclesChecked:  perEmp[e.name]?.vehiclesChecked || 0,
-          alerts:           perEmp[e.name]?.alerts          || 0,
-          fatigue:          perEmp[e.name]?.fatigue         || 0,
-          alertsTotal:     (perEmp[e.name]?.alerts || 0) + (perEmp[e.name]?.fatigue || 0),
-          footageRaised:    perEmp[e.name]?.footageRaised   || 0,
-          footageDone:      perEmp[e.name]?.footageDone     || 0,
+        byHour: plan.hours.map(h => ({
+          hour: h.hour, passed: h.passed,
+          clients: h.dueCount, vehicles: h.dueVehicles, done: h.done,
         })),
+        soFar: {
+          clients: t.dueClientsSoFar, clientsDone: t.doneClientsSoFar,
+          vehicles: t.dueVehiclesSoFar, vehiclesChecked: t.doneVehicles,
+          alerts: t.doneAlerts, fatigue: t.doneFatigue, alertsTotal: t.doneAlerts + t.doneFatigue,
+        },
+        // 7am to 7am — the whole operating day, filling in as it is worked.
+        fullDay: {
+          clients: t.dueClients, clientsDone: t.doneClients,
+          vehicles: t.dueVehicles, vehiclesChecked: t.doneVehicles,
+          alerts: t.doneAlerts, fatigue: t.doneFatigue, alertsTotal: t.doneAlerts + t.doneFatigue,
+        },
+        // Straight off the shared plan, so this table and Hour by hour cannot
+        // print two different numbers for the same person.
+        perEmployee: employees().map(e => {
+          const p = plan.byEmployee[e.name]
+          const f = perEmpFootage[e.name] || { raised: 0, done: 0 }
+          return {
+            name: e.name,
+            isWeekOff:        weekOffEmps.has(e.name),
+            expectedClients:  p?.clients  || 0,
+            expectedVehicles: p?.vehicles || 0,
+            expectedHours:    p?.hoursWithClients || 0,
+            clientsDone:      p?.clientsDone     || 0,
+            vehiclesChecked:  p?.vehiclesChecked || 0,
+            alerts:           p?.alerts          || 0,
+            fatigue:          p?.fatigue         || 0,
+            alertsTotal:     (p?.alerts || 0) + (p?.fatigue || 0),
+            footageRaised:    f.raised,
+            footageDone:      f.done,
+          }
+        }),
       }
     } catch (e) {
       console.error('overview: workload failed', e.message)

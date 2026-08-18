@@ -410,8 +410,14 @@ export default function Admin() {
 
   const hours = Array.from({ length: 24 }, (_, i) => i)
 
-  const totalUpdatesToday = employees.reduce((s,e)=>s+(e.totalUpdates||0),0)
-  const totalPendingToday = employees.reduce((s,e)=>s+(e.pendingCount||0),0)
+  // Straight from the shared day plan, so the header, the hour strip and the
+  // per-employee table below it all say the same thing. Summing per-employee
+  // counters gave a third answer again.
+  const workload = overview?.workload || null
+  const totalUpdatesToday = workload ? workload.fullDay.clientsDone
+    : employees.reduce((s,e)=>s+(e.totalUpdates||0),0)
+  const totalPendingToday = workload ? Math.max(0, workload.fullDay.clients - workload.fullDay.clientsDone)
+    : employees.reduce((s,e)=>s+(e.pendingCount||0),0)
   const completionPct = totalUpdatesToday+totalPendingToday>0
     ? Math.round((totalUpdatesToday/(totalUpdatesToday+totalPendingToday))*100) : 100
   const activePct = kpis.total>0 ? Math.round((kpis.active/kpis.total)*100) : 0
