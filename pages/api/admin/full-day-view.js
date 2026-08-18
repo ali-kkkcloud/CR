@@ -155,17 +155,22 @@ export default async function handler(req, res) {
           return hour >= l.fromHour || hour < l.toHour
         })
 
-        const customText = customTextFor(emp.name, hour)
-        if (customText) {
-          return { hour, isOnLeave: false, isCustom: true, customText, clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
-        }
-
+        // Leave is checked BEFORE custom duty, matching the employee's own
+        // screen. An hour that is both — a CALL slot inside a week off — was
+        // being labelled "CALL" here and "Week Off" there, two answers about
+        // the same hour. Somebody who is not coming in is not doing the calls
+        // either, so leave wins.
         if (isOnLeave) {
           const leaveEntry = leaves.find(l => {
             if (l.fromHour <= l.toHour) return hour >= l.fromHour && hour < l.toHour
             return hour >= l.fromHour || hour < l.toHour
           })
           return { hour, isOnLeave: true, leaveReason: leaveEntry?.reason || '', clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
+        }
+
+        const customText = customTextFor(emp.name, hour)
+        if (customText) {
+          return { hour, isOnLeave: false, isCustom: true, customText, clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
         }
 
         // An hour that has rows in CRM_Updates is settled: a row is written the
