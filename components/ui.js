@@ -313,6 +313,132 @@ export function Stat({ icon, label, value, sub, subColor, progress, onClick, acc
   )
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// PageHead — the top of a screen: what it is, and the handful of numbers
+// that actually change what you do next.
+//
+// Every admin screen had grown its own row of stat tiles — nine of them on
+// one, six on another — and a tile is a big, expensive shape: it takes a
+// third of the fold to say "39288 total vehicles", which nobody acts on. The
+// facts here are a single line of text. They cost one row, they read left to
+// right like a sentence, and putting them beside the title means the working
+// content starts at the top of the screen instead of below the fold.
+//
+// facts: [{ label, value, tone?: 'good'|'warn'|'bad', onClick? }]
+// ══════════════════════════════════════════════════════════════════════
+export function PageHead({ title, sub, facts = [], actions, children }) {
+  const toneColor = { good: C.accent, warn: C.amber, bad: C.red }
+  return (
+    <div style={{ marginBottom: SP[4] }}>
+      <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', gap:SP[4], flexWrap:'wrap' }}>
+        <div style={{ minWidth:0 }}>
+          <div style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px' }}>{title}</div>
+          {sub && <div style={{ color:C.muted, fontSize:T.base, marginTop:'3px' }}>{sub}</div>}
+        </div>
+        {actions && <div style={{ display:'flex', gap:SP[2], flexWrap:'wrap' }}>{actions}</div>}
+      </div>
+
+      {facts.length > 0 && (
+        <div style={{
+          display:'flex', alignItems:'center', gap:SP[4], flexWrap:'wrap',
+          marginTop:SP[3], paddingTop:SP[3], borderTop:`1px solid ${C.border}`,
+        }}>
+          {facts.filter(Boolean).map((f, i) => {
+            const col = toneColor[f.tone] || C.text
+            const Tag = f.onClick ? 'button' : 'div'
+            return (
+              <Tag
+                key={i}
+                onClick={f.onClick}
+                className={f.onClick ? 'pressable' : undefined}
+                style={{
+                  display:'flex', alignItems:'baseline', gap:'7px',
+                  background:'transparent', border:'none', padding:0,
+                  cursor: f.onClick ? 'pointer' : 'default',
+                }}
+              >
+                <span style={{ color:col, fontSize:T.lg, fontWeight:800, lineHeight:1, letterSpacing:'-0.3px' }}>
+                  {f.value}
+                </span>
+                <span style={{ color:C.muted, fontSize:T.sm }}>{f.label}</span>
+              </Tag>
+            )
+          })}
+        </div>
+      )}
+      {children}
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Section — one heading, said the same way on every screen.
+// ══════════════════════════════════════════════════════════════════════
+export function Section({ title, sub, right, children, style }) {
+  return (
+    <div style={{ marginBottom: SP[5], ...style }}>
+      {(title || right) && (
+        <div style={{
+          display:'flex', alignItems:'baseline', justifyContent:'space-between',
+          gap:SP[3], flexWrap:'wrap', marginBottom:SP[3],
+        }}>
+          <div style={{ minWidth:0 }}>
+            {title && <span className="eyebrow">{title}</span>}
+            {sub && <div style={{ color:C.muted, fontSize:T.sm, marginTop:'3px' }}>{sub}</div>}
+          </div>
+          {right}
+        </div>
+      )}
+      {children}
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// PickList — a column of people or things, one of which is selected.
+// The same shape on every screen that has a list-and-detail layout, so
+// moving between them doesn't mean learning a new list each time.
+// ══════════════════════════════════════════════════════════════════════
+export function PickList({ items, value, onPick, empty, maxHeight = '620px' }) {
+  return (
+    <div className="scroll-fade" style={{ overflowY:'auto', maxHeight, minHeight:0 }}>
+      {items.length === 0
+        ? <div style={{ color:C.muted, fontSize:T.base, padding:'22px 16px', textAlign:'center' }}>{empty || 'Nothing here.'}</div>
+        : items.map(it => {
+          const on = it.key === value
+          return (
+            <button
+              key={it.key}
+              onClick={() => onPick(it.key)}
+              className="row-hover"
+              style={{
+                display:'flex', alignItems:'center', gap:'11px', width:'100%',
+                background: on ? C.accentSoft : 'transparent',
+                border:'none', borderLeft:`3px solid ${on ? C.accent : 'transparent'}`,
+                borderBottom:`1px solid ${C.border}`,
+                padding:'11px 14px 11px 11px', textAlign:'left',
+              }}
+            >
+              {it.badge}
+              <span style={{ flex:1, minWidth:0 }}>
+                <span className="ellip" style={{
+                  display:'block', color: on ? C.text : C.text2,
+                  fontSize:T.base, fontWeight: on ? 700 : 600,
+                }}>{it.label}</span>
+                {it.sub && (
+                  <span className="ellip" style={{ display:'block', color: it.subColor || C.muted, fontSize:'9.5px', marginTop:'2px' }}>
+                    {it.sub}
+                  </span>
+                )}
+              </span>
+              {it.right}
+            </button>
+          )
+        })}
+    </div>
+  )
+}
+
 // A thin progress bar. Used under stats and beside list headers.
 export function Meter({ value, color = C.accent, height = 4, style }) {
   const pct = Math.max(0, Math.min(100, value || 0))
