@@ -12,7 +12,7 @@ export default async function handler(req, res) {
     if (!employeeName) return res.status(400).json({ error: 'employee required' })
 
     const [updateRows, redistRows] = await Promise.all([
-      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 15000),
       readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 15000),
     ])
 

@@ -15,6 +15,7 @@ import ProgressTab from '../components/tabs/ProgressTab'
 import FootageTab from '../components/tabs/FootageTab'
 import BreaksTab, { liveBreakMinutes } from '../components/tabs/BreaksTab'
 import FloorPanel from '../components/tabs/FloorPanel'
+import WorkloadPanel from '../components/tabs/WorkloadPanel'
 
 // "7pm", for listing hours compactly inside a sentence.
 function fmtHourShort(h) {
@@ -38,7 +39,7 @@ function todayISO() {
 }
 
 const TAB_META = {
-  overview:       { title: 'Live floor',          sub: 'What the whole floor is doing, right now' },
+  overview:       { title: 'Right now',           sub: 'Who is on the floor, what the day holds, and how much of it is done' },
   fullday:        { title: 'The day',             sub: 'Hour by hour, for every employee' },
   redistribution: { title: 'The day',             sub: "Where today's work moved, and why" },
   footage:        { title: 'Requests',            sub: 'Footage requests raised by the floor' },
@@ -390,6 +391,7 @@ export default function Admin() {
   )
 
   const { employees, kpis, redistribution } = overview
+  const rosterIssues = overview?.rosterIssues || []
 
   const statusMeta = (st) => ({
     'Active':      { color:C.accent, label:'Active' },
@@ -474,6 +476,12 @@ export default function Admin() {
     tab:'unassigned',
   })
   if (kpis.notStarted>0) aiAlerts.push({ sev:'high', icon:'offline', title:'Not started', desc:`${kpis.notStarted} employee${kpis.notStarted===1?' has':'s have'} not clocked in yet`, tab:'fullday' })
+  // Somebody who can log in but is on no roster gets no clients and shows on
+  // no screen. Nothing else would ever mention them.
+  if (rosterIssues.length>0) aiAlerts.push({
+    sev:'high', icon:'users', title:'Invisible to the roster',
+    desc:`${rosterIssues.map(r=>`${r.name} (${r.reason})`).join(', ')} — they can sign in, but get no clients and appear in no total. Fix the Credentials row.`,
+  })
   if (staleShiftEmployees.length>0) aiAlerts.push({
     sev:'warn', icon:'clock', title:'Shift rows left open',
     desc:`${staleShiftEmployees.map(e=>e.name).join(', ')} — clocked in and never clocked out, so the attendance row has no end time`,
@@ -510,13 +518,13 @@ export default function Admin() {
     }
     if (totalPendingToday > 0 || footage.pending.length > 0) return {
       tone:'warn', color:C.amber, icon:'clock',
-      title: `${activeNowCnt} of ${onDutyNow.length} on duty this hour`,
+      title: `${activeNowCnt} of ${onDutyNow.length} clocked in this hour`,
       detail: bits.join(' · '),
     }
     return {
       tone:'good', color:C.accent, icon:'check-circle',
       title: 'The floor is clear',
-      detail: bits.length ? bits.join(' · ') : `${activeNowCnt} of ${onDutyNow.length} on duty · nothing outstanding`,
+      detail: bits.length ? bits.join(' · ') : `${activeNowCnt} of ${onDutyNow.length} clocked in · nothing outstanding`,
     }
   })()
 
@@ -589,7 +597,12 @@ export default function Admin() {
                 title={headline.title}
                 sub={headline.detail}
                 facts={[
-                  { label:'on duty',  value:`${activeNowCnt}/${onDutyNow.length}`, tone: commandHealthPct < 80 ? 'warn' : 'good',
+                  // "clocked in", not "on duty" — it counts everyone with a
+                  // live shift row, including the people away on a break, and
+                  // the floor list right beside it separates the two. Calling
+                  // it "on duty" put seven next to a list that said one person
+                  // was at a desk.
+                  { label:'clocked in',  value:`${activeNowCnt}/${onDutyNow.length}`, tone: commandHealthPct < 80 ? 'warn' : 'good',
                     onClick:()=>setRosterModal({ title:'Clocked in now', empty:'Nobody is clocked in right now.', rows:activeEmployees }) },
                   { label:'done',     value:totalUpdatesToday, tone:'good' },
                   { label:'pending',  value:totalPendingToday, tone: totalPendingToday ? 'warn' : undefined },
@@ -651,9 +664,20 @@ export default function Admin() {
                 <FloorPanel
                   employees={employees}
                   breaks={breaks}
+                  workload={overview?.workload}
                   onPick={()=>setActiveTab('fullday')}
                 />
               </div>
+
+              {/* ── What the day holds, and how much of it is done ──
+                  Everything below is measured against the schedule itself:
+                  clients due so far vs filled, vehicles due vs actually
+                  watched, alerts entered, and the same reading again for the
+                  whole 7am–7am day. Then the same question per person. */}
+              <WorkloadPanel
+                workload={overview?.workload}
+                onPickEmployee={()=>setActiveTab('fullday')}
+              />
 
               {/* Output */}
               <Section title="Today's output">

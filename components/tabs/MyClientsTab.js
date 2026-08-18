@@ -14,15 +14,16 @@ const FATIGUE_OPTIONS = ['No', 'Yes']
 // gets posted. /api/crm/update rewrites the whole row, so a save must
 // always carry every field — sending only the one that changed would blank
 // the rest.
-const FIELDS = ['status', 'misalignVehicles', 'alertCount', 'fatigue', 'fatigueCount', 'notes']
+const FIELDS = ['liveVehicles', 'status', 'misalignVehicles', 'alertCount', 'fatigue', 'fatigueCount', 'notes']
 
 function blankRecord() {
-  return { status:'', misalignVehicles:'', alertCount:'', fatigue:'No', fatigueCount:'', notes:'' }
+  return { liveVehicles:'', status:'', misalignVehicles:'', alertCount:'', fatigue:'No', fatigueCount:'', notes:'' }
 }
 
 function recordOf(filled, client) {
   const f = filled[client] || {}
   return {
+    liveVehicles:     f.liveVehicles || '',
     status:           f.status || '',
     misalignVehicles: f.misalignVehicles || '',
     alertCount:       f.alertCount || '',
@@ -344,14 +345,12 @@ export default function MyClientsTab({
           ten-thousand-pixel scroll and pushed the save bar off the bottom of
           the screen. Bounded, each side scrolls inside itself and the save
           buttons stay where they are. */}
-      <div style={{
-        display:'flex', gap:SP[3], alignItems:'stretch',
+      <div className="board-two" style={{
         height:'calc(100vh - 232px)', minHeight:'460px',
       }}>
 
         {/* ── LEFT: the whole hour, always visible ── */}
-        <Card pad={false} style={{
-          width:'336px', minWidth:'270px', flexShrink:0,
+        <Card pad={false} className="board-list" style={{
           display:'flex', flexDirection:'column', overflow:'hidden',
         }}>
           <div style={{ padding:SP[3], borderBottom:`1px solid ${C.border}`, display:'flex', flexDirection:'column', gap:SP[2] }}>
@@ -438,7 +437,7 @@ export default function MyClientsTab({
         </Card>
 
         {/* ── RIGHT: everything about the one client ── */}
-        <Card pad={false} style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column' }}>
+        <Card pad={false} className="board-detail" style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column' }}>
           {!sel ? (
             <EmptyState icon="users" title="Pick a client from the list." />
           ) : (
@@ -482,6 +481,22 @@ export default function MyClientsTab({
               {/* The record. Scrolls on its own so the save bar below stays
                   pinned rather than being pushed out of reach. */}
               <div style={{ padding:SP[4], flex:1, minHeight:0, overflowY:'auto', display:'flex', flexDirection:'column', gap:SP[4] }}>
+                {/* How many of this client's vehicles were actually watched
+                    this hour. Asked first, because it is the thing you know as
+                    soon as you have looked — and the client's fleet size next
+                    to it is what makes the number mean something. */}
+                <Field
+                  label="Live vehicles checked"
+                  hint={`Out of ${selMeta?.vehicleCount || 0} on this client's fleet — how many were live on screen`}
+                >
+                  <input
+                    disabled={!editable} type="number" min="0" max={selMeta?.vehicleCount || undefined}
+                    placeholder={`0 – ${selMeta?.vehicleCount || 0}`}
+                    value={rec.liveVehicles}
+                    onChange={e => setField(sel, 'liveVehicles', e.target.value)}
+                  />
+                </Field>
+
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 150px', gap:SP[3] }}>
                   <Field label="Status" hint="This is what marks the client complete.">
                     <select

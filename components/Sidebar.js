@@ -16,7 +16,7 @@ import { T, R } from './ui'
 // The order is the order the questions get asked: is the floor all right, what
 // happened today, what is queued, how are people doing.
 export const SECTIONS = [
-  { key:'live',     label:'Live floor', icon:'overview',  leaf:'overview' },
+  { key:'live',     label:'Right now', icon:'overview',  leaf:'overview' },
   { key:'day',      label:'The day',    icon:'fullday',   leaf:'fullday'  },
   { key:'requests', label:'Requests',   icon:'footage',   leaf:'footage'  },
   { key:'people',   label:'People',     icon:'progress',  leaf:'progress' },

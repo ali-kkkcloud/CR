@@ -75,7 +75,7 @@ export default async function handler(req, res) {
     const myOverride = todayOverride[user.name]
 
     const [updateRows, footageRows, followupRows, redistRows, shiftRows, breakRows, leaveRows, vehicleMap] = await Promise.all([
-      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 15000),
       readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000),
       readSheetCached(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, 15000),
       readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 15000),

@@ -24,7 +24,7 @@ export default async function handler(req, res) {
     const now = nowStr()
     const leaveMap   = await getLeaveMapForDate(date)
     const vehicleMap = await fetchClientVehicleCounts()
-    const updateRows = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`)
+    const updateRows = await readSheet(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`)
 
     const emp = employees().find(e => e.name === empName)
     if (!emp) return res.status(400).json({ error: 'Employee not found' })

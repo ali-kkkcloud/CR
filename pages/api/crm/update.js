@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   const user = getUserFromReq(req)
   if (!user) return res.status(401).json({ error:'Unauthorized' })
   try {
-    const { client, slot, status, misalignVehicles, alertCount, fatigue, fatigueCount, notes } = req.body
+    const { client, slot, status, misalignVehicles, alertCount, fatigue, fatigueCount, notes, liveVehicles } = req.body
     const today = todayStr(), now = nowStr(), hour = nowIST().getHours()
     const yesterday = yesterdayStr()
 
@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     const activeYesterday = mine.some(r => r[2] === yesterday && r[6] === 'Active')
     const shiftDate = (!startedToday && activeYesterday) ? yesterday : today
 
-    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:K`, 5000)
+    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 5000)
     // If the same slot somehow has more than one row (two polls can each
     // append a placeholder), always edit the one that already holds data —
     // otherwise a second save would land on the blank twin and the earlier
@@ -50,6 +50,9 @@ export default async function handler(req, res) {
       fatigue||'No',
       String(fatigueCount||0),
       notes||'',
+      // How many of the client's vehicles the employee actually watched this
+      // hour. The client's fleet size is what it is; this is what was seen.
+      String(liveVehicles ?? ''),
     ]
     if (existingRowIndex > 0) await updateRowCells(CRM_SHEET_ID, TABS.CRM_UPDATES, existingRowIndex, 1, rowData)
     else await appendRow(CRM_SHEET_ID, TABS.CRM_UPDATES, rowData)
