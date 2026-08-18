@@ -157,17 +157,26 @@ export default async function handler(req, res) {
     const nowMs = nowIST().getTime()
     const nowHour = nowIST().getHours()
 
+    // Never clocked in, and the grace hour has gone: every hour after it is a
+    // no-show, said the same way here as on the admin's screen.
+    const myGraceHour = plan.graceHourOnly?.[user.name]
+
     // Build timeline hour by hour
     const timeline = scheduledHours.map(hour => {
       // Check if on leave this hour
       const leaves = leaveMap[user.name] || []
-      const isOnLeave = leaves.some(l => {
+      const missedGrace = myGraceHour !== undefined && myGraceHour !== hour
+      const isOnLeave = missedGrace || leaves.some(l => {
         if (l.fromHour <= l.toHour) return hour >= l.fromHour && hour < l.toHour
         return hour >= l.fromHour || hour < l.toHour
       })
 
       if (isOnLeave) {
-        return { hour, isOnLeave: true, clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
+        return {
+          hour, isOnLeave: true,
+          leaveReason: missedGrace ? 'Week Off' : '',
+          clients: [], totalClients: 0, completedClients: 0, missedClients: 0,
+        }
       }
 
       // Custom text slot (e.g. BRINDA's CALL hours)

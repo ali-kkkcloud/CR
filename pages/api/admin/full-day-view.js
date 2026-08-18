@@ -149,8 +149,12 @@ export default async function handler(req, res) {
       // moved. See employeeDayHours.
       const scheduledHours = employeeDayHours(plan, emp, effectiveEmp)
 
+      // They never clocked in and their grace hour has gone: every hour after
+      // it is a no-show, whether or not the sweep has written the row yet.
+      const graceHour = plan.graceHourOnly?.[emp.name]
       const hours = scheduledHours.map(hour => {
-        const isOnLeave = leaves.some(l => {
+        const missedGrace = graceHour !== undefined && graceHour !== hour
+        const isOnLeave = missedGrace || leaves.some(l => {
           if (l.fromHour <= l.toHour) return hour >= l.fromHour && hour < l.toHour
           return hour >= l.fromHour || hour < l.toHour
         })
@@ -165,7 +169,7 @@ export default async function handler(req, res) {
             if (l.fromHour <= l.toHour) return hour >= l.fromHour && hour < l.toHour
             return hour >= l.fromHour || hour < l.toHour
           })
-          return { hour, isOnLeave: true, leaveReason: leaveEntry?.reason || '', clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
+          return { hour, isOnLeave: true, leaveReason: leaveEntry?.reason || (missedGrace ? 'Week Off' : ''), clients: [], totalClients: 0, completedClients: 0, missedClients: 0 }
         }
 
         const customText = customTextFor(emp.name, hour)
