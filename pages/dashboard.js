@@ -319,9 +319,17 @@ export default function Dashboard() {
               isAdjusted: true, isEarlyAdjustment: !!data.earlyStart,
               hoursShifted: adjusted.hoursShifted, extraHour: adjusted.extraHour,
             }
-          : (summary && summary.scheduledStart != null
-              ? { start: summary.scheduledStart, end: summary.scheduledEnd, actualStart: data.startTime }
-              : null)
+          : data.shiftAlreadyOver && data.rosteredWindow
+            // Signed in after the shift had finished. Their arrival is on the
+            // record, but there is no work to give them and no window to show
+            // — saying so is the only honest thing this can do.
+            ? {
+                start: data.rosteredWindow.start, end: data.rosteredWindow.end,
+                actualStart: data.startTime, shiftAlreadyOver: true,
+              }
+            : (summary && summary.scheduledStart != null
+                ? { start: summary.scheduledStart, end: summary.scheduledEnd, actualStart: data.startTime }
+                : null)
         if (empSchedule) setShiftStartedInfo(empSchedule)
       } else {
         alert(data.error || 'Could not start shift. Please try again.')
@@ -1054,14 +1062,15 @@ export default function Dashboard() {
         const isAdj    = !!shiftStartedInfo.isAdjusted
         const isEarly  = !!shiftStartedInfo.isEarlyAdjustment
         const isLate   = isAdj && !isEarly
+        const isOver   = !!shiftStartedInfo.shiftAlreadyOver
         const moved    = isLate && (shiftStartedInfo.hoursShifted || 0) > 0
         const owesHour = shiftStartedInfo.extraHour === 1
-        const accent   = isLate ? C.amber : C.accent
+        const accent   = isOver ? C.red : isLate ? C.amber : C.accent
         return (
           <Modal
             open onClose={()=>setShiftStartedInfo(null)}
-            icon="check-circle" iconColor={accent}
-            title="Shift started"
+            icon={isOver ? 'alerts' : 'check-circle'} iconColor={accent}
+            title={isOver ? 'Your shift has already finished' : 'Shift started'}
             footer={<Button variant="primary" full onClick={()=>setShiftStartedInfo(null)}>Got it</Button>}
           >
             <div style={{ color:C.muted, fontSize:T.base, lineHeight:1.7 }}>
@@ -1072,13 +1081,20 @@ export default function Dashboard() {
               padding:'13px 15px', margin:`${SP[3]} 0`,
             }}>
               <div className="eyebrow" style={{ marginBottom:'5px' }}>
-                {isEarly ? 'Your shift now runs' : isLate ? (moved ? 'Moved to' : 'Runs to') : 'Your shift'}
+                {isOver ? 'You were rostered' : isEarly ? 'Your shift now runs' : isLate ? (moved ? 'Moved to' : 'Runs to') : 'Your shift'}
               </div>
               <div style={{ color:accent, fontSize:T.lg, fontWeight:800 }}>
                 {fmtShift(shiftStartedInfo.start, shiftStartedInfo.end)}
               </div>
             </div>
             <div style={{ color:C.muted, fontSize:T.sm, lineHeight:1.7 }}>
+              {isOver && (
+                <div>
+                  Your arrival is recorded, but the shift is over, so there are no
+                  clients to give you. Speak to your supervisor if you are meant
+                  to be working now.
+                </div>
+              )}
               {isEarly && <div>Your clients for this hour are on your board now.</div>}
               {owesHour && <div>That includes one extra hour at the end, because you clocked in past the half hour.</div>}
               {moved && <div>The hours before you arrived are marked Week Off and won’t be counted.</div>}

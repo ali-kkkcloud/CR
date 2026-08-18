@@ -70,6 +70,10 @@ export default async function handler(req, res) {
     // on screen — which is exactly what nobody would do. The choice is gone;
     // the window is applied and the employee is told what it now is.
     const isEarly    = !!arrival?.isEarly
+    // Signed in after the shift was already over. No window is invented for
+    // them — see computeShiftWindow — so nothing is written and they are told
+    // plainly rather than being handed a phantom night shift.
+    const tooLate    = !!arrival?.tooLate
     const adjusted   = arrival && !arrival.unchanged ? arrival : null
     const earlyStart = adjusted && isEarly  ? adjusted : null
     const lateStart  = adjusted && !isEarly ? adjusted : null
@@ -129,7 +133,13 @@ export default async function handler(req, res) {
     // what lets the split include somebody the moment they start, without any
     // screen having to make an exception for the person looking at it.
     invalidateSheetCache(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!`)
-    return res.status(200).json({ success: true, startTime: now, shiftDate: today, earlyStart, lateStart })
+    return res.status(200).json({
+      success: true, startTime: now, shiftDate: today, earlyStart, lateStart,
+      // Their attendance is recorded, but the shift they were rostered for has
+      // already finished, so there is no work to give them.
+      shiftAlreadyOver: tooLate,
+      rosteredWindow: emp ? { start: emp.start, end: emp.end } : null,
+    })
 
   } catch (err) {
     console.error('Shift start error:', err)
