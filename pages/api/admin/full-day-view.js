@@ -135,12 +135,36 @@ export default async function handler(req, res) {
     //               who covers it had gone home — ninety-six clients that
     //               simply vanished off this screen.
     const standingWeekOff = new Set(employees().filter(e => e.isWeekOff).map(e => e.name))
+    // Gone home for THIS operating day. An hour that has not happened yet is
+    // not theirs — they clocked out, and their share of it really does fall to
+    // whoever is still here. Without this, somebody who ended at half past
+    // twelve was still shown 247 clients "left" for the rest of the day, which
+    // is work no one was going to do and an alarm nobody could clear.
+    //
+    // Only rows dated today count. A night-shift employee who finished at six
+    // this morning has an Ended row under YESTERDAY's date and is due back
+    // tonight — reading those too would empty every night hour of its staff.
+    const startedTodayByName = {}
+    shiftRows.slice(1).filter(r => r[2] === today).forEach(r => {
+      const n = (r[1] || '').toString().trim()
+      if (!n) return
+      ;(startedTodayByName[n] ||= []).push(r)
+    })
+    const goneHomeToday = new Set(
+      Object.entries(startedTodayByName)
+        .filter(([, rows]) => rows.length > 0 && !rows.some(r => r[6] === 'Active'))
+        .map(([n]) => n)
+    )
     const rosterPoolCache = {}
+    // Who the roster puts on this hour. Used as-is for an hour already gone —
+    // somebody who has since clocked out was still there at the time — and
+    // narrowed to the people still on the floor for hours yet to come.
     const rosterPool = (hour) => (rosterPoolCache[hour] ||= (
       getScheduledEmployeesAtHour(hour, leaveMap, overridesMap)
         .map(e => e.name)
         .filter(n => !standingWeekOff.has(n))
     ))
+    const futurePool = (hour) => rosterPool(hour).filter(n => !(isToday && goneHomeToday.has(n)))
     const hourPoolFor = (hour) => {
       if (!isToday) {
         return buildHourPool({ hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames }).poolNames
@@ -156,14 +180,22 @@ export default async function handler(req, res) {
         return pool.length > 0 ? pool
           : buildHourPool({ hour, leaveMap, overridesMap, onShiftNames, clockedOutNames, awayNames }).poolNames
       }
-      return rosterPool(hour)
+      return futurePool(hour)
     }
 
     // Login map
+    // One attendance row per person: a live one if there is one, otherwise the
+    // most recent. Somebody who ended a shift and started another the same day
+    // has two, and picking the wrong one describes them as gone while they are
+    // sitting at their desk.
     const loginMap = {}
     shiftRows.slice(1)
       .filter(r => r[2] === date)
-      .forEach(r => { loginMap[r[1]] = { startTime:r[3], endTime:r[4], duration:r[5], status:r[6] } })
+      .forEach(r => {
+        const prev = loginMap[r[1]]
+        if (prev && prev.status === 'Active' && r[6] !== 'Active') return
+        loginMap[r[1]] = { startTime:r[3], endTime:r[4], duration:r[5], status:r[6] }
+      })
 
     const empData = employees().map(emp => {
       const shiftLog = loginMap[emp.name] || null
@@ -179,12 +211,38 @@ export default async function handler(req, res) {
       // start/end (not the static isNight flag), since an Early/Late Start
       // or OT can push a normally-day shift across midnight too.
       const isWrap = effectiveEmp.end <= effectiveEmp.start
-      const scheduledHours = []
+      const inMyDay = new Set()
       if (isWrap) {
-        for (let h = effectiveEmp.start; h < 24; h++) scheduledHours.push(h)
-        for (let h = 0; h < effectiveEmp.end; h++) scheduledHours.push(h)
+        for (let h = effectiveEmp.start; h < 24; h++) inMyDay.add(h)
+        for (let h = 0; h < effectiveEmp.end; h++) inMyDay.add(h)
       } else {
-        for (let h = effectiveEmp.start; h < effectiveEmp.end; h++) scheduledHours.push(h)
+        for (let h = effectiveEmp.start; h < effectiveEmp.end; h++) inMyDay.add(h)
+      }
+
+      // An hour this employee actually has rows in belongs to their day, even
+      // if their window no longer covers it.
+      //
+      // The window can move after the fact — a late start or an OT extension
+      // rewrites it — and when it did, every hour outside the NEW window was
+      // dropped from this screen. Somebody who worked from seven, ended their
+      // shift and started a second one at one o'clock had their whole morning
+      // erased: hour 11 showed nought of eighty-seven clients on anybody's
+      // board, because the only person who had held them was no longer
+      // considered to have been working then. Recorded work is not undone by a
+      // later change to the schedule.
+      Object.keys(updateIdx).forEach(k => {
+        const sep = k.lastIndexOf('__')
+        if (k.slice(0, sep) !== emp.name) return
+        const h = parseInt(k.slice(sep + 2))
+        if (Number.isFinite(h)) inMyDay.add(h)
+      })
+
+      // Walked forward from the shift's own start, so the hours read in shift
+      // order for a night shift as well as a day one.
+      const scheduledHours = []
+      for (let i = 0; i < 24; i++) {
+        const h = (effectiveEmp.start + i) % 24
+        if (inMyDay.has(h)) scheduledHours.push(h)
       }
 
       const hours = scheduledHours.map(hour => {
@@ -279,14 +337,27 @@ export default async function handler(req, res) {
             redistReason: r[6] || '',
           }))
 
-        const allClients = [
-          ...assignedClients.map(c => ({
+        // The redistribution log ANNOTATES a board; it never adds to one.
+        //
+        // It is an audit trail — shift/end says so where it writes it — and the
+        // live split is what actually moves work: the person who left drops out
+        // of the pool and their unfinished clients land on whoever is still
+        // here. Treating a log row as a board entry put the same client-hour on
+        // two people at once: on the colleague the split had genuinely given it
+        // to, and again on whoever the log named. Fifty-six duplicated slots in
+        // one hour, and the day's total fifty-six clients too big.
+        const redistFrom = new Map(redistToEmp.map(r => [r.client, r]))
+        const allClients = assignedClients.map(c => {
+          const moved = redistFrom.get(c.client)
+          return {
             client: c.client,
             vehicleCount: c.vehicleCount || 0,
-            isRedistributed: false,
-          })),
-          ...redistToEmp.filter(r => !assignedClients.some(c => c.client === r.client)),
-        ]
+            isRedistributed: !!moved,
+            fromEmployee:   moved?.fromEmployee || undefined,
+            redistributedAt: moved?.redistributedAt || undefined,
+            redistReason:   moved?.redistReason || undefined,
+          }
+        })
 
         const empHourData = updateIdx[`${emp.name}__${hour}`] || {}
         const clientsWithStatus = allClients.map(c => ({

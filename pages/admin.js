@@ -39,14 +39,14 @@ function todayISO() {
 }
 
 const TAB_META = {
-  overview:       { title: 'Right now',           sub: 'Who is on the floor, what the day holds, and how much of it is done' },
-  fullday:        { title: 'The day',             sub: 'Hour by hour, for every employee' },
-  redistribution: { title: 'The day',             sub: "Where today's work moved, and why" },
+  overview:       { title: 'Dashboard',           sub: 'The floor right now, and how much of today is done' },
+  fullday:        { title: 'Hour by hour',        sub: 'Every hour of today, for every employee' },
+  redistribution: { title: 'Hour by hour',        sub: "Where today's work moved, and why" },
   footage:        { title: 'Requests',            sub: 'Footage requests raised by the floor' },
   followups:      { title: 'Requests',            sub: 'Requests handed on at the end of a shift' },
-  progress:       { title: 'People',              sub: 'Attendance and output across a date range' },
-  breaks:         { title: 'People',              sub: 'Who is away, for how long, and how often' },
-  leaves:         { title: 'People',              sub: 'Leave calendar — coming soon' },
+  progress:       { title: 'Team',                sub: 'Attendance and output across a date range' },
+  breaks:         { title: 'Team',                sub: 'Who is away, for how long, and how often' },
+  leaves:         { title: 'Team',                sub: 'Leave calendar — coming soon' },
   reports:        { title: 'More',                sub: 'Scheduled and downloadable reports — coming soon' },
   analytics:      { title: 'More',                sub: 'Deeper trends across your fleet — coming soon' },
   alerts:         { title: 'More',                sub: 'All system and AI alerts in one place — coming soon' },
@@ -495,7 +495,7 @@ export default function Admin() {
     tab:'fullday',
   })
   if (overdueEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Shift not closed', desc:`${overdueEmployees.map(e=>e.name).join(', ')} ${overdueEmployees.length===1?'is':'are'} past the end of the shift and still clocked in`, tab:'fullday' })
-  if (longBreakEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Away a long time', desc:`${longBreakEmployees.map(e=>`${e.name} (${Math.floor(liveBreakMinutes(e)/60)>0?`${Math.floor(liveBreakMinutes(e)/60)}h `:''}${liveBreakMinutes(e)%60}m)`).join(', ')} — their hours are being shared out to whoever is working`, tab:'breaks' })
+  if (longBreakEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Away a long time', desc:`${longBreakEmployees.map(e=>`${e.name} (${Math.floor(liveBreakMinutes(e)/60)>0?`${Math.floor(liveBreakMinutes(e)/60)}h `:''}${liveBreakMinutes(e)%60}m)`).join(', ')} — their clients are still on their board, waiting`, tab:'breaks' })
   if (breaks?.onBreakNow>0) aiAlerts.push({ sev:'warn', icon:'clock', title:'On break', desc:`${breaks.onBreakNow} employee${breaks.onBreakNow===1?' is':'s are'} away right now`, tab:'breaks' })
   if (footage.followups.length>0) aiAlerts.push({ sev:'warn', icon:'followups', title:'Follow-ups open', desc:`${footage.followups.length} follow-up${footage.followups.length===1?'':'s'} waiting to be closed`, tab:'followups' })
   if (footage.pending.length>0) aiAlerts.push({ sev:'info', icon:'footage', title:'Footage queue', desc:`${footage.pending.length} request${footage.pending.length===1?'':'s'} still open`, tab:'footage' })
@@ -687,48 +687,17 @@ export default function Admin() {
               />
 
               {/* Output */}
-              <Section title="Today's output">
-              {/* start, not stretch: a card saying "nothing yet" was being
-                  inflated to the height of the tallest one beside it, so an
-                  empty day showed as four tall boxes of blank space. */}
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(260px, 1fr))', gap:SP[3], alignItems:'start' }}>
-                <Card>
-                  <CardHead title="Top performers" icon="trend-up" />
-                  {/* maxUpdates is floored at 1 so the bar maths can't divide
-                      by zero, so it can never be the "nothing yet" signal —
-                      the totals themselves are. */}
-                  {totalUpdatesToday === 0 ? (
-                    <div style={{ color:C.muted, fontSize:T.base, padding:'14px 0' }}>No updates recorded yet today.</div>
-                  ) : topPerformers.filter(e => e.totalUpdates > 0).map((e,i) => (
-                    <div key={e.name} style={{ display:'flex', alignItems:'center', gap:'9px', marginBottom:'9px' }}>
-                      <span style={{ color:C.dim, fontSize:T.xs, width:'11px', fontWeight:700 }}>{i+1}</span>
-                      <span className="ellip" style={{ color:C.text2, fontSize:T.base, width:'92px' }}>{e.name}</span>
-                      <div style={{ flex:1 }}><Meter value={(e.totalUpdates/maxUpdates)*100} /></div>
-                      <span style={{ color:C.text, fontSize:T.base, fontWeight:700, width:'26px', textAlign:'right' }}>{e.totalUpdates}</span>
-                    </div>
-                  ))}
-                </Card>
-
-                <Card>
-                  <CardHead title="Completion" icon="check-circle" />
-                  <div style={{ display:'flex', alignItems:'center', gap:SP[4] }}>
-                    <Donut
-                      segments={[{value:totalUpdatesToday||0,color:C.accent},{value:totalPendingToday||0,color:'#2a2a2a'}]}
-                      size={98} thickness={13} centerLabel={`${completionPct}%`} centerSub="Done"
-                    />
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ marginBottom:'12px' }}>
-                        <div style={{ color:C.accent, fontSize:'21px', fontWeight:800, lineHeight:1 }}>{totalUpdatesToday}</div>
-                        <div style={{ color:C.muted, fontSize:T.xs, marginTop:'3px' }}>COMPLETED</div>
-                      </div>
-                      <div>
-                        <div style={{ color: totalPendingToday ? C.amber : C.muted, fontSize:'21px', fontWeight:800, lineHeight:1 }}>{totalPendingToday}</div>
-                        <div style={{ color:C.muted, fontSize:T.xs, marginTop:'3px' }}>PENDING</div>
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-
+              {/* ── The two queues ──
+                  This row used to carry four cards, and two of them repeated
+                  the screen they were already on: "Completion" restated the
+                  clients-done figure that Today-so-far measures properly, and
+                  "Top performers" restated the per-employee table, which sorts
+                  by Most done. Neither is gone — they are the same numbers,
+                  read once instead of three times. What is left is the two
+                  things that are genuinely queues: work waiting on somebody,
+                  and work that changed hands. */}
+              <Section title="Queues" sub="Requests waiting, and work that moved between people today">
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))', gap:SP[3], alignItems:'start' }}>
                 <Card>
                   <CardHead
                     title="Footage queue" icon="camera"

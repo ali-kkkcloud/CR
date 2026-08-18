@@ -67,6 +67,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
   const [selectedHour, setSelectedHour] = useState(null)
   const [drawerClient, setDrawerClient] = useState(null)
   const [compact, setCompact] = useState(false)
+  const [showFilters, setShowFilters] = useState(false)
   const [drawer, setDrawer] = useState(null) // { type:'client'|'employee'|'vehicle'|'hour', payload }
 
   // Playback / Replay Day
@@ -75,6 +76,12 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
   const playRef = useRef(null)
 
   const employees = data?.employees || []
+
+  // How many filters are narrowing what is on screen. Shown on the Filters
+  // button so a filter left on behind the fold can never quietly hide people.
+  const activeFilterCount =
+    (shiftFilter !== 'all' ? 1 : 0) + (statusFilter !== 'all' ? 1 : 0) +
+    (clientFilter !== 'all' ? 1 : 0) + (onlyPending ? 1 : 0) + (onlyRedistributed ? 1 : 0)
 
   const allScheduledHours = useMemo(() => {
     const set = new Set()
@@ -233,10 +240,15 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
   return (
     <div>
       {/* ── Control bar ──
-          Two rows, not one wrapping mass of eleven controls: what you are
-          looking at on top, how you are narrowing it underneath. */}
+          One row: the date, and a search box. Everything else — the three
+          filters, the two toggles, export, replay — is real and still here,
+          folded behind "Filters" and opened when it is wanted.
+          Eleven controls stacked across two permanent rows is what made this
+          screen feel like a form to fill in before it would tell you anything.
+          The count on the button says how many are on, so nothing can be
+          quietly filtering the page from behind a fold. */}
       <Card style={{ marginBottom:SP[3] }}>
-        <div style={{ display:'flex', gap:SP[2], alignItems:'center', flexWrap:'wrap', marginBottom:SP[3] }}>
+        <div style={{ display:'flex', gap:SP[2], alignItems:'center', flexWrap:'wrap' }}>
           <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
             <Button size="sm" variant="ghost" title="Previous day"
               onClick={()=>{ const d=new Date(date); d.setDate(d.getDate()-1); setDate(d.toISOString().split('T')[0]) }}>‹</Button>
@@ -245,31 +257,46 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
               onClick={()=>{ const d=new Date(date); d.setDate(d.getDate()+1); setDate(d.toISOString().split('T')[0]) }}>›</Button>
           </div>
           <Button size="sm" variant="subtle" onClick={()=>setDate(todayISO())}>Today</Button>
-          <Button size="sm" variant="subtle" onClick={()=>setDate(istDayISO(-1))}>Yesterday</Button>
 
           <div style={{ flex:1, minWidth:'180px' }}>
             <SearchInput value={search} onChange={setSearch} placeholder="Search employee or client…" />
           </div>
 
-          <Button size="sm" variant="ghost" icon="download" onClick={exportReport}>Export</Button>
-          {!playbackOn && <Button size="sm" variant="subtle" onClick={startPlayback}>▶ Replay day</Button>}
+          <Button size="sm" variant={activeFilterCount ? 'primary' : 'subtle'} icon="settings" onClick={()=>setShowFilters(v=>!v)}>
+            Filters{activeFilterCount ? ` · ${activeFilterCount}` : ''}
+          </Button>
         </div>
 
-        <div style={{ display:'flex', gap:SP[2], alignItems:'center', flexWrap:'wrap' }}>
-          <select value={shiftFilter} onChange={e=>setShiftFilter(e.target.value)} style={{ width:'auto', fontSize:T.sm }}>
-            <option value="all">All shifts</option><option value="day">Day shift</option><option value="night">Night shift</option>
-          </select>
-          <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{ width:'auto', fontSize:T.sm }}>
-            <option value="all">All status</option><option value="working">Working</option><option value="ended">Shift ended</option>
-            <option value="leave">On leave</option><option value="not_started">Not started</option>
-          </select>
-          <select value={clientFilter} onChange={e=>setClientFilter(e.target.value)} style={{ width:'auto', maxWidth:'220px', fontSize:T.sm }}>
-            <option value="all">All clients</option>
-            {allClientsToday.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <Button size="sm" variant={onlyPending ? 'primary' : 'subtle'} onClick={()=>setOnlyPending(v=>!v)}>Only pending</Button>
-          <Button size="sm" variant={onlyRedistributed ? 'primary' : 'subtle'} onClick={()=>setOnlyRedistributed(v=>!v)}>Only redistributed</Button>
-        </div>
+        {showFilters && (
+          <div style={{
+            display:'flex', gap:SP[2], alignItems:'center', flexWrap:'wrap',
+            marginTop:SP[3], paddingTop:SP[3], borderTop:`1px solid ${C.border}`,
+          }}>
+            <select value={shiftFilter} onChange={e=>setShiftFilter(e.target.value)} style={{ width:'auto', fontSize:T.sm }}>
+              <option value="all">All shifts</option><option value="day">Day shift</option><option value="night">Night shift</option>
+            </select>
+            <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{ width:'auto', fontSize:T.sm }}>
+              <option value="all">All status</option><option value="working">Working</option><option value="ended">Shift ended</option>
+              <option value="leave">On leave</option><option value="not_started">Not started</option>
+            </select>
+            <select value={clientFilter} onChange={e=>setClientFilter(e.target.value)} style={{ width:'auto', maxWidth:'220px', fontSize:T.sm }}>
+              <option value="all">All clients</option>
+              {allClientsToday.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <Button size="sm" variant={onlyPending ? 'primary' : 'subtle'} onClick={()=>setOnlyPending(v=>!v)}>Only pending</Button>
+            <Button size="sm" variant={onlyRedistributed ? 'primary' : 'subtle'} onClick={()=>setOnlyRedistributed(v=>!v)}>Only redistributed</Button>
+            <span style={{ flex:1 }} />
+            <Button size="sm" variant="subtle" onClick={()=>setDate(istDayISO(-1))}>Yesterday</Button>
+            <Button size="sm" variant="ghost" icon="download" onClick={exportReport}>Export</Button>
+            {!playbackOn && <Button size="sm" variant="subtle" onClick={startPlayback}>▶ Replay day</Button>}
+            {activeFilterCount > 0 && (
+              <Button size="sm" variant="ghost" onClick={()=>{
+                setShiftFilter('all'); setStatusFilter('all'); setClientFilter('all')
+                setOnlyPending(false); setOnlyRedistributed(false)
+              }}>Clear</Button>
+            )}
+          </div>
+        )}
 
         {playbackOn && (
           <div style={{
@@ -404,23 +431,51 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                 </div>
               </div>
 
-              {/* Hour pills */}
-              <div style={{ display:'flex', gap:'6px', overflowX:'auto', marginTop:'14px', paddingBottom:'2px' }}>
+              {/* ── The shift, hour by hour ──
+                  Each hour says what it holds and how much of it is done, as
+                  "18/24" with a bar underneath, and the colour says the state
+                  at a glance: green finished, amber still open, purple leave,
+                  grey nothing scheduled. It used to read "28 clients" with a
+                  clock icon and no sense of progress, so nine hours of a shift
+                  looked identical whether they were finished or untouched. */}
+              <div style={{ display:'flex', gap:'6px', overflowX:'auto', marginTop:'14px', paddingBottom:'4px' }} className="no-scrollbar">
                 {selectedEmp.hours.map(h => {
                   const active = h.hour === selectedHour
-                  const done = !h.isOnLeave && h.totalClients>0 && h.completedClients===h.totalClients
                   const future = playbackOn && h.hour > playHour
+                  const total  = h.totalClients || 0
+                  const done   = h.completedClients || 0
+                  const state  = h.isOnLeave ? 'leave'
+                    : total === 0 ? 'empty'
+                    : done === total ? 'done' : 'open'
+                  const tone = { leave:C.purple, empty:C.dim, done:C.accent, open:C.amber }[state]
+                  const pct = total > 0 ? Math.round((done / total) * 100) : 0
                   return (
                     <button key={h.hour} disabled={future} onClick={()=>{setSelectedHour(h.hour); setDrawerClient(null)}} style={{
-                      minWidth:'64px', flexShrink:0, background: future?C.bg:active?C.accentDark:C.s2, opacity: future?0.35:1,
-                      border:`1px solid ${active?C.accent:C.border2}`, borderRadius:'8px', padding:'8px 6px',
-                      cursor:future?'not-allowed':'pointer', textAlign:'center',
+                      minWidth:'82px', flexShrink:0,
+                      background: active ? C.accentDark : SURF.sunken, opacity: future ? 0.35 : 1,
+                      border:`1px solid ${active ? C.accent : C.border}`, borderRadius:R.md, padding:'9px 8px',
+                      cursor: future ? 'not-allowed' : 'pointer', textAlign:'left',
                     }}>
-                      <div style={{ color: active?C.accent:C.text2, fontSize:'10px', fontWeight:700 }}>{hourLabel(h.hour)}</div>
-                      <div style={{ color:C.muted, fontSize:'9px', marginTop:'2px' }}>{h.isOnLeave?'Leave':`${h.totalClients} clients`}</div>
-                      <div style={{ marginTop:'3px' }}>
-                        {h.isOnLeave ? <Icon name="leaves" size={11} color={C.amber}/> : done ? <Icon name="check-circle" size={11} color={C.accent}/> : <Icon name="clock" size={11} color={C.muted}/>}
+                      <div style={{ color: active ? C.accent : C.text2, fontSize:'10px', fontWeight:800, letterSpacing:'0.02em' }}>
+                        {hourLabel(h.hour)}
                       </div>
+                      <div style={{ display:'flex', alignItems:'baseline', gap:'3px', marginTop:'4px' }}>
+                        {h.isOnLeave ? (
+                          <span style={{ color:tone, fontSize:'11px', fontWeight:700 }}>Leave</span>
+                        ) : total === 0 ? (
+                          <span style={{ color:tone, fontSize:'11px' }}>—</span>
+                        ) : (
+                          <>
+                            <span style={{ color:tone, fontSize:T.md, fontWeight:800, lineHeight:1 }}>{done}</span>
+                            <span style={{ color: active ? C.text2 : C.muted, fontSize:'10px', fontWeight:700 }}>/{total}</span>
+                          </>
+                        )}
+                      </div>
+                      {total > 0 && !h.isOnLeave && (
+                        <div style={{ height:'3px', borderRadius:'2px', background:'#2a2a2a', marginTop:'6px', overflow:'hidden' }}>
+                          <div style={{ height:'100%', width:`${pct}%`, background:tone }} />
+                        </div>
+                      )}
                     </button>
                   )
                 })}
@@ -450,8 +505,10 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                         <div key={i} style={{ display:'flex', alignItems:'center', gap:'8px', background:C.s2, borderRadius:'7px', padding:'6px 10px' }}>
                           <span>{health.dot}</span>
                           <span onClick={()=>setDrawer({type:'client', payload:c.client})} style={{ color:C.text, fontSize:'11.5px', fontWeight:600, cursor:'pointer', flex:1 }}>{c.client}</span>
-                          <span style={{ color:C.muted, fontSize:'10px' }}>{c.vehicleCount}v</span>
-                          <span style={{ color:C.text2, fontSize:'10px' }}>A:{c.alertCount||0} M:{c.misalignVehicles||0}</span>
+                          <span style={{ color: c.filled ? ((c.liveVehicles||0) >= (c.vehicleCount||0) ? C.accent : C.amber) : C.muted, fontSize:'10px' }}>
+                            {c.filled ? `${c.liveVehicles||0}/${c.vehicleCount||0}v seen` : `${c.vehicleCount}v`}
+                          </span>
+                          <span style={{ color:C.text2, fontSize:'10px' }}>A:{c.alertCount||0} F:{c.fatigueCount||0} M:{c.misalignVehicles||0}</span>
                           <span style={{ background:(c.filled?C.accent:C.amber)+'1f', color:c.filled?C.accent:C.amber, borderRadius:'5px', padding:'2px 7px', fontSize:'9px', fontWeight:700 }}>{c.filled?'DONE':'PENDING'}</span>
                         </div>
                       )
@@ -481,8 +538,20 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                               ↩ Received from {c.fromEmployee}{c.redistributedAt?` at ${c.redistributedAt}`:''}{c.redistReason?` · ${c.redistReason}`:''}
                             </div>
                           )}
-                          <div style={{ display:'flex', gap:'12px', marginTop:'10px' }}>
+                          {/* Vehicles watched against the client's fleet is
+                              the first thing here, because it is the whole
+                              point of the hour: 41 of 52 seen is a different
+                              day from 52 of 52, and until the employee started
+                              recording it there was no way to tell them apart. */}
+                          <div style={{ display:'flex', gap:'12px', marginTop:'10px', flexWrap:'wrap' }}>
+                            <div>
+                              <div style={{ fontSize:'12px', fontWeight:700, color: c.filled ? ((c.liveVehicles||0) >= (c.vehicleCount||0) ? C.accent : C.amber) : C.dim }}>
+                                {c.filled ? `${c.liveVehicles||0}/${c.vehicleCount||0}` : '—'}
+                              </div>
+                              <div style={{color:C.muted,fontSize:'8.5px'}}>VEHICLES SEEN</div>
+                            </div>
                             <div><div style={{color:C.text,fontSize:'12px',fontWeight:700}}>{c.alertCount||0}</div><div style={{color:C.muted,fontSize:'8.5px'}}>ALERTS</div></div>
+                            <div><div style={{color:C.text,fontSize:'12px',fontWeight:700}}>{c.fatigueCount||0}</div><div style={{color:C.muted,fontSize:'8.5px'}}>FATIGUE</div></div>
                             <div><div style={{color:C.text,fontSize:'12px',fontWeight:700}}>{c.misalignVehicles||0}</div><div style={{color:C.muted,fontSize:'8.5px'}}>MISALIGN</div></div>
                             <div><div style={{color:C.text,fontSize:'12px',fontWeight:700}}>{c.updatedAt||'—'}</div><div style={{color:C.muted,fontSize:'8.5px'}}>LAST UPDATE</div></div>
                           </div>

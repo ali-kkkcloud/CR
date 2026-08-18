@@ -81,19 +81,14 @@ export default async function handler(req, res) {
     // handing them to whoever the roster lists just parks them with
     // someone who may never log in and never update them.
     const onShiftNames = getOnShiftNamesFromLog(shiftRows, [today, yesterday])
-    // Away on a long break counts as not there. Handing the leaver's unfinished
-    // clients to somebody who has been on an auto-break since the morning is
-    // the same failure redistribution exists to prevent, one step removed.
-    //
-    // The leaver themselves is never "away" for this purpose: their own break
-    // was closed a few lines above, and they have to stay in the pool for the
-    // split below to work out what they are still holding.
-    const awayNames = new Set(
-      [...getAwayOnBreakNames(breakRows, [today, yesterday])].filter(n => n !== user.name)
-    )
+    // A break is part of a shift, not an absence from it — somebody away from
+    // their desk for ten minutes is still working this hour and can take the
+    // leaver's unfinished clients. Excluding them used to concentrate the
+    // hand-over onto whoever happened not to be on a break at that second.
+    const awayNames = new Set()
     const stillWorking = getScheduledEmployeesAtHour(currentHour, leaveMap, overridesMap)
       .map(e => e.name)
-      .filter(n => n !== user.name && onShiftNames.has(n) && !awayNames.has(n))
+      .filter(n => n !== user.name && onShiftNames.has(n))
     const vehicleMap = await fetchClientVehicleCounts()
 
     // What this employee is actually still holding, taken from the live
