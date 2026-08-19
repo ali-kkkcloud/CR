@@ -11,6 +11,7 @@ import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../..
 import { computeDayPlan } from '../../../lib/dayplan'
 import { sweepShiftAutoClose } from '../../../lib/attendance'
 import { sweepDailySummary } from '../../../lib/rollup'
+import { getHistory } from '../../../lib/history'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -314,6 +315,13 @@ export default async function handler(req, res) {
       }
     })
 
+    // The months worked before the platform existed. Held in memory for half
+    // an hour with a last-good copy (see lib/history.js), so putting it on the
+    // screen the admin actually opens costs a sheet read about twice an hour.
+    let history = { periods: [], byEmployee: {}, totals: null }
+    try { history = await getHistory() }
+    catch (e) { console.error('history read failed:', e.message) }
+
     const todayRedistrib = redistRows.slice(1)
       .filter(r => r[0] === today)
       .map(r => ({ from: r[2], to: r[3], client: r[4], hour: r[5] }))
@@ -430,6 +438,7 @@ export default async function handler(req, res) {
       clientIssues,
       coverageGaps,
       redistribution: todayRedistrib,
+      history,
       footage: { pending: pendingFootage, done: doneFootage },
       kpis: {
         total:      employees().length,

@@ -16,6 +16,7 @@ import FootageTab from '../components/tabs/FootageTab'
 import BreaksTab, { liveBreakMinutes } from '../components/tabs/BreaksTab'
 import FloorPanel from '../components/tabs/FloorPanel'
 import AttendancePanel from '../components/tabs/AttendancePanel'
+import HistoryPanel from '../components/tabs/HistoryPanel'
 import WorkloadPanel from '../components/tabs/WorkloadPanel'
 
 // "7pm", for listing hours compactly inside a sentence.
@@ -718,6 +719,11 @@ export default function Admin() {
                   onPick={()=>setActiveTab('fullday')}
                 />
               </div>
+
+              {/* ── The months worked before the platform existed ──
+                  Beneath today's figures, clearly separated: those are monthly
+                  totals from the old spreadsheets and are not part of today. */}
+              <HistoryPanel history={overview?.history} />
 
               {/* ── What the day holds, and how much of it is done ──
                   Everything below is measured against the schedule itself:
