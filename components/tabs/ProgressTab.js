@@ -244,7 +244,7 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
                   <div style={{ color:C.muted, fontSize:'11.5px' }}>No hour-wise data for this employee on this date.</div>
                 ) : (
                   <div style={{ display:'flex', flexDirection:'column', gap:'6px', maxHeight:'320px', overflowY:'auto' }}>
-                    {selectedDayHours.filter(h=>!h.isOnLeave && h.clients.length>0).flatMap(h => h.clients.map((c,ci) => (
+                    {selectedDayHours.filter(h=>!h.isOnLeave && (h.clients||[]).length>0).flatMap(h => (h.clients||[]).map((c,ci) => (
                       <div key={`${h.hour}-${ci}`} style={{ display:'flex', alignItems:'center', gap:'10px', background:C.s2, border:`1px solid ${C.border2}`, borderRadius:'8px', padding:'8px 12px' }}>
                         <span style={{ color:C.muted, fontSize:'10px', width:'62px', flexShrink:0 }}>{hourLabel(h.hour)}</span>
                         <span style={{ color:C.text, fontSize:'11.5px', fontWeight:600, flex:1 }}>{c.client}</span>

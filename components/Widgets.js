@@ -83,6 +83,25 @@ export function LineChart({ series, labels, height = 170, width = 560 }) {
   const pad = { l: 34, r: 36, t: 18, b: 24 }
   const innerW = width - pad.l - pad.r
   const innerH = height - pad.t - pad.b
+
+  // A range with nothing in it yet is a normal state, not a broken one: a new
+  // employee's first morning has no trend to draw. Reading the last point of
+  // an empty series produced y="NaN" on every callout, which the browser
+  // rejects and logs as an error on an otherwise working page.
+  const safeSeries = (Array.isArray(series) ? series : [])
+    .map(s => ({ ...s, data: (Array.isArray(s?.data) ? s.data : []).map(v => Number(v) || 0) }))
+    .filter(s => s.data.length > 0)
+  const safeLabels = Array.isArray(labels) ? labels : []
+  if (safeSeries.length === 0 || safeLabels.length === 0) {
+    return (
+      <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
+        <text x={width/2} y={height/2} fontSize="11" fill={C.muted} textAnchor="middle">Nothing recorded in this range yet.</text>
+      </svg>
+    )
+  }
+  series = safeSeries
+  labels = safeLabels
+
   const allVals = series.flatMap(s => s.data)
   const rawMax = Math.max(1, ...allVals)
   // Round the axis max up to a "nice" number so gridline labels aren't ugly
@@ -155,6 +174,12 @@ export function MiniStat({ label, val, warn }) {
 }
 
 export function AttendanceDots({ attendance }) {
+  // Somebody with no attendance yet — a new joiner on their first morning —
+  // arrives without the array. Reading it anyway threw inside a render and
+  // took the whole Team screen down.
+  if (!Array.isArray(attendance) || attendance.length === 0) {
+    return <div style={{ color:C.dim, fontSize:'10.5px' }}>No attendance recorded in this range.</div>
+  }
   return (
     <div style={{ display:'flex', gap:'3px' }}>
       {attendance.map((a,i)=>(

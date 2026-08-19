@@ -17,6 +17,7 @@ import BreaksTab, { liveBreakMinutes } from '../components/tabs/BreaksTab'
 import FloorPanel from '../components/tabs/FloorPanel'
 import AttendancePanel from '../components/tabs/AttendancePanel'
 import HistoryPanel from '../components/tabs/HistoryPanel'
+import ErrorBoundary from '../components/ErrorBoundary'
 import WorkloadPanel from '../components/tabs/WorkloadPanel'
 
 // "7pm", for listing hours compactly inside a sentence.
@@ -818,15 +819,18 @@ export default function Admin() {
 
           {/* ══════════ BREAKS ══════════ */}
           {activeTab === 'breaks' && (
+            <ErrorBoundary label={'Breaks'}>
             <BreaksTab
               breaks={breaks} liveTick={liveTick}
               range={breakRange} setRange={setBreakRange}
               from={breakFrom} to={breakTo} setFrom={setBreakFrom} setTo={setBreakTo}
             />
-          )}
+                      </ErrorBoundary>
+)}
 
           {/* ══════════ FULL DAY VIEW ══════════ */}
           {activeTab === 'fullday' && (
+            <ErrorBoundary label={'Hour by hour'}>
             <FullDayTab
               date={fullDayDate}
               setDate={(d)=>setFullDayDate(d)}
@@ -839,10 +843,12 @@ export default function Admin() {
               todayISO={todayISO}
               onGoToTab={setActiveTab}
             />
-          )}
+                      </ErrorBoundary>
+)}
 
           {/* ══════════ EMPLOYEE PROGRESS ══════════ */}
           {activeTab === 'progress' && (
+            <ErrorBoundary label={'Team'}>
             <ProgressTab
               progress={progress}
               fromDate={fromDate}
@@ -854,17 +860,20 @@ export default function Admin() {
               loadDayView={loadDayView}
               downloadCSV={downloadCSV}
             />
-          )}
+                      </ErrorBoundary>
+)}
 
           {/* ══════════ FOOTAGE ══════════ */}
           {activeTab === 'footage' && (
+            <ErrorBoundary label={'Requests'}>
             <FootageTab
               footageAll={footage}
               downloadCSV={downloadCSV}
               onCloseFollowup={(item)=>{ setCloseFollowupModal(item); setCloseReason('') }}
               todayISO={todayISO}
             />
-          )}
+                      </ErrorBoundary>
+)}
 
           {/* ══════════ FOLLOW-UPS ══════════ */}
           {activeTab === 'followups' && (
