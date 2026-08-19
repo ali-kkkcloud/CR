@@ -1,10 +1,12 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
-  readSheet, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr,
-  fetchClientVehicleCounts, getLeaveMapForDate
+  readSheet, appendRows, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
+  hourHasPassed, fetchClientVehicleCounts, getLeaveMapForDate
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, distributeClientsForHour, employees } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
+
+const nowISTHour = () => nowIST().getHours()
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -38,10 +40,28 @@ export default async function handler(req, res) {
       if (inShift) affectedHours.push(h)
     }
 
-    const redistRows      = []
-    const placeholderRows = []
+    // ── Only hours that have not happened yet ────────────────────────────
+    //
+    // You cannot redistribute an hour that is already over. The work either
+    // happened or it did not, and the rows already written are the record of
+    // which — moving it now rewrites history for a shift that has finished.
+    //
+    // Marking somebody on leave used to walk their WHOLE window, so a leave
+    // entered at six in the evening reached back and touched every hour from
+    // seven that morning: 299 hand-over entries and four hundred placeholder
+    // rows, all stamped 6pm, for hours nobody could still be working. Those
+    // rows then made each of those hours look "settled" — settled from
+    // records of work that never happened — and pinned the whole morning to
+    // whoever the split happened to name at six o'clock.
+    const nowHour = nowISTHour()
+    const stillToCome = date !== todayStr()
+      ? []
+      : affectedHours.filter(h => h === nowHour || !hourHasPassed(h, nowHour))
+    const skippedPast = affectedHours.length - stillToCome.length
 
-    for (const hour of affectedHours) {
+    const redistRows      = []
+
+    for (const hour of stillToCome) {
       const withThem    = getScheduledEmployeesAtHour(hour, {}).map(e => e.name)
       const withoutThem = getScheduledEmployeesAtHour(hour, leaveMap).map(e => e.name)
       if (!withThem.includes(empName)) continue
@@ -73,22 +93,25 @@ export default async function handler(req, res) {
 
         redistRows.push([date, now, empName, newOwner, client, String(hour), 'Admin Leave'])
 
-        const exists = updateRows.slice(1).some(
-          r => r[0] === date && r[2] === newOwner && r[3] === client && parseInt(r[4]) === hour
-        )
-        if (!exists) {
-          placeholderRows.push([date, now, newOwner, client, String(hour), '', '', '', 'No', '', ''])
-        }
       })
     }
 
-    if (redistRows.length > 0)      await appendRows(CRM_SHEET_ID, TABS.REDISTRIB,    redistRows)
-    if (placeholderRows.length > 0) await appendRows(CRM_SHEET_ID, TABS.CRM_UPDATES, placeholderRows)
+    // Audit trail only — no placeholder rows.
+    //
+    // The live split is what actually moves the work: the employee on leave
+    // drops out of the pool and their clients land on whoever is still there,
+    // on the next refresh. Writing rows as well pins the work to a name the
+    // recomputed split may not agree with, and makes an hour look worked when
+    // nobody has touched it. /api/shift/end has followed this rule for a while
+    // and this is the same reasoning.
+    if (redistRows.length > 0) await appendRows(CRM_SHEET_ID, TABS.REDISTRIB, redistRows)
 
     return res.status(200).json({
       success: true,
       redistributed: redistRows.length,
-      hours: affectedHours.length
+      hours: stillToCome.length,
+      // Named so the admin knows the morning was left alone on purpose.
+      skippedPastHours: skippedPast,
     })
 
   } catch (err) {

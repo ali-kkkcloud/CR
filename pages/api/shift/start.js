@@ -129,7 +129,10 @@ export default async function handler(req, res) {
     // what lets the split include somebody the moment they start, without any
     // screen having to make an exception for the person looking at it.
     invalidateSheetCache(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!`)
-    return res.status(200).json({ success: true, startTime: now, shiftDate: today, earlyStart, lateStart })
+    return res.status(200).json({
+      success: true, startTime: now, shiftDate: today, earlyStart, lateStart,
+      rosteredWindow: emp ? { start: emp.start, end: emp.end } : null,
+    })
 
   } catch (err) {
     console.error('Shift start error:', err)

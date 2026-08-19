@@ -3,7 +3,7 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
   getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, yesterdayStr,
   hourHasPassed, whoWasOnShiftAtHour, businessHourOrder, DAY_START_HOUR,
-  getAwayOnBreakNames, fetchClientVehicleCounts,
+  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr,
 } from '../../../lib/sheets'
 import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -145,6 +145,39 @@ export default async function handler(req, res) {
     const onShiftNamesTop = getOnShiftNamesFromLog(shiftRows, [today, yesterdayTop])
     const awayNamesTop    = getAwayOnBreakNames(breakRows, [today, yesterdayTop])
 
+    // ── Attendance: in, out, and how long away ──
+    //
+    // The three facts a supervisor checks first every morning and could not
+    // get from this screen: when each person clocked in, when they clocked
+    // out, and how much break they took in between. Break minutes lived only
+    // in the Breaks tab, which meant opening a second screen and reading it
+    // against a third to line it up with the shift row.
+    //
+    // A running break counts too, from its start to this minute — otherwise
+    // somebody who walked away an hour ago and never came back reads as
+    // having taken no break at all, which is the exact opposite of the truth.
+    // Rows are de-duplicated the same way the Breaks tab does it (employee +
+    // date + start time), so a break opened twice is never counted twice.
+    const breakTotals = {}
+    {
+      const seen = new Set()
+      breakRows.slice(1).forEach(r => {
+        if (r[2] !== today) return
+        const name = (r[1] || '').toString().trim()
+        if (!name) return
+        const key = `${(r[0] || '').toString().trim()}|${r[2]}|${r[3]}`
+        if (seen.has(key)) return
+        seen.add(key)
+        const open = (r[6] || '').toString().trim() === 'Active'
+        const mins = open ? calcDurationMinutes(r[2], r[3], r[2], nowStr()) : (parseInt(r[5]) || 0)
+        const t = breakTotals[name] || (breakTotals[name] = { minutes: 0, sessions: 0, autoSessions: 0, openSince: null })
+        t.minutes += Math.max(0, mins)
+        t.sessions++
+        if ((r[7] || '') === 'Auto') t.autoSessions++
+        if (open) t.openSince = r[3] || null
+      })
+    }
+
     let plan = null
     let coverageGaps = []
     try {
@@ -261,6 +294,12 @@ export default async function handler(req, res) {
         startTime:    shiftLog?.[3] || '',
         endTime:      shiftLog?.[4] || '',
         duration:     shiftLog?.[5] || '',
+        // How long they were away from the desk today, and whether a break is
+        // running right now. A break still open is counted up to this minute.
+        breakMinutes:    breakTotals[emp.name]?.minutes || 0,
+        breakSessions:   breakTotals[emp.name]?.sessions || 0,
+        autoBreaks:      breakTotals[emp.name]?.autoSessions || 0,
+        breakOpenSince:  breakTotals[emp.name]?.openSince || null,
         totalUpdates: completedCount,
         assignedCount,
         pendingCount: assignedCount - completedCount,

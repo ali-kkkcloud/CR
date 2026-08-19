@@ -22,6 +22,7 @@ import { loadScheduleData } from '../../lib/roster'
 import {
   employees, clientTimings, specificClientsFor, customTextFor,
   distributeClientsForHour, auditHourAssignment, getScheduledEmployeesAtHour,
+  computeShiftWindow,
 } from '../../lib/schedule'
 import { fetchClientVehicleCounts, businessHourOrder } from '../../lib/sheets'
 import { buildHourPool } from '../../lib/distribution'
@@ -219,6 +220,156 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── The shift window a login earns ─────────────────────────────────
+    //
+    // One rule, and it applies however somebody arrives — early, on time, or
+    // hours late:
+    //
+    //   the shift opens at the HOUR you clocked in and runs its usual length,
+    //   plus ONE MORE HOUR if you clocked in from :31 onward, because most of
+    //   that first hour was already gone.
+    //
+    // For an 08:00–17:00 shift, which is the example the operation states it
+    // in: 08:00–08:30 stays 08:00–17:00; 08:31–08:59 becomes 08:00–18:00;
+    // 11:00–11:30 becomes 11:00–20:00; 11:31–11:59 becomes 11:00–21:00.
+    //
+    // This is checked for every employee on the roster at every hour of the
+    // clock and at the minutes either side of the half-hour boundary, because
+    // this rule has been broken once already — a change that kept the rostered
+    // end for a late arrival quietly removed the make-up hour entirely.
+    const shiftWindow = { checks: 0, examples: [] }
+    const MINUTES = [0, 15, 29, 30, 31, 45, 59]
+    const len = (a, b) => (b <= a ? b - a + 24 : b - a)
+    emps.forEach(emp => {
+      if (emp.start == null || emp.end == null) return
+      const duration = len(emp.start, emp.end)
+      for (let h = 0; h < 24; h++) {
+        MINUTES.forEach(min => {
+          shiftWindow.checks++
+          // A fixed clock reading, so this measures the rule and not the time
+          // of day the check happens to run at.
+          const at = new Date(2026, 7, 18, h, min, 0)
+          const w  = computeShiftWindow(emp, at)
+          const owed = min > 30 ? 1 : 0
+          if (w.start !== h) {
+            note(`window ${emp.name} @${h}:${String(min).padStart(2,'0')}: starts ${w.start}, should start at the arrival hour ${h}`)
+          }
+          if (w.end !== (h + duration + owed) % 24) {
+            note(`window ${emp.name} @${h}:${String(min).padStart(2,'0')}: ends ${w.end}, should end ${(h + duration + owed) % 24} (${duration}h shift${owed ? ' + the make-up hour' : ''})`)
+          }
+          if (len(w.start, w.end) !== duration + owed) {
+            note(`window ${emp.name} @${h}:${String(min).padStart(2,'0')}: window is ${len(w.start, w.end)}h, the shift is ${duration}h${owed ? ' + 1' : ''}`)
+          }
+          if (w.extraHour !== owed) {
+            note(`window ${emp.name} @${h}:${String(min).padStart(2,'0')}: make-up hour ${w.extraHour}, expected ${owed}`)
+          }
+        })
+      }
+    })
+    // The stated examples, printed back so they can be read rather than
+    // trusted. Uses a synthetic 08:00–17:00 employee so the figures match the
+    // way the rule is written down, whoever happens to be on the roster.
+    const ref = { name: '(08–17 reference)', start: 8, end: 17 }
+    ;[[8,0],[8,30],[8,31],[11,0],[11,30],[11,31],[16,45]].forEach(([h,m]) => {
+      const w = computeShiftWindow(ref, new Date(2026, 7, 18, h, m, 0))
+      shiftWindow.examples.push({
+        clockedInAt: `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`,
+        window: `${w.start}:00–${w.end}:00`,
+        makeUpHour: w.extraHour === 1,
+      })
+    })
+
+    // ── Handover: what happens when somebody leaves mid-hour ───────────
+    //
+    // The rule in full: one person alone holds every client of the hour; a
+    // second arriving splits it with them by vehicle count; a third splits it
+    // three ways. And when one of them ends their shift, the clients they
+    // ALREADY UPDATED stay theirs — finished work is not handed to a
+    // colleague as fresh work — while everything they had not got to returns
+    // to the people still on the floor, split by vehicles again.
+    //
+    // Checked on the busiest hour of the real day, with real vehicle counts.
+    const handover = []
+    {
+      const busiest = businessHourOrder()
+        .map(h => ({ h, n: dueAt(h).size }))
+        .sort((a, b) => b.n - a.n)[0]
+      const hour = busiest?.h
+      const rostered = hour != null
+        ? getScheduledEmployeesAtHour(hour, {}, {}).map(e => e.name)
+            .filter(n => !customTextFor(n, hour) && !specificClientsFor(n, hour))
+        : []
+
+      if (hour != null && rostered.length >= 3) {
+        const [a, b, c] = rostered
+        const due = dueAt(hour)
+        const loadOf = (dist, n) => (dist[n] || []).reduce((s, x) => s + (x.vehicleCount || 0), 0)
+        const countOf = (dist) => new Set(Object.values(dist).flat().map(x => x.client)).size
+
+        // One person, alone: everything the hour holds is on their board.
+        const solo = distributeClientsForHour(hour, [a], vehicleMap, {}, true)
+        if (countOf(solo) !== due.size) {
+          note(`handover h${hour}: one person alone holds ${countOf(solo)} of ${due.size} clients`)
+        }
+
+        // Two, then three. Every client still placed, and the vehicle load
+        // within one indivisible client of an even share each time.
+        const pair   = distributeClientsForHour(hour, [a, b], vehicleMap, {}, true)
+        const trio   = distributeClientsForHour(hour, [a, b, c], vehicleMap, {}, true)
+        ;[[2, pair, [a, b]], [3, trio, [a, b, c]]].forEach(([n, dist, names]) => {
+          if (countOf(dist) !== due.size) {
+            note(`handover h${hour}: with ${n} people only ${countOf(dist)} of ${due.size} clients are placed`)
+          }
+          const loads = names.map(x => loadOf(dist, x))
+          const mean  = loads.reduce((s, v) => s + v, 0) / n
+          const big   = Math.max(...Object.values(dist).flat().map(x => x.vehicleCount || 0), 0)
+          if (Math.max(...loads) - mean > big + 1) {
+            note(`handover h${hour}: with ${n} people the heaviest board is ${Math.round(Math.max(...loads) - mean)} vehicles over the even share, biggest single client only ${big}`)
+          }
+        })
+
+        // Now C ends their shift, having finished the first half of their
+        // board. Those finished clients are locked to C; the rest are not.
+        const cHad  = (trio[c] || []).map(x => x.client)
+        const done  = cHad.slice(0, Math.ceil(cHad.length / 2))
+        const undone = cHad.slice(done.length)
+        const locked = {}
+        done.forEach(x => { locked[x] = c })
+
+        const after = distributeClientsForHour(hour, [a, b], vehicleMap, locked, true)
+        const ownerOf = {}
+        Object.entries(after).forEach(([n, cs]) => cs.forEach(x => { ownerOf[x.client] = { owner: n, locked: !!x.isLocked } }))
+
+        // Finished work stays with the person who did it, and is not handed
+        // to a colleague to do again.
+        done.forEach(x => {
+          const o = ownerOf[x]
+          if (!o) return note(`handover h${hour}: "${x}" was finished by ${c} and is now on nobody's record`)
+          if (o.owner !== c) note(`handover h${hour}: "${x}" was already done by ${c} but has been given to ${o.owner} as fresh work`)
+        })
+        // Unfinished work goes back to whoever is still on the floor.
+        undone.forEach(x => {
+          const o = ownerOf[x]
+          if (!o) return note(`handover h${hour}: "${x}" was left unfinished by ${c} and has reached nobody`)
+          if (o.owner === c) note(`handover h${hour}: "${x}" is still on ${c}'s board after they ended their shift`)
+        })
+        // And nothing at all fell out of the hour on the way.
+        const stillPlaced = new Set(Object.keys(ownerOf))
+        const lost = [...due].filter(x => !stillPlaced.has(x))
+        if (lost.length) {
+          note(`handover h${hour}: ${lost.length} client(s) lost when ${c} left — e.g. ${lost.slice(0,3).join(', ')}`)
+        }
+
+        handover.push({
+          hour, people: rostered.length, clientsThisHour: due.size,
+          soloHolds: countOf(solo),
+          splitTwo: [a, b].map(x => ({ name: x, vehicles: loadOf(pair, x) })),
+          splitThree: [a, b, c].map(x => ({ name: x, vehicles: loadOf(trio, x) })),
+          whenOneLeaves: { who: c, keptBecauseDone: done.length, handedBack: undone.length },
+        })
+      }
+    }
+
     // Every client in the sheet is scheduled for at least one hour, and every
     // hour it is scheduled for places it.
     const everyClient = Object.keys(clientTimings())
@@ -237,6 +388,8 @@ export default async function handler(req, res) {
       hoursCovered: perHour.length,
       perHour,
       balance,
+      shiftWindow,
+      handover,
       failures: fails,
     })
   } catch (e) {

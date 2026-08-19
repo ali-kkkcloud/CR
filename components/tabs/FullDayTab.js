@@ -444,10 +444,17 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                   const future = playbackOn && h.hour > playHour
                   const total  = h.totalClients || 0
                   const done   = h.completedClients || 0
+                  // A custom duty is not an empty hour. An employee named
+                  // against something in Employee_Hours — "Night Fleet Update"
+                  // at four in the morning — sees that instruction on their own
+                  // board, but this screen drew the hour as a grey dash, so the
+                  // admin read it as nothing scheduled and could not tell it
+                  // apart from an hour with no work at all.
                   const state  = h.isOnLeave ? 'leave'
+                    : h.isCustom ? 'custom'
                     : total === 0 ? 'empty'
                     : done === total ? 'done' : 'open'
-                  const tone = { leave:C.purple, empty:C.dim, done:C.accent, open:C.amber }[state]
+                  const tone = { leave:C.purple, custom:C.blue, empty:C.dim, done:C.accent, open:C.amber }[state]
                   const pct = total > 0 ? Math.round((done / total) * 100) : 0
                   return (
                     <button key={h.hour} disabled={future} onClick={()=>{setSelectedHour(h.hour); setDrawerClient(null)}} style={{
@@ -462,6 +469,8 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                       <div style={{ display:'flex', alignItems:'baseline', gap:'3px', marginTop:'4px' }}>
                         {h.isOnLeave ? (
                           <span style={{ color:tone, fontSize:'11px', fontWeight:700 }}>Leave</span>
+                        ) : h.isCustom ? (
+                          <span style={{ color:tone, fontSize:'11px', fontWeight:700 }}>Duty</span>
                         ) : total === 0 ? (
                           <span style={{ color:tone, fontSize:'11px' }}>—</span>
                         ) : (
@@ -471,7 +480,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                           </>
                         )}
                       </div>
-                      {total > 0 && !h.isOnLeave && (
+                      {total > 0 && !h.isOnLeave && !h.isCustom && (
                         <div style={{ height:'3px', borderRadius:'2px', background:'#2a2a2a', marginTop:'6px', overflow:'hidden' }}>
                           <div style={{ height:'100%', width:`${pct}%`, background:tone }} />
                         </div>
@@ -487,7 +496,7 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
               <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:'12px', padding:'16px', marginBottom:'12px' }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px' }}>
                   <div className="eyebrow">
-                    {hourLabel(activeHourData.hour)} · {activeHourData.isOnLeave ? 'ON LEAVE' : `${activeHourData.totalClients} CLIENT(S) ASSIGNED`}
+                    {hourLabel(activeHourData.hour)} · {activeHourData.isOnLeave ? 'ON LEAVE' : activeHourData.isCustom ? 'ASSIGNED DUTY' : `${activeHourData.totalClients} CLIENT(S) ASSIGNED`}
                   </div>
                   <label style={{ display:'flex', alignItems:'center', gap:'5px', color:C.muted, fontSize:'10px', cursor:'pointer' }}>
                     <input type="checkbox" checked={compact} onChange={e=>setCompact(e.target.checked)} /> Compact View
@@ -495,6 +504,20 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
                 </div>
                 {activeHourData.isOnLeave ? (
                   <div style={{ color:C.amber, fontSize:'12px' }}>On leave{activeHourData.leaveReason?` — ${activeHourData.leaveReason}`:''}.</div>
+                ) : activeHourData.isCustom ? (
+                  // What Employee_Hours names them to, word for word — the same
+                  // instruction that appears on their own board this hour.
+                  <div style={{
+                    display:'flex', alignItems:'center', gap:'9px',
+                    background:C.blue+'12', border:`1px solid ${C.blue}33`,
+                    borderRadius:R.md, padding:'11px 13px',
+                  }}>
+                    <span style={{ width:'5px', height:'5px', borderRadius:'50%', background:C.blue, flexShrink:0 }} />
+                    <span style={{ color:C.blue, fontSize:'12px', fontWeight:700 }}>{activeHourData.customText}</span>
+                    <span style={{ color:C.muted, fontSize:'11px' }}>
+                      assigned duty this hour — no clients go to them while it runs
+                    </span>
+                  </div>
                 ) : activeHourData.clients.length===0 ? (
                   <div style={{ color:C.muted, fontSize:'12px' }}>No clients scheduled this hour.</div>
                 ) : compact ? (
