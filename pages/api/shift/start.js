@@ -1,6 +1,6 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
-import { appendRow, readSheet, readSheetCached, updateRowCells, invalidateSheetCache, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, findOpenShiftRow } from '../../../lib/sheets'
+import { appendRow, readSheet, readSheetCached, updateRowCells, invalidateSheetCache, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, findOpenShiftRow, businessHourOrder } from '../../../lib/sheets'
 import { getEmployeeShift, computeShiftWindow } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
@@ -111,12 +111,24 @@ export default async function handler(req, res) {
       // also makes this idempotent: a row already shortened to
       // "Week Off (returned)" is picked up again instead of being treated
       // as a different kind of leave and skipped.
+      //
+      // The end only ever moves EARLIER, never later. An employee can clock in
+      // more than once in a day — they finish, and come back — and writing the
+      // latest arrival each time re-marked the hours they had already worked
+      // as Week Off. Somebody who arrived at 00:44, worked six hours, went
+      // home and signed in again at 06:00 had his whole night handed back to
+      // leave: a hundred and nineteen clients he had held at midnight
+      // belonging, on the admin's screen, to nobody at all. What ends the
+      // leave is the FIRST time they turned up, and nothing after it.
+      const ORDER = businessHourOrder()
       const leaveRows = await readSheetCached(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`, 5000)
       for (let i = leaveRows.length - 1; i >= 1; i--) {
         const r = leaveRows[i]
-        if (r[1] === user.name && r[2] === today && (r[5] || '').toString().startsWith('Week Off')) {
-          await updateRowCells(CRM_SHEET_ID, TABS.LEAVES, i + 1, 5, [adjusted.start, 'Week Off (returned)'])
-        }
+        if (r[1] !== user.name || r[2] !== today) continue
+        if (!(r[5] || '').toString().startsWith('Week Off')) continue
+        const currentEnd = parseInt(r[4], 10)
+        if (Number.isFinite(currentEnd) && ORDER.indexOf(currentEnd) <= ORDER.indexOf(adjusted.start)) continue
+        await updateRowCells(CRM_SHEET_ID, TABS.LEAVES, i + 1, 5, [adjusted.start, 'Week Off (returned)'])
       }
     }
 

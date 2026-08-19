@@ -10,6 +10,7 @@ import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan } from '../../../lib/dayplan'
 import { sweepShiftAutoClose } from '../../../lib/attendance'
+import { sweepDailySummary } from '../../../lib/rollup'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -31,6 +32,13 @@ export default async function handler(req, res) {
     // a refresh ago. Idempotent; a row already Ended is skipped.
     try { await sweepShiftAutoClose(employees()) }
     catch (e) { console.error('shift auto-close sweep failed:', e.message) }
+
+    // Close out any finished day that has not been summarised yet. Idempotent
+    // and free after the first time — a day already rolled up is skipped
+    // without reading anything else. See lib/rollup.js for why the detail
+    // cannot be the thing the month screens read.
+    try { await sweepDailySummary() }
+    catch (e) { console.error('daily summary sweep failed:', e.message) }
 
     const [credRows, shiftRows, breakRows, updateRows, redistRows, footageRows, overridesMap, leaveMap] = await Promise.all([
       readSheetCached(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`, 60000),
