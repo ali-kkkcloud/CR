@@ -1,4 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
+import { getHistoryFor } from '../../../lib/history'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, parseOperatingDateTime, getShiftOverridesForDate,
@@ -336,6 +337,12 @@ export default async function handler(req, res) {
     todayTargets.followupsCompleted = todayFollowups.filter(r => (r[7]||'').toString().toLowerCase().startsWith('closed')).length
 
 
+    // Their own history, read once. A failure here must never take the
+    // dashboard down — it is a record of the past, not of the shift.
+    let myHistory = null
+    try { myHistory = await getHistoryFor(user.name) }
+    catch (e) { console.error('history read failed:', e.message) }
+
     return res.status(200).json({
       range,
       performanceScore, performanceTier: tier,
@@ -355,6 +362,10 @@ export default async function handler(req, res) {
       topClients,
       recentActivity,
       today: todayTargets,
+      // Their own months from before the platform existed. Shown separately
+      // on their dashboard rather than blended into any range — a month is a
+      // lump sum and cannot be cut into days. See lib/history.js.
+      history: myHistory,
     })
   } catch (err) {
     console.error('Dashboard summary error:', err)

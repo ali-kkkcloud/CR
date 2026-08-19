@@ -8,6 +8,7 @@ import { loadScheduleData } from '../../../lib/roster'
 import { collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan } from '../../../lib/dayplan'
 import { readDailySummary, parseSummaryRow } from '../../../lib/rollup'
+import { getHistory } from '../../../lib/history'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -217,7 +218,14 @@ export default async function handler(req, res) {
       }
     })
 
-    return res.status(200).json({ progress, dates: rangeDates, from: fromDDMMYYYY, to: toDDMMYYYY })
+    // The months worked before the platform existed, alongside — never folded
+    // into the range, because a month is a lump sum and cannot be cut into
+    // days. See lib/history.js.
+    let history = { periods: [], byEmployee: {}, totals: null }
+    try { history = await getHistory() }
+    catch (e) { console.error('history read failed:', e.message) }
+
+    return res.status(200).json({ progress, dates: rangeDates, from: fromDDMMYYYY, to: toDDMMYYYY, history })
 
   } catch (err) {
     console.error('Employee progress error:', err)

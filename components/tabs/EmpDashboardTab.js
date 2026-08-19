@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Icon from '../Icons'
+import HistoryPanel from './HistoryPanel'
 import { C, Donut, LineChart, ScoreBadge } from '../Widgets'
 import { Card, CardHead, Segmented, Meter, EmptyState, SkeletonCard, T, R, SP, SURF } from '../ui'
 
@@ -221,6 +222,15 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
           )}
         </Card>
       </div>
+
+      {/* Their own months from before the platform existed. Kept below the
+          live figures and clearly labelled — those are monthly totals from the
+          old spreadsheets and are not part of any range chosen above. */}
+      {summary.history && (
+        <div style={{ marginTop:SP[4] }}>
+          <HistoryPanel history={{ periods: summary.history.months || [], byEmployee: { [summary.history.name]: summary.history } }} only={summary.history.name} title="My work before the platform" />
+        </div>
+      )}
     </div>
   )
 }
