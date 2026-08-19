@@ -416,15 +416,38 @@ export default function Dashboard() {
     const isCurrentHourEdit = targetHour === currentHour
     editingRef.current[client] = Date.now()   // protect from background refresh
     try {
-      const res = await fetch('/api/crm/update', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client, slot: targetHour, ...record }),
-      })
-      const data = await res.json()
+      // Saving retries itself before it ever says no.
+      //
+      // The spreadsheet's quota is measured per minute, and at the top of an
+      // hour thirty people press Save inside the same few seconds. One of them
+      // gets refused — and used to be told "Could not save — try again", with
+      // the client still marked UNSAVED, as though their work had been
+      // rejected. It had not; the platform simply gave up first.
+      //
+      // Three goes, spread over about twelve seconds, which is long enough for
+      // a per-minute burst to clear. Only worth repeating when the server says
+      // it is busy or the network dropped the request — a real rejection is
+      // reported at once rather than tried three times.
+      let res, data
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, attempt === 1 ? 2500 : 9000))
+        try {
+          res = await fetch('/api/crm/update', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client, slot: targetHour, ...record }),
+          })
+          data = await res.json().catch(() => ({}))
+        } catch (netErr) {
+          res = null; data = {}
+        }
+        if (res && res.ok && data.success) break
+        const worthRetrying = !res || res.status === 503 || res.status >= 500 || data.retryable
+        if (!worthRetrying) break
+      }
       // Only accept the new values once the server has them. Applying them
       // optimistically would make a failed save look identical to a
       // successful one, because the draft is compared against exactly this.
-      if (!res.ok || !data.success) return false
+      if (!res || !res.ok || !data.success) return false
       if (isCurrentHourEdit) {
         setFilled(p => ({ ...p, [client]: { ...(p[client] || {}), ...record, updatedAt: data.updatedAt || '' } }))
       } else {

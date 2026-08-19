@@ -24,7 +24,8 @@ function shiftLabel(emp) {
 
 function statusOf(emp) {
   if (!emp) return { label:'—', color:C.muted }
-  const leaveHour = emp.hours.find(h => h.isOnLeave)
+  // Called with rows from outside the normalised list too, so it guards itself.
+  const leaveHour = (emp.hours || []).find(h => h.isOnLeave)
   if (leaveHour && !emp.loggedIn) {
     if (leaveHour.leaveReason === 'Week Off') return { label:'Week Off', color:C.purple }
     return { label:'On Leave', color:C.purple }
@@ -75,7 +76,25 @@ export default function FullDayTab({ date, setDate, data, loading, onMarkLeave, 
   const [playHour, setPlayHour] = useState(0)
   const playRef = useRef(null)
 
-  const employees = data?.employees || []
+  // ── Every list this screen walks is guaranteed to be a list ──────────
+  //
+  // This component reaches three deep — employee → hour → clients — in about
+  // twenty places, and every one of them assumed the arrays were there. One
+  // hour arriving without its `clients` was enough to throw inside a render
+  // and take the WHOLE admin page down to "Application error: a client-side
+  // exception has occurred", white screen, nothing to click. A missing array
+  // is a hiccup; it must never be an outage.
+  //
+  // Normalised once here so the rest of the file can stay readable, rather
+  // than sprinkling `|| []` down twenty call sites and missing the twenty-first.
+  const employees = useMemo(() => (data?.employees || []).map(e => ({
+    ...e,
+    leaves: Array.isArray(e?.leaves) ? e.leaves : [],
+    hours: (Array.isArray(e?.hours) ? e.hours : []).map(h => ({
+      ...h,
+      clients: Array.isArray(h?.clients) ? h.clients : [],
+    })),
+  })), [data])
 
   // How many filters are narrowing what is on screen. Shown on the Filters
   // button so a filter left on behind the fold can never quietly hide people.
@@ -755,10 +774,10 @@ function EmployeeDrawer({ emp, employees, footageAll, date, matchDateFlexible, o
         <MiniBox label="FOOTAGE HANDLED" val={footageHandled.length} />
         <MiniBox label="FOLLOW-UPS" val={followupsHandled.length} />
       </div>
-      {emp.leaves.length>0 && (
+      {(emp.leaves||[]).length>0 && (
         <div style={{ background:C.purple+'14', border:`1px solid ${C.purple}33`, borderRadius:'8px', padding:'10px 12px', marginBottom:'14px' }}>
           <div style={{ color:C.purple, fontSize:'10px', fontWeight:700, marginBottom:'4px' }}>ON LEAVE TODAY</div>
-          {emp.leaves.map((l,i) => <div key={i} style={{ color:C.text2, fontSize:'11px' }}>{hourLabel(l.fromHour)} → {hourLabel(l.toHour)}{l.reason?` — ${l.reason}`:''}</div>)}
+          {(emp.leaves||[]).map((l,i) => <div key={i} style={{ color:C.text2, fontSize:'11px' }}>{hourLabel(l.fromHour)} → {hourLabel(l.toHour)}{l.reason?` — ${l.reason}`:''}</div>)}
         </div>
       )}
       <div style={{ color:C.muted, fontSize:'10.5px', marginBottom:'14px' }}>Last activity: {lastActivity ? `${lastActivity.client} at ${lastActivity.updatedAt}` : '—'}</div>
