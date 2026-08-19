@@ -28,3 +28,6 @@ yarn-error.log*
 
 # Live-testing scratch scripts (never part of the app)
 .livetest/
+
+# local dev server log
+dev.log

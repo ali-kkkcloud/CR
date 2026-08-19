@@ -171,7 +171,13 @@ export default async function handler(req, res) {
         return hour >= l.fromHour || hour < l.toHour
       })
 
-      if (isOnLeave) {
+      // An hour you demonstrably worked is not an hour you were on leave.
+      // The plan reads a finished hour from the rows written in it, and a row
+      // is proof of presence — so if the split still holds work for this hour,
+      // the leave label would be hiding it. Kept in step with the admin's day
+      // view, which makes the same exception for the same reason.
+      const planHasWork = (myPlan.hours[hour] || []).length > 0
+      if (isOnLeave && !planHasWork) {
         return {
           hour, isOnLeave: true,
           leaveReason: missedGrace ? 'Week Off' : '',

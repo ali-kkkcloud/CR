@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import Icon from '../Icons'
 import { C, MiniStat, AttendanceDots, ScoreBadge, HBarList } from '../Widgets'
 import { Card, Button, SearchInput, Stat, PageHead, PickList, T, R, SP, SURF, istDayISO } from '../ui'
+import HistoryPanel from './HistoryPanel'
 
 // One date format on this screen. It had three: 17/08/2026 in one heading,
 // 2026-08-17 in the next, and the pickers' own format above both.
@@ -141,6 +142,11 @@ export default function ProgressTab({ progress, fromDate, toDate, setFromDate, s
           { label:'footage done',   value:kpis.footageDone },
         ]}
       />
+
+      {/* The months worked before the platform existed. Its own block, not
+          folded into the range above — those are monthly lump sums and cannot
+          be cut into days. See components/tabs/HistoryPanel.js. */}
+      <HistoryPanel history={progress?.history} />
 
       {/* Three fixed tracks overflowed the page below about 1250px — the
           300px list plus two columns whose contents have their own minimum

@@ -1,8 +1,14 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
+import {
+  readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, todayStr, yesterdayStr,
+  getShiftOverridesForDate, getLeaveMapForDate, fetchClientVehicleCounts,
+} from '../../../lib/sheets'
 import { employees } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { collapseSlotOwners } from '../../../lib/distribution'
+import { computeDayPlan } from '../../../lib/dayplan'
+import { readDailySummary, parseSummaryRow } from '../../../lib/rollup'
+import { getHistory } from '../../../lib/history'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -52,18 +58,80 @@ export default async function handler(req, res) {
 
     const rangeDates = dateRangeArray(fromDDMMYYYY, toDDMMYYYY)
 
-    const [shiftRows, updateRows, footageRows] = await Promise.all([
+    const [shiftRows, updateRows, footageRows, summaryRows] = await Promise.all([
       readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, 15000),
       readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:L`, 15000),
       readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000),
+      readDailySummary(),
     ])
 
-    // One owner per (date, client, hour). CRM_Updates keeps a placeholder for
-    // every name a client passed through, so counting rows per employee
-    // credited the same slot to two or three people and showed each of them
-    // pending work that somebody else had picked up.
-    const rangeSetAll = new Set(rangeDates)
-    const ownedSlots = [...collapseSlotOwners(updateRows, r => rangeSetAll.has(r[0])).values()]
+    // ── Days that have been closed out, and days that have not ───────────
+    //
+    // A finished day is read from its summary — fourteen numbers per person
+    // rather than a thousand rows — and that is also where work recorded
+    // BEFORE this platform existed lives, imported in the same shape. So a
+    // range that reaches back into the old spreadsheets reads exactly the same
+    // way as one that covers this week, and a chart drawn across the join has
+    // no gap in it.
+    //
+    // Days with no summary yet — today, and anything the roll-up has not
+    // reached — are still read from the detail rows.
+    const summaryByDateName = {}
+    const summarised = new Set()
+    ;(summaryRows || []).slice(1).forEach(row => {
+      const s = parseSummaryRow(row)
+      if (!s.date || !s.name) return
+      summarised.add(s.date)
+      const key = `${s.date}__${s.name}`
+      // One row per person per day. If a day were ever summarised twice, the
+      // figures must not be added together — the later row wins.
+      summaryByDateName[key] = s
+    })
+    const summarisedInRange = rangeDates.filter(d => summarised.has(d))
+    const liveDates = new Set(rangeDates.filter(d => !summarised.has(d)))
+
+    // ── The day still in progress ────────────────────────────────────────
+    //
+    // A day that has not been closed out cannot be counted from its rows.
+    // CRM_Updates now holds a row only where somebody actually recorded
+    // something, so counting rows would report every live day as finished —
+    // assigned equal to completed, nothing outstanding, on the one day where
+    // outstanding work is the whole point.
+    //
+    // So the live day is read from computeDayPlan, exactly as the Dashboard
+    // and Hour by hour read it, and the two screens cannot disagree. There is
+    // normally at most one such day — the roll-up closes every earlier one —
+    // and any others fall back to their rows rather than costing a read each.
+    let livePlan = null
+    if (liveDates.has(today)) {
+      try {
+        const [ovMap, lvMap, vehMap, breakRows, credRows] = await Promise.all([
+          getShiftOverridesForDate(today),
+          getLeaveMapForDate(today),
+          fetchClientVehicleCounts(),
+          readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
+          readSheetCached(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`, 60000),
+        ])
+        livePlan = computeDayPlan({
+          date: today, today,
+          nowHour: new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours(),
+          yesterday: yesterdayStr(),
+          shiftRows, updateRows, breakRows,
+          leaveMap: lvMap, overridesMap: ovMap, vehicleMap: vehMap,
+          weekOffNames: new Set(
+            credRows.slice(1).filter(r => (r[7] || '').toString().toLowerCase() === 'yes').map(r => r[1])
+          ),
+        })
+      } catch (e) {
+        console.error('progress: live day plan failed', e.message)
+      }
+    }
+
+    // Any remaining unsummarised day is read from its rows. One owner per
+    // (date, client, hour) — a client that passed through two people must not
+    // be counted against both.
+    const fromRowsDates = new Set([...liveDates].filter(d => !(livePlan && d === today)))
+    const ownedSlots = [...collapseSlotOwners(updateRows, r => fromRowsDates.has(r[0])).values()]
     const rowsByOwner = {}
     ownedSlots.forEach(s => { (rowsByOwner[s.owner] ||= []).push(s.row) })
 
@@ -89,7 +157,28 @@ export default async function handler(req, res) {
       const rangeUpdates = rowsByOwner[emp.name] || []
       const rangeClients = [...new Set(rangeUpdates.map(r => r[3]))]
       const rangeCompletedUpdates = rangeUpdates.filter(r => (r[5]||'').toString().trim())
-      const rangePendingUpdates   = rangeUpdates.length - rangeCompletedUpdates.length
+
+      // Everything the summarised days contribute, added on top of the live
+      // days' detail. Both halves measure the same things the same way, so a
+      // range that straddles the join adds up rather than jumping.
+      const mySummaries = summarisedInRange
+        .map(d => summaryByDateName[`${d}__${emp.name}`])
+        .filter(Boolean)
+      const fromSummary = mySummaries.reduce((a, s) => ({
+        assigned:  a.assigned  + s.clientsAssigned,
+        completed: a.completed + s.clientsCompleted,
+        vehicles:  a.vehicles  + s.vehiclesAssigned,
+        checked:   a.checked   + s.vehiclesChecked,
+        alerts:    a.alerts    + s.alerts,
+        misaligns: a.misaligns + s.misaligns,
+        imported:  a.imported  + (s.source === 'imported' ? 1 : 0),
+      }), { assigned:0, completed:0, vehicles:0, checked:0, alerts:0, misaligns:0, imported:0 })
+
+      // And the day in progress, from the same plan every other screen reads.
+      const live = livePlan?.byEmployee?.[emp.name]
+      const assignedTotal  = rangeUpdates.length + fromSummary.assigned + (live?.clients ?? 0)
+      const completedTotal = rangeCompletedUpdates.length + fromSummary.completed + (live?.clientsDone ?? 0)
+      const rangePendingUpdates = Math.max(0, assignedTotal - completedTotal)
 
       const myFootage = footageRows.slice(1).filter(r => {
         const sub = (r[9] || '').toString().toLowerCase()
@@ -113,17 +202,30 @@ export default async function handler(req, res) {
         daysAbsent,
         totalDaysInRange: rangeDates.length,
         rangeClientsCount: rangeClients.length,
-        rangeAssignedCount: rangeUpdates.length,
-        rangeUpdatesCount: rangeCompletedUpdates.length,
+        rangeAssignedCount: assignedTotal,
+        rangeUpdatesCount: completedTotal,
         rangePendingCount: rangePendingUpdates,
-        rangeMisaligns: rangeUpdates.filter(r => r[6] && r[6] !== '—' && r[6] !== '').length,
-        rangeAlerts: rangeUpdates.reduce((s,r)=>s+(parseInt(r[7])||0),0),
+        // Vehicles due is a property of the schedule, not of a row somebody
+        // saved, so it exists only for days that have been summarised.
+        rangeVehiclesAssigned: fromSummary.vehicles + (live?.vehicles ?? 0),
+        rangeVehiclesChecked: rangeUpdates.reduce((s,r)=>s+(parseInt(r[11])||0),0) + fromSummary.checked + (live?.vehiclesChecked ?? 0),
+        rangeMisaligns: rangeUpdates.filter(r => r[6] && r[6] !== '—' && r[6] !== '').length + fromSummary.misaligns,
+        rangeAlerts: rangeUpdates.reduce((s,r)=>s+(parseInt(r[7])||0),0) + fromSummary.alerts + (live?.alerts ?? 0),
+        // How much of this range is history the platform did not record itself.
+        daysFromHistory: fromSummary.imported,
         footagePending,
         footageCompletedInRange,
       }
     })
 
-    return res.status(200).json({ progress, dates: rangeDates, from: fromDDMMYYYY, to: toDDMMYYYY })
+    // The months worked before the platform existed, alongside — never folded
+    // into the range, because a month is a lump sum and cannot be cut into
+    // days. See lib/history.js.
+    let history = { periods: [], byEmployee: {}, totals: null }
+    try { history = await getHistory() }
+    catch (e) { console.error('history read failed:', e.message) }
+
+    return res.status(200).json({ progress, dates: rangeDates, from: fromDDMMYYYY, to: toDDMMYYYY, history })
 
   } catch (err) {
     console.error('Employee progress error:', err)

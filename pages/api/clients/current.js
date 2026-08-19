@@ -189,28 +189,23 @@ export default async function handler(req, res) {
     // bouncing back onto a colleague's board.
     const clients = getClientsForEmployeeAtHour(user.name, hour, poolNames, vehicleMap, lockedAssignments, true)
 
-    // ── Write placeholder rows — always dated with MY shift date, so a
-    // night shift's post-midnight hours stay attached to the day it
-    // started, not the calendar day they literally occurred on. ──
-    const existingForMeSet = new Set(
-      updateRows.slice(1)
-        .filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[4]) === hour)
-        .map(r => r[3])
-    )
-    const newRows = []
-    clients.forEach(c => {
-      if (c.isCustom) return
-      if (!existingForMeSet.has(c.client)) {
-        newRows.push([myShiftDate, now, user.name, c.client, String(hour), '', '', '', 'No', '', ''])
-      }
-    })
-    if (newRows.length > 0) await appendRows(CRM_SHEET_ID, TABS.CRM_UPDATES, newRows)
-
-    // ── Build filled map ──
-    const allMyRows = [
-      ...updateRows.slice(1).filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[4]) === hour),
-      ...newRows,
-    ]
+    // ── No placeholder rows ────────────────────────────────────────────
+    //
+    // Loading a board used to append one blank row per client, so opening the
+    // screen at the top of an hour wrote a hundred and nineteen rows before
+    // anybody had done a thing. One day of that came to 1,274 rows of which
+    // exactly ONE carried real work — and CRM_Updates is the tab every screen
+    // re-reads on every request, so the whole platform paid for them forever.
+    //
+    // They were never load-bearing. Nothing locks on a blank row (see
+    // buildLockedAssignments), the idle sweep skips them by name, and every
+    // screen reads its clients from computeDayPlan and only decorates them
+    // with a row if one exists — a client with no row simply reads as not yet
+    // done, which is exactly what a blank row said.
+    //
+    // A row is written now when, and only when, somebody records something.
+    const allMyRows = updateRows.slice(1)
+      .filter(r => r[0] === myShiftDate && r[2] === user.name && parseInt(r[4]) === hour)
     const filled = {}
     allMyRows.forEach(r => {
       const hasRealData = !!(r[5] || '').toString().trim()

@@ -164,7 +164,14 @@ export default async function handler(req, res) {
         // being labelled "CALL" here and "Week Off" there, two answers about
         // the same hour. Somebody who is not coming in is not doing the calls
         // either, so leave wins.
-        if (isOnLeave) {
+        // …but an hour somebody demonstrably WORKED is not an hour they were
+        // on leave, whatever the Leaves tab says. The plan reads a finished
+        // hour from the rows written in it, and a row is proof of presence.
+        // Showing leave over the top of it hid a hundred and nineteen clients
+        // that were on a real person's board: the leave row said one thing,
+        // the work said another, and the screen printed the wrong one.
+        const planHasWork = (plan.byEmployee[emp.name]?.hours?.[hour] || []).length > 0
+        if (isOnLeave && !planHasWork) {
           const leaveEntry = leaves.find(l => {
             if (l.fromHour <= l.toHour) return hour >= l.fromHour && hour < l.toHour
             return hour >= l.fromHour || hour < l.toHour
