@@ -5,7 +5,7 @@ import {
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
   getAwayOnBreakNames, findOpenShiftRow
 } from '../../../lib/sheets'
-import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, distributeClientsForHour } from '../../../lib/schedule'
+import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, distributeClientsForHour, specificClientsFor, customTextFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 
@@ -86,9 +86,18 @@ export default async function handler(req, res) {
     // leaver's unfinished clients. Excluding them used to concentrate the
     // hand-over onto whoever happened not to be on a break at that second.
     const awayNames = new Set()
+    //
+    // Somebody holding a NAMED client this hour, or on a custom duty, is not a
+    // target for the hand-over. Naming a client against them in Employee_Hours
+    // says "this hour is that client's" — the ordinary split already leaves
+    // them out of the rotation for exactly that reason, and the log has to
+    // agree with the split or it reports work moving somewhere it never went.
+    // The admin was reading a hand-over trail that put the leaver's clients on
+    // people whose hour was already spoken for.
     const stillWorking = getScheduledEmployeesAtHour(currentHour, leaveMap, overridesMap)
       .map(e => e.name)
       .filter(n => n !== user.name && onShiftNames.has(n))
+      .filter(n => !specificClientsFor(n, currentHour) && !customTextFor(n, currentHour))
     const vehicleMap = await fetchClientVehicleCounts()
 
     // What this employee is actually still holding, taken from the live
