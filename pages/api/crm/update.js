@@ -24,13 +24,22 @@ export default async function handler(req, res) {
     // writes to — so an employee's own previous save is always visible here
     // and a duplicate row can't slip through. What it stops is twenty-odd
     // people each spending two fresh reads per update through a busy hour.
-    const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 5000)
+    // Cached for a minute, not five seconds. This read only answers "which
+    // operating day does this employee's shift belong to", and that cannot
+    // change while they are working — but at five seconds it was a fresh read
+    // of the whole attendance tab on almost every save. Thirty people saving
+    // through a busy hour spent the shared read quota on a question with the
+    // same answer every time, and then the SAVES started failing.
+    const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 60000)
     const mine = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim() === user.empId.toString().trim())
     const startedToday    = mine.some(r => r[2] === today)
     const activeYesterday = mine.some(r => r[2] === yesterday && r[6] === 'Active')
     const shiftDate = (!startedToday && activeYesterday) ? yesterday : today
 
-    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 5000)
+    // Likewise. Every save invalidates this tab's cache in the process that
+    // made it, so an employee always sees their own previous save; the longer
+    // window only saves re-reading the whole tab for somebody else's.
+    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 30000)
     // If the same slot somehow has more than one row (two polls can each
     // append a placeholder), always edit the one that already holds data —
     // otherwise a second save would land on the blank twin and the earlier
@@ -58,7 +67,21 @@ export default async function handler(req, res) {
     else await appendRow(CRM_SHEET_ID, TABS.CRM_UPDATES, rowData)
     return res.status(200).json({ success:true, updatedAt: now, shiftDate })
   } catch(err) {
-    console.error(err)
-    return res.status(500).json({ error:'Server error' })
+    console.error('crm/update failed:', err?.message || err)
+    // Tell the difference between "the spreadsheet is busy, this is worth
+    // trying again" and "something is actually wrong". The first is what an
+    // employee hits at the top of the hour when thirty people save at once,
+    // and it must not read like their work was rejected.
+    const code = err?.code ?? err?.response?.status
+    const msg  = (err?.message || '').toLowerCase()
+    const busy = code === 429 || code === 503 ||
+                 msg.includes('quota') || msg.includes('rate limit') || msg.includes('try again later')
+    if (busy) {
+      return res.status(503).json({
+        error: 'The spreadsheet is busy right now — your work has not been lost, try Save again in a moment.',
+        retryable: true,
+      })
+    }
+    return res.status(500).json({ error: 'Could not save. Your work is still on screen — try again.' })
   }
 }
