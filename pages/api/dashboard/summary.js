@@ -3,7 +3,7 @@ import { getHistoryFor } from '../../../lib/history'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, parseOperatingDateTime, getShiftOverridesForDate,
-  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, yesterdayStr, TTL,
+  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, yesterdayStr, TTL, warmSheetCache, SHIFT_SCREEN_TABS,
 } from '../../../lib/sheets'
 import { employees, distributeClientsForHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -51,6 +51,11 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Every tab this screen needs, asked for in one go before anything else
+    // runs — so they cost one request between them instead of one per stage.
+    // See warmSheetCache in lib/sheets.
+    await warmSheetCache(CRM_SHEET_ID, [...SHIFT_SCREEN_TABS, [`${TABS.FOOTAGE_FOLLOWUP}!A:J`, TTL.QUEUE], [`${TABS.DAILY_SUMMARY}!A:N`, TTL.ROSTER]])
+
     // Roster and client hours come from the sheet; this makes sure this
     // request is working from the current ones.
     await loadScheduleData()
