@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, appendRow, updateRowCells, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST } from '../../../lib/sheets'
+import { readSheetCached, appendRow, updateRowCells, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, TTL } from '../../../lib/sheets'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     // of the whole attendance tab on almost every save. Thirty people saving
     // through a busy hour spent the shared read quota on a question with the
     // same answer every time, and then the SAVES started failing.
-    const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 60000)
+    const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE)
     const mine = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim() === user.empId.toString().trim())
     const startedToday    = mine.some(r => r[2] === today)
     const activeYesterday = mine.some(r => r[2] === yesterday && r[6] === 'Active')
@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     // Likewise. Every save invalidates this tab's cache in the process that
     // made it, so an employee always sees their own previous save; the longer
     // window only saves re-reading the whole tab for somebody else's.
-    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 30000)
+    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, TTL.LIVE)
     // If the same slot somehow has more than one row (two polls can each
     // append a placeholder), always edit the one that already holds data —
     // otherwise a second save would land on the blank twin and the earlier

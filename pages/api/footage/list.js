@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS } from '../../../lib/sheets'
+import { readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, TTL } from '../../../lib/sheets'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -35,7 +35,7 @@ export default async function handler(req, res) {
   try {
     // Cached — the Issue Tracker is the biggest sheet the app reads and this
     // list is polled from every dashboard.
-    const rows = await readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000)
+    const rows = await readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES)
     if (!rows || rows.length < 2) {
       return res.status(200).json({ pending: [], completed: [], followups: [] })
     }
@@ -74,50 +74,73 @@ export default async function handler(req, res) {
         currentStatus:row[COL.CURR_STATUS]   || '',
         resolved,
       }
+      // The last row wins. The Issue Tracker is filled in by hand and by other
+      // tools, and the same request turning up twice is ordinary — but showing
+      // it twice makes a queue of nine look like a queue of eleven, and the
+      // person working it cannot tell which copy they already did.
+      const seenBefore = issueId in byIssueId
       byIssueId[issueId] = item
 
       const shouldShow = user.role === 'admin' || raisedBy === empName
       if (!shouldShow) return
 
-      if (resolved) completed.push(item)
-      else pending.push(item)
+      const list = resolved ? completed : pending
+      if (seenBefore) {
+        // Replace the earlier copy wherever it landed, rather than adding to it.
+        const dropFrom = (arr) => {
+          const i = arr.findIndex(x => x.issueId === issueId)
+          if (i >= 0) arr.splice(i, 1)
+        }
+        dropFrom(pending); dropFrom(completed)
+      }
+      list.push(item)
     })
 
-    // Follow-ups forwarded TO this employee
-    const followupRows = await readSheetCached(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, 15000)
-    let followups = []
+    // ── Follow-ups: one row per request, the latest one ──────────────────
+    //
+    // Forwarding APPENDS. That is right — the tab is the record of who handed
+    // what to whom, and rewriting it would throw the trail away. But it means
+    // one request can have several rows: handed on twice, or forwarded again
+    // at the end of a later shift, or simply saved twice when the first press
+    // looked like it had not worked.
+    //
+    // Reading every row as its own item duplicated the request on the screen.
+    // Worse, it duplicated it in the WRONG PLACES: a request handed from one
+    // person to a second and on to a third sat in all three queues at once,
+    // because the first two rows still said Pending against their names. Three
+    // people each believed the same footage was theirs to pull.
+    //
+    // The last row for a request is where it stands now. Everything before it
+    // is history.
+    const followupRows = await readSheetCached(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, TTL.QUEUE)
+    const latestByIssue = new Map()
+    followupRows.slice(1).forEach(r => {
+      const id = (r[2] || '').toString().trim()
+      if (id) latestByIssue.set(id, r)
+    })
 
-    if (user.role === 'admin') {
-      followups = followupRows.slice(1)
-        .filter(r => r[7] !== 'Closed' && !(byIssueId[r[2]]?.resolved))
-        .map(r => ({
-          issueId:          r[2],
-          client:           r[3] || byIssueId[r[2]]?.client || '',
-          vehicle:          r[4] || byIssueId[r[2]]?.vehicle || '',
-          originalEmployee: r[5],
-          forwardedTo:      r[6],
-          forwardedAt:      `${r[0]} ${r[1]}`,
-          status:           r[7] || 'Pending',
-          details:          byIssueId[r[2]]?.details || '',
-          raisedAt:         byIssueId[r[2]]?.raisedAt || '',
-          location:         byIssueId[r[2]]?.location || '',
-        }))
-    } else {
-      followups = followupRows.slice(1)
-        .filter(r => r[6] === user.name && r[7] !== 'Closed' && !(byIssueId[r[2]]?.resolved))
-        .map(r => ({
-          issueId:          r[2],
-          client:           r[3] || byIssueId[r[2]]?.client || '',
-          vehicle:          r[4] || byIssueId[r[2]]?.vehicle || '',
-          originalEmployee: r[5],
-          forwardedTo:      r[6],
-          forwardedAt:      `${r[0]} ${r[1]}`,
-          status:           r[7] || 'Pending',
-          details:          byIssueId[r[2]]?.details || '',
-          raisedAt:         byIssueId[r[2]]?.raisedAt || '',
-          location:         byIssueId[r[2]]?.location || '',
-        }))
-    }
+    const asFollowup = (r) => ({
+      issueId:          r[2],
+      client:           r[3] || byIssueId[r[2]]?.client || '',
+      vehicle:          r[4] || byIssueId[r[2]]?.vehicle || '',
+      originalEmployee: r[5],
+      forwardedTo:      r[6],
+      forwardedAt:      `${r[0]} ${r[1]}`,
+      status:           r[7] || 'Pending',
+      details:          byIssueId[r[2]]?.details || '',
+      raisedAt:         byIssueId[r[2]]?.raisedAt || '',
+      location:         byIssueId[r[2]]?.location || '',
+    })
+
+    // Closing writes "Closed — <reason>", never the bare word. Testing for
+    // equality with 'Closed' therefore matched nothing at all, so every
+    // follow-up an admin had ever closed stayed on the screen forever,
+    // stacking up beside the live ones with no way to tell them apart.
+    const isClosed = (r) => (r[7] || '').toString().trim().startsWith('Closed')
+    const open = [...latestByIssue.values()]
+      .filter(r => !isClosed(r) && !(byIssueId[r[2]]?.resolved))
+    const followups = (user.role === 'admin' ? open : open.filter(r => r[6] === user.name))
+      .map(asFollowup)
 
     return res.status(200).json({ pending, completed, followups })
 

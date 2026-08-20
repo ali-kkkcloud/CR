@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowIST, fetchClientVehicleCounts,
   getLeaveMapForDate, getShiftOverridesForDate,
-  getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, hourHasPassed, whoWasOnShiftAtHour,
+  getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, hourHasPassed, whoWasOnShiftAtHour, TTL, warmSheetCache, SHIFT_SCREEN_TABS,
 } from '../../../lib/sheets'
 import { employees, distributeClientsForHour, customTextFor, getScheduledEmployeesAtHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -25,6 +25,11 @@ export default async function handler(req, res) {
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
   try {
+    // Every tab this screen needs, asked for in one go before anything else
+    // runs — so they cost one request between them instead of one per stage.
+    // See warmSheetCache in lib/sheets.
+    await warmSheetCache(CRM_SHEET_ID, SHIFT_SCREEN_TABS)
+
     // Roster and client hours come from the sheet; this makes sure this
     // request is working from the current ones.
     await loadScheduleData()
@@ -37,7 +42,7 @@ export default async function handler(req, res) {
     // Otherwise (the employee's own live "My Day"), resolve MY actual
     // operating shift date — which stays the day the shift started even
     // after midnight rolls the calendar date over.
-    const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
+    const shiftLogRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE)
     let date = explicitDate || today
     if (!explicitDate) {
       const myToday     = shiftLogRows.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===today)
@@ -55,9 +60,9 @@ export default async function handler(req, res) {
     )
 
     const [updateRows, redistRows, breakRows, vehicleMap, leaveMap, overridesMap] = await Promise.all([
-      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 8000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 8000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE),
       fetchClientVehicleCounts(),
       getLeaveMapForDate(date),
       getShiftOverridesForDate(date),

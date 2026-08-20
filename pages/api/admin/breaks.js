@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr, TTL } from '../../../lib/sheets'
 import { sweepAutoBreaks, findOpenBreaks, recentDates } from '../../../lib/attendance'
 
 // GET /api/admin/breaks?from=YYYY-MM-DD&to=YYYY-MM-DD  (both optional — defaults to today)
@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     // opening this view is what records the break, backdated to when they
     // stopped working.
     try {
-      const credRows = await readSheetCached(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`, 60000)
+      const credRows = await readSheetCached(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`, TTL.ROSTER)
       const staff = credRows.slice(1)
         .filter(r => (r[3] || '').toString().toLowerCase() !== 'admin')
         .map(r => ({ empId: r[0], name: r[1] }))
@@ -41,7 +41,7 @@ export default async function handler(req, res) {
       console.error('Auto-break sweep failed:', e.message)
     }
 
-    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 5000)
+    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE)
     const inRange = rows.slice(1).filter(r => dateSet ? dateSet.has(r[2]) : r[2] === today)
 
     // One break, one line. If two requests ever manage to open the same break
@@ -72,7 +72,7 @@ export default async function handler(req, res) {
     // by a shift that was never closed out is a leftover, not a person who
     // stepped away, and reporting it kept somebody "on break" long after they
     // had gone home.
-    const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
+    const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE)
     const dates = recentDates()
     const onShiftIds = new Set(
       shiftRows.slice(1)

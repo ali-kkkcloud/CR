@@ -681,42 +681,7 @@ export function useToast() {
 // and nobody noticed. These do the maths in the IST frame on both sides.
 // ══════════════════════════════════════════════════════════════════════
 
-export function nowIST() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-}
-
-// "hh:mm:ss am/pm" or "HH:mm:ss" against a "DD/MM/YYYY" date, as a moment in
-// the IST frame. Returns null if either part is unreadable.
-export function parseISTStamp(dateStr, timeStr) {
-  const t = (timeStr || '').toString().trim()
-  let h, mi, se
-  let m = t.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(am|pm)$/i)
-  if (m) {
-    h = parseInt(m[1], 10); mi = parseInt(m[2], 10); se = parseInt(m[3], 10)
-    const ap = m[4].toLowerCase()
-    if (ap === 'pm' && h !== 12) h += 12
-    if (ap === 'am' && h === 12) h = 0
-  } else {
-    m = t.match(/^(\d{1,2}):(\d{2}):(\d{2})$/)
-    if (!m) return null
-    h = parseInt(m[1], 10); mi = parseInt(m[2], 10); se = parseInt(m[3], 10)
-  }
-  const d = (dateStr || '').toString().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (d) return new Date(+d[3], +d[2] - 1, +d[1], h, mi, se, 0)
-  // No date on the row: place it on the IST day in progress, and if that puts
-  // it in the future it can only have been yesterday.
-  const base = nowIST()
-  const out = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, mi, se, 0)
-  if (out.getTime() > base.getTime() + 120000) out.setDate(out.getDate() - 1)
-  return out
-}
-
-// Seconds a break has been running, measured in IST on both ends.
-export function elapsedSecondsIST(dateStr, timeStr) {
-  const start = parseISTStamp(dateStr, timeStr)
-  if (!start) return 0
-  return Math.max(0, Math.floor((nowIST().getTime() - start.getTime()) / 1000))
-}
+export { nowIST, parseISTStamp, elapsedSecondsIST } from '../lib/clock'
 
 // ── Shared formatters, so an hour reads the same on every screen ──
 export function fmtHour(h) {

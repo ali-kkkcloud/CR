@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { fetchJSON, isAuthFailure, retryDelayMs } from '../lib/fetchJson'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import BreakOverlay from '../components/BreakOverlay'
@@ -103,6 +104,9 @@ export default function Dashboard() {
   const [forwarding, setForwarding] = useState(false)
   const [clock, setClock] = useState('')
   const [showLogout, setShowLogout] = useState(false)
+  // Set when the page cannot reach the server at all, so it can say so
+  // instead of spinning with nothing behind it.
+  const [bootError, setBootError] = useState(null)
 
   const [summary, setSummary] = useState(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
@@ -132,6 +136,7 @@ export default function Dashboard() {
   // counts — the 30s poll itself must never look like activity, or nobody
   // would ever go idle.
   const lastInputRef = useRef(Date.now())
+  const bootTimerRef = useRef(null)
 
   useEffect(() => {
     function tick() {
@@ -142,34 +147,83 @@ export default function Dashboard() {
     return () => clearInterval(id)
   }, [])
 
+  // Where the shift stands. Kept apart from init so the poll can refresh it,
+  // and so a failed read can leave it alone rather than overwrite it.
+  const loadShiftStatus = useCallback(async () => {
+    const r = await fetchJSON('/api/shift/status')
+    // Only a well-formed answer is allowed to move this. A failed read used to
+    // fall through to "not started", which showed an employee who was mid-shift
+    // a Start shift button — and pressing it would have opened a second,
+    // duplicate shift row for the same day.
+    if (!r.ok || !r.data?.status) return false
+    const d = r.data
+    if (d.status === 'active') {
+      setShiftStatus('active'); setStartTime(d.startTime); setShiftDate(d.shiftDate || '')
+    } else if (d.status === 'ended') {
+      setShiftStatus('ended'); setStartTime(d.startTime || ''); setShiftDate(d.shiftDate || '')
+    } else {
+      setShiftStatus('not_started')
+    }
+    return true
+  }, [])
+
+  // ── Getting in, and staying in ────────────────────────────────────────
+  //
+  // This used to be one attempt with `.catch(() => router.replace('/login'))`
+  // behind it, which had two consequences and both were reported from the
+  // floor.
+  //
+  // Anything that threw logged the employee out. The shift read is backed by
+  // the spreadsheet, so a quota minute or a gateway timeout — neither of which
+  // says anything at all about who you are — put people on the login screen in
+  // the middle of a shift.
+  //
+  // And it never tried again. If the first call did not come back, `user`
+  // stayed null, and the whole page is behind `if (!user)`: a spinner, for
+  // ever, with nothing else on screen. The only way out was to reload the site
+  // by hand, which is exactly what people have been doing.
+  //
+  // Now: only a real "no session" answer logs anybody out, everything else is
+  // retried with a short backoff, and if it keeps failing the page says so and
+  // offers a button instead of spinning silently.
   useEffect(() => {
+    let cancelled = false
+    let attempt = 0
+
     async function init() {
-      const meRes  = await fetch('/api/auth/me')
-      const meData = await meRes.json()
-      if (!meData.user) { router.replace('/login'); return }
-      setUser(meData.user)
-      const statusRes  = await fetch('/api/shift/status')
-      const statusData = await statusRes.json()
-      if (statusData.status === 'active') {
-        setShiftStatus('active')
-        setStartTime(statusData.startTime)
-        setShiftDate(statusData.shiftDate || '')
-      } else if (statusData.status === 'ended') {
-        setShiftStatus('ended')
-        setStartTime(statusData.startTime || '')
-        setShiftDate(statusData.shiftDate || '')
-      } else {
-        setShiftStatus('not_started')
+      if (cancelled) return
+      const me = await fetchJSON('/api/auth/me')
+      if (cancelled) return
+
+      if (isAuthFailure(me)) { router.replace('/login'); return }
+
+      if (!me.ok || !me.data?.user) {
+        setBootError(me.error || 'Could not reach the server')
+        const wait = retryDelayMs(attempt++)
+        bootTimerRef.current = setTimeout(init, wait)
+        return
+      }
+
+      setBootError(null)
+      attempt = 0
+      setUser(me.data.user)
+
+      // The shift read is allowed to fail without holding the page up — the
+      // board is more use than the header. The poll picks it up.
+      if (!(await loadShiftStatus()) && !cancelled) {
+        bootTimerRef.current = setTimeout(loadShiftStatus, 4000)
       }
     }
-    init().catch(() => router.replace('/login'))
-  }, [])
+
+    init()
+    return () => { cancelled = true; clearTimeout(bootTimerRef.current) }
+  }, [loadShiftStatus])
 
   const loadClients = useCallback(async () => {
     try {
-      const res  = await fetch('/api/clients/current')
-      const data = await res.json()
-      if (!res.ok || data.error) return   // keep last good state, retry on next poll
+      const r = await fetchJSON('/api/clients/current')
+      if (!r.ok) return                   // keep last good state, retry on next poll
+      const data = r.data
       if (data.clients) setClients(data.clients)
       // Why the list looks the way it does — an empty one needs explaining.
       setClientContext({
@@ -196,18 +250,18 @@ export default function Dashboard() {
 
   const loadFootage = useCallback(async () => {
     try {
-      const res  = await fetch('/api/footage/list')
-      const data = await res.json()
-      if (!res.ok || data.error) return
+      const r = await fetchJSON('/api/footage/list')
+      if (!r.ok) return
+      const data = r.data
       setFootage({ pending: data.pending || [], completed: data.completed || [], followups: data.followups || [] })
     } catch (e) { console.error('loadFootage failed:', e) }
   }, [])
 
   const loadMyDay = useCallback(async () => {
     try {
-      const res  = await fetch('/api/dashboard/my-day')
-      const data = await res.json()
-      if (!res.ok || data.error || !Array.isArray(data.timeline)) return
+      const r = await fetchJSON('/api/dashboard/my-day')
+      const data = r.data
+      if (!r.ok || !Array.isArray(data?.timeline)) return
       setMyDay(data)
     } catch (e) { console.error('loadMyDay failed:', e) }
   }, [])
@@ -219,11 +273,11 @@ export default function Dashboard() {
     // calendar and the targets all blinked out and back for no reason.
     if (!summaryRef.current) setSummaryLoading(true)
     try {
-      const res  = await fetch(`/api/dashboard/summary?range=${range}`)
-      const data = await res.json()
+      const r = await fetchJSON(`/api/dashboard/summary?range=${range}`)
+      const data = r.data || {}
       // Only accept a well-formed payload; a 500 body would otherwise be
       // stored as "summary" and crash the dashboard on first render.
-      if (res.ok && !data.error && data.trend) { setSummary(data); summaryRef.current = data }
+      if (r.ok && data.trend) { setSummary(data); summaryRef.current = data }
       else if (!summaryRef.current) setSummary({ error: data.error || 'Server is busy, retrying…' })
     } catch (e) {
       console.error('loadSummary failed:', e)
@@ -231,6 +285,16 @@ export default function Dashboard() {
     } finally {
       setSummaryLoading(false)
     }
+  }, [])
+
+  const loadBreakStatus = useCallback(async () => {
+    try {
+      const agoMs = Math.max(0, Date.now() - lastInputRef.current)
+      const r = await fetchJSON(`/api/break/status?activeAgoMs=${agoMs}`)
+      if (!r.ok) return
+      const data = r.data
+      setBreakStatus(data)
+    } catch (e) { console.error('loadBreakStatus failed:', e) }
   }, [])
 
   // Mouse, keys, scroll, touch — throttled, because mousemove fires
@@ -245,18 +309,47 @@ export default function Dashboard() {
       lastInputRef.current = n
     }
     events.forEach(e => window.addEventListener(e, onInput, { passive: true }))
-    return () => events.forEach(e => window.removeEventListener(e, onInput))
-  }, [])
 
-  const loadBreakStatus = useCallback(async () => {
-    try {
-      const agoMs = Math.max(0, Date.now() - lastInputRef.current)
-      const res  = await fetch(`/api/break/status?activeAgoMs=${agoMs}`)
-      const data = await res.json()
-      if (!res.ok || data.error) return
-      setBreakStatus(data)
-    } catch (e) { console.error('loadBreakStatus failed:', e) }
-  }, [])
+    // ── A tab that cannot see is not a person who is not there ────────────
+    //
+    // None of the events above reach this page while its tab is in the
+    // background or its window is behind another one. The browser stops
+    // delivering them, and it throttles the poll as well — so the page learns
+    // nothing at all about that stretch.
+    //
+    // It was reporting that stretch as idleness anyway. An operator who spent
+    // forty-five minutes in the fleet monitoring window — which IS the work —
+    // came back to the CRM and was immediately shown a forty-five minute
+    // automatic break, backdated to the moment they had switched away. They
+    // had been working the entire time. On nights, where almost everything is
+    // watched in the other window, people were being put on breaks over and
+    // over for doing their job.
+    //
+    // Coming back is the first thing this page can actually observe, so that
+    // is where the mark goes. Not knowing is not the same as knowing somebody
+    // was away, and it must never be recorded as if it were.
+    //
+    // The case the automatic break is really for is untouched: an employee who
+    // leaves this page open and in front of them and walks away sends no
+    // events, no visibility change and no focus change, and their idle time
+    // grows exactly as before.
+    const onBack = () => {
+      if (document.visibilityState === 'hidden') return
+      last = Date.now()
+      lastInputRef.current = last
+      // Ask again straight away, so an overlay that should not be there goes
+      // rather than sitting on screen until the next poll.
+      loadBreakStatus()
+    }
+    window.addEventListener('focus', onBack)
+    document.addEventListener('visibilitychange', onBack)
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, onInput))
+      window.removeEventListener('focus', onBack)
+      document.removeEventListener('visibilitychange', onBack)
+    }
+  }, [loadBreakStatus])
 
   useEffect(() => {
     if (!user) return
@@ -265,11 +358,24 @@ export default function Dashboard() {
     loadMyDay()
     loadSummary(summaryRange)
     loadBreakStatus()
+    // Everything on the screen refreshes, every thirty seconds.
+    //
+    // The board and the hour strip used to refresh ONLY when the clock rolled
+    // into a new hour. Everything else on the page moved and those two sat
+    // still, so the work itself — the one thing an operator is looking at —
+    // was the single most stale thing on screen: up to a full hour behind. A
+    // colleague clocking in or going home reshapes who holds what immediately,
+    // and none of it appeared until the hour turned or somebody pressed reload.
+    //
+    // Both are safe to poll: loadClients merges rather than clobbers, so
+    // anything typed in the last two minutes survives, and loadMyDay keeps the
+    // last good payload if the response is not well-formed.
     autoRef.current = setInterval(() => {
-      const h = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours()
-      if (h !== hourRef.current) { loadClients(); loadMyDay() }
+      loadClients()
+      loadMyDay()
       loadFootage()
       loadBreakStatus()
+      loadShiftStatus()
       loadSummary(summaryRangeRef.current)
     }, 30000)
     return () => clearInterval(autoRef.current)
@@ -558,9 +664,28 @@ export default function Dashboard() {
     a.href = url; a.download = `CRM_Report_${report.employee}_${report.date}.csv`; a.click()
   }
 
+  // Nothing loaded yet. A spinner is right while it is still trying; it is
+  // wrong once it has stopped working, because a spinner that never resolves
+  // is indistinguishable from a dead site and the only thing left to try is
+  // reloading by hand.
   if (!user) return (
-    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}>
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg,gap:'18px',padding:'24px',textAlign:'center'}}>
       <div className="spinner"></div>
+      {bootError && (
+        <>
+          <div style={{ color:C.text2, fontSize:'13px', maxWidth:'340px', lineHeight:1.7 }}>
+            Could not reach the server ({bootError}). Still trying — you do not
+            need to do anything.
+          </div>
+          <button
+            onClick={() => typeof window !== 'undefined' && window.location.reload()}
+            style={{
+              background:C.accentDark, color:C.accent, border:'none', borderRadius:'8px',
+              padding:'9px 16px', fontSize:'12.5px', fontWeight:700, cursor:'pointer',
+            }}
+          >Try now</button>
+        </>
+      )}
     </div>
   )
 

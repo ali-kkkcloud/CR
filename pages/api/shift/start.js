@@ -1,6 +1,6 @@
 // pages/api/shift/start.js
 import { getUserFromReq } from '../../../lib/auth'
-import { appendRow, readSheet, readSheetCached, updateRowCells, invalidateSheetCache, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, findOpenShiftRow, businessHourOrder } from '../../../lib/sheets'
+import { appendRow, readSheet, readSheetCached, updateRowCells, invalidateSheetCache, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, findOpenShiftRow, businessHourOrder, TTL } from '../../../lib/sheets'
 import { getEmployeeShift, computeShiftWindow } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
@@ -24,7 +24,7 @@ export default async function handler(req, res) {
     // a minute, and an uncached read each was most of Google's per-minute
     // quota on its own. Clocking in appends to this tab, which drops the
     // cache, so the next person always reads the row the last one wrote.
-    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 5000)
+    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE)
 
     // Already clocked in? Checked across yesterday too, so a night shift
     // running past midnight isn't handed a second, duplicate shift row
@@ -41,7 +41,7 @@ export default async function handler(req, res) {
     // marked Active is stale — and leaving even one behind would put the
     // employee straight back behind the break overlay and stop the idle
     // check ever firing again for the whole shift.
-    const breakRows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:G`, 5000)
+    const breakRows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE)
     for (let i = breakRows.length - 1; i >= 1; i--) {
       const r = breakRows[i]
       if ((r[0] || '').toString().trim() !== user.empId.toString().trim()) continue
@@ -76,7 +76,7 @@ export default async function handler(req, res) {
 
     if (earlyStart || lateStart) {
       const adj = earlyStart || lateStart
-      const overrideRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_OVERRIDES}!A:H`, 5000)
+      const overrideRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_OVERRIDES}!A:H`, TTL.LIVE)
       let overrideRowIndex = -1
       for (let i = overrideRows.length - 1; i >= 1; i--) {
         if (overrideRows[i][0] === today && overrideRows[i][2] === user.name) { overrideRowIndex = i + 1; break }
@@ -121,7 +121,7 @@ export default async function handler(req, res) {
       // belonging, on the admin's screen, to nobody at all. What ends the
       // leave is the FIRST time they turned up, and nothing after it.
       const ORDER = businessHourOrder()
-      const leaveRows = await readSheetCached(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`, 5000)
+      const leaveRows = await readSheetCached(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`, TTL.DAY)
       for (let i = leaveRows.length - 1; i >= 1; i--) {
         const r = leaveRows[i]
         if (r[1] !== user.name || r[2] !== today) continue

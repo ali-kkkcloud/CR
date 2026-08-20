@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr, TTL } from '../../../lib/sheets'
 import { sweepAutoBreaks, recordHeartbeat, recentDates, findOpenBreaks, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
 
 export default async function handler(req, res) {
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     // Cached briefly. Opening or closing a break writes to this tab and drops
     // the cache, so the overlay still appears and clears immediately — but a
     // dozen dashboards polling every 30s no longer each cost a read.
-    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 5000)
+    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE)
 
     const mine = rows.slice(1).filter(r =>
       (r[0] || '').toString().trim() === user.empId.toString().trim()
@@ -59,8 +59,14 @@ export default async function handler(req, res) {
     // midnight still belongs to the shift in progress, and searching only
     // today would leave the employee free to carry on while the row stayed
     // open forever — which would also stop any further break being opened.
-    const dates  = recentDates()
-    const active = findOpenBreaks(rows, user.empId, dates)[0] || null
+    const dates = recentDates()
+    // The EARLIEST open row, which is the one the sweep keeps and the one
+    // Resume writes the real duration onto. Reporting the newest instead made
+    // the banner name a different row from the one everything else was acting
+    // on, so the start time on screen could change under the employee without
+    // anything having happened.
+    const openBreaks = findOpenBreaks(rows, user.empId, dates)
+    const active = openBreaks[openBreaks.length - 1] || null
     const history = myToday.map(r => ({
       startTime: r[3] || '',
       endTime:   r[4] || '',

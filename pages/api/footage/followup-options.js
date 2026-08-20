@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, CRM_SHEET_ID, TABS, todayStr } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, TTL } from '../../../lib/sheets'
 import { employees } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 
@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     await loadScheduleData()
 
     const today = todayStr()
-    const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
+    const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE)
     const statusMap = {}
     for (let i = 1; i < shiftRows.length; i++) {
       const r = shiftRows[i]
