@@ -196,6 +196,7 @@ export default function Dashboard() {
       if (cancelled) return
 
       if (isAuthFailure(me)) { router.replace('/login'); return }
+      if (me.data?.reason === 'session-replaced') { router.replace('/login?reason=elsewhere'); return }
 
       if (!me.ok || !me.data?.user) {
         setBootError(me.error || 'Could not reach the server')
@@ -222,6 +223,10 @@ export default function Dashboard() {
   const loadClients = useCallback(async () => {
     try {
       const r = await fetchJSON('/api/clients/current')
+      // Somebody has signed in as this employee somewhere else. Two live
+      // browsers under one name is the thing being prevented, so this one
+      // stops here rather than carrying on with a board it no longer owns.
+      if (r.data?.reason === 'session-replaced') { router.replace('/login?reason=elsewhere'); return }
       if (!r.ok) return                   // keep last good state, retry on next poll
       const data = r.data
       if (data.clients) setClients(data.clients)
@@ -863,6 +868,11 @@ export default function Dashboard() {
         status: c.status || '', misalignVehicles: c.misalignVehicles || '',
         alertCount: c.alertCount || '', fatigue: c.fatigue || 'No',
         fatigueCount: c.fatigueCount || '', notes: c.notes || '',
+        // Every field the form holds has to be here. liveVehicles was not,
+        // so an earlier hour read back with the count blank however carefully
+        // it had been filled in — and because a save rewrites the whole row,
+        // re-saving that hour wrote the blank into the sheet.
+        liveVehicles: c.liveVehicles || '',
         updatedAt: c.updatedAt || '',
       }]))
 

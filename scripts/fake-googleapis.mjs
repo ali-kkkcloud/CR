@@ -17,6 +17,11 @@ export const behaviour = {
   // serverless function is a couple of hundred; set this to measure how much
   // of a screen's wall-clock time is round trips rather than our own work.
   latencyMs: 0,
+  // Tabs the book reports as already existing, for code that checks before
+  // creating one.
+  sheetTitles: ['Credentials','Shift_Log','CRM_Updates','Redistribution_Log','Leaves',
+                'Footage_Followup','Breaks','Shift_Overrides','Client_Timings',
+                'Employee_Hours','Daily_Summary','Sessions'],
 }
 
 export function reset() {
@@ -51,6 +56,16 @@ export const google = {
   sheets() {
     return {
       spreadsheets: {
+        // Used by lib/session.js to check whether a tab needs creating.
+        async get() {
+          return { data: { sheets: behaviour.sheetTitles.map(t => ({ properties: { title: t } })) } }
+        },
+        async batchUpdate({ requestBody }) {
+          const added = (requestBody?.requests || [])
+            .map(r => r?.addSheet?.properties?.title).filter(Boolean)
+          added.forEach(t => { if (!behaviour.sheetTitles.includes(t)) behaviour.sheetTitles.push(t) })
+          return { data: {} }
+        },
         values: {
           async get({ range }) {
             calls.get.push(range)

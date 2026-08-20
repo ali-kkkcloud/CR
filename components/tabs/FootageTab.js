@@ -26,10 +26,22 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
   const [page, setPage] = useState(1)
   const [drawerItem, setDrawerItem] = useState(null)
 
-  const followupIds = useMemo(() => new Set(footageAll.followups.map(f=>f.issueId)), [footageAll.followups])
+  // Who a forwarded request was handed to. "Forwarded" on its own says a
+  // request left somebody's queue without saying whose queue it is now, which
+  // is the one thing an admin chasing it needs.
+  const forwardedTo = useMemo(() => {
+    const m = {}
+    footageAll.followups.forEach(f => { if (f.issueId) m[f.issueId] = f.forwardedTo || '' })
+    return m
+  }, [footageAll.followups])
+  const followupIds = useMemo(() => new Set(Object.keys(forwardedTo)), [forwardedTo])
 
   const combined = useMemo(() => {
-    const p = footageAll.pending.map(i => ({ ...i, status: followupIds.has(i.issueId) ? 'Forwarded' : 'Pending' }))
+    const p = footageAll.pending.map(i => ({
+      ...i,
+      status: followupIds.has(i.issueId) ? 'Forwarded' : 'Pending',
+      forwardedTo: forwardedTo[i.issueId] || '',
+    }))
     const c = footageAll.completed.map(i => ({ ...i, status: 'Completed' }))
     const list = [...p, ...c].map(i => {
       const raised = parseSheetDate(i.raisedAt)
@@ -47,7 +59,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
       const bt = b.raisedD?.getTime() ?? b.resolvedD?.getTime() ?? 0
       return bt - at
     })
-  }, [footageAll, followupIds])
+  }, [footageAll, followupIds, forwardedTo])
 
   const rangeFiltered = useMemo(() => {
     if (quickRange === 'all') return combined
@@ -79,6 +91,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     if (statusChip==='all') return searchScoped
     if (statusChip==='overdue') return searchScoped.filter(i => i.ageHours!=null && i.ageHours>24)
     if (statusChip==='last72') return searchScoped.filter(i => i.status!=='Completed' && i.ageHours!=null && i.ageHours<=72)
+    if (statusChip==='undelivered') return searchScoped.filter(i => i.status!=='Completed' && i.ageHours!=null && i.ageHours>72)
     return searchScoped.filter(i => i.status.toLowerCase()===statusChip)
   }, [searchScoped, statusChip])
 
@@ -106,10 +119,15 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
     }
   }, [searchScoped])
 
-  // Still-open requests raised within the LAST 72 hours — the current
-  // working window. Anything older than 72h is deliberately excluded.
+  // Still-open requests split by age. Inside 72 hours is the working window;
+  // past it, the request was not delivered, and calling that "pending" hid it
+  // among requests somebody might still get to today.
   const pendingLast72h = useMemo(
     () => searchScoped.filter(i => i.status !== 'Completed' && i.ageHours != null && i.ageHours <= 72).length,
+    [searchScoped]
+  )
+  const undelivered = useMemo(
+    () => searchScoped.filter(i => i.status !== 'Completed' && i.ageHours != null && i.ageHours > 72).length,
     [searchScoped]
   )
 
@@ -146,50 +164,51 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
         </div>
       </Card>
 
-      {/* Two headline cards — click either to filter the table below */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'12px' }}>
+      {/* Total — a count, nothing to click. How many have ever come in. */}
+      <div style={{
+        background:C.card, border:`1px solid ${C.border}`, borderRadius:'14px',
+        padding:'16px 20px', marginBottom:'12px',
+        display:'flex', alignItems:'baseline', gap:'12px', flexWrap:'wrap',
+      }}>
+        <span style={{ color:C.muted, fontSize:'10.5px', fontWeight:700, letterSpacing:'0.5px' }}>TOTAL REQUESTS</span>
+        <span style={{ color:C.text, fontSize:'32px', fontWeight:800, lineHeight:1 }}>{kpis.total}</span>
+        <span style={{ color:C.dim, fontSize:'11px' }}>raised in all</span>
+      </div>
+
+      {/* The three states a request can be in. Each opens the list below.
+          Pending and Undelivered are the same thing — a request nobody has
+          delivered — split at 72 hours, because one is still today's work and
+          the other is not. Lumping them together let a request from last week
+          sit in the same number as one raised this morning. */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(210px, 1fr))', gap:'12px', marginBottom:'12px' }}>
         {[
-          { key:'pending',   label:'PENDING REQUESTS',   count:kpis.pending,   color:C.amber,  sub:'Newest first' },
-          { key:'completed', label:'COMPLETED REQUESTS', count:kpis.completed, color:C.accent, sub:`${kpis.closedToday} closed today` },
+          { key:'last72',      label:'PENDING REQUESTS',     count:pendingLast72h,  color:C.amber,  icon:'clock',        sub:'Raised in the last 72 hours' },
+          { key:'completed',   label:'COMPLETED REQUESTS',   count:kpis.completed,  color:C.accent, icon:'check-circle', sub:`${kpis.closedToday} closed today` },
+          { key:'undelivered', label:'UNDELIVERED REQUESTS', count:undelivered,     color:C.red,    icon:'alerts',       sub:'Open for more than 72 hours' },
         ].map(card => {
           const active = statusChip === card.key
           return (
             <div key={card.key} onClick={()=>{ setStatusChip(active?null:card.key); setPage(1) }}
+              className="lift"
               style={{
                 background: active ? C.accentDark+'33' : C.card,
-                border:`1px solid ${active ? card.color : C.border}`,
+                border:`1px solid ${active ? card.color : (card.count>0 ? card.color+'44' : C.border)}`,
                 borderRadius:'14px', padding:'18px 20px', cursor:'pointer',
               }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px', gap:'8px' }}>
                 <span style={{ color:C.muted, fontSize:'10.5px', fontWeight:700, letterSpacing:'0.5px' }}>{card.label}</span>
-                <Icon name={card.key==='pending'?'clock':'check-circle'} size={16} color={card.color} />
+                <Icon name={card.icon} size={16} color={card.color} />
               </div>
               <div style={{ color:card.color, fontSize:'32px', fontWeight:800, lineHeight:1 }}>{card.count}</div>
               <div style={{ color:C.muted, fontSize:'11px', marginTop:'6px' }}>{card.sub}</div>
               <div style={{ color:C.muted, fontSize:'10px', marginTop:'8px' }}>
-                {active ? '✓ Showing below — click to clear' : 'Click to view full list →'}
+                {active ? '\u2713 Showing below — click to clear' : 'Click to view full list \u2192'}
               </div>
             </div>
           )
         })}
       </div>
 
-      {/* Last-72-hours highlight — the active working window */}
-      <div
-        onClick={()=>{ setStatusChip(statusChip==='last72'?null:'last72'); setPage(1) }}
-        style={{
-          display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap', cursor:'pointer',
-          background: pendingLast72h>0 ? C.amber+'14' : C.card,
-          border:`1px solid ${pendingLast72h>0 ? C.amber+'55' : C.border}`,
-          borderRadius:'12px', padding:'14px 18px', marginBottom:'12px',
-        }}>
-        <Icon name="alerts" size={16} color={pendingLast72h>0?C.amber:C.muted} />
-        <span style={{ color: pendingLast72h>0?C.amber:C.muted, fontSize:'20px', fontWeight:800 }}>{pendingLast72h}</span>
-        <span style={{ color:C.text2, fontSize:'12px', fontWeight:600 }}>pending from the last 72 hours</span>
-        <span style={{ marginLeft:'auto', color:C.muted, fontSize:'10.5px' }}>
-          {statusChip==='last72' ? '✓ Showing below — click to clear' : 'Click to view →'}
-        </span>
-      </div>
 
       {/* Nothing selected yet — nudge instead of dumping the full list */}
       {!statusChip && (
@@ -232,7 +251,17 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
                       <div style={{ color:C.muted, fontSize:'10px' }}>{item.vehicle}</div>
                     </td>
                     <td style={tdStyle}>{item.raisedBy}</td>
-                    <td style={tdStyle}><span style={{ background:st+'1f', color:st, borderRadius:'5px', padding:'2px 8px', fontSize:'9.5px', fontWeight:700 }}>{item.status.toUpperCase()}</span></td>
+                    <td style={tdStyle}>
+                      <span style={{ background:st+'1f', color:st, borderRadius:'5px', padding:'2px 8px', fontSize:'9.5px', fontWeight:700 }}>{item.status.toUpperCase()}</span>
+                      {/* Who has it now. "Forwarded" alone said a request had
+                          left somebody's queue without saying whose it is —
+                          which is the only thing worth knowing when chasing it. */}
+                      {item.status==='Forwarded' && item.forwardedTo && (
+                        <div style={{ color:C.muted, fontSize:'10px', marginTop:'3px' }}>
+                          to <span style={{ color:C.text2, fontWeight:600 }}>{item.forwardedTo}</span>
+                        </div>
+                      )}
+                    </td>
                     <td style={{...tdStyle,color:badge.color,fontWeight:700}}>{badge.label}</td>
                     <td style={tdStyle}>
                       <button onClick={()=>setDrawerItem(item)} style={{ background:'transparent', border:`1px solid ${C.border2}`, borderRadius:'6px', color:C.text2, fontSize:'10px', padding:'5px 10px', cursor:'pointer' }}>View</button>
@@ -275,6 +304,7 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
               ['Client', drawerItem.client], ['Vehicle', drawerItem.vehicle], ['Raised At', drawerItem.raisedAt],
               ['Raised By', drawerItem.raisedBy], ['Location', drawerItem.location||'—'], ['Details', drawerItem.details||'—'],
               ['Remarks', drawerItem.remarks||'—'], ['Status', drawerItem.status],
+              ...(drawerItem.status==='Forwarded' ? [['Forwarded To', drawerItem.forwardedTo || '—']] : []),
               ...(drawerItem.status==='Completed' ? [['Resolved At', drawerItem.resolvedAt], ['Resolution Time', fmtHours(drawerItem.resolveHours)]] : [['Age', fmtHours(drawerItem.ageHours)]]),
             ].map(([k,v]) => (
               <div key={k} style={{ marginBottom:'12px' }}>

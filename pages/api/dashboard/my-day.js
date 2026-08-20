@@ -130,6 +130,7 @@ export default async function handler(req, res) {
           fatigue: r[8] || '',
           fatigueCount: r[9] || '',
           liveVehicles: r[11] || '',
+          notes: r[10] || '',
         }
       })
 
@@ -251,6 +252,12 @@ export default async function handler(req, res) {
         alertCount: hourData[c.client]?.alertCount || '',
         fatigue: hourData[c.client]?.fatigue || '',
         fatigueCount: hourData[c.client]?.fatigueCount || '',
+        // Carried like every other field. These two were missing, and a save
+        // rewrites the WHOLE row — so opening an earlier hour showed the live
+        // vehicle count and the notes as blank, and saving that hour again
+        // wrote the blanks back over what had been recorded.
+        liveVehicles: hourData[c.client]?.liveVehicles || '',
+        notes: hourData[c.client]?.notes || '',
       }))
 
       const realClients = clientsWithStatus

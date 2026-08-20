@@ -9,6 +9,11 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
+  // Why they landed back here. Being signed out without being told why reads
+  // as the platform breaking, when it is the platform doing its job.
+  const notice = router.query.reason === 'elsewhere'
+    ? 'You were signed in on another device, so this one was signed out. Only one device at a time.'
+    : ''
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -294,6 +299,9 @@ export default function Login() {
                 autoComplete="current-password"
               />
 
+              {!error && notice && (
+                <div className="error-box" style={{ background:'#1a1508', borderColor:'#3a3115', color:'#E8B84B' }}>{notice}</div>
+              )}
               {error && <div className="error-box">{error}</div>}
 
               <button
