@@ -233,6 +233,16 @@ export default function Dashboard() {
     }
   }, [])
 
+  const loadBreakStatus = useCallback(async () => {
+    try {
+      const agoMs = Math.max(0, Date.now() - lastInputRef.current)
+      const res  = await fetch(`/api/break/status?activeAgoMs=${agoMs}`)
+      const data = await res.json()
+      if (!res.ok || data.error) return
+      setBreakStatus(data)
+    } catch (e) { console.error('loadBreakStatus failed:', e) }
+  }, [])
+
   // Mouse, keys, scroll, touch — throttled, because mousemove fires
   // constantly and we only need the timestamp, not every event.
   useEffect(() => {
@@ -245,18 +255,47 @@ export default function Dashboard() {
       lastInputRef.current = n
     }
     events.forEach(e => window.addEventListener(e, onInput, { passive: true }))
-    return () => events.forEach(e => window.removeEventListener(e, onInput))
-  }, [])
 
-  const loadBreakStatus = useCallback(async () => {
-    try {
-      const agoMs = Math.max(0, Date.now() - lastInputRef.current)
-      const res  = await fetch(`/api/break/status?activeAgoMs=${agoMs}`)
-      const data = await res.json()
-      if (!res.ok || data.error) return
-      setBreakStatus(data)
-    } catch (e) { console.error('loadBreakStatus failed:', e) }
-  }, [])
+    // ── A tab that cannot see is not a person who is not there ────────────
+    //
+    // None of the events above reach this page while its tab is in the
+    // background or its window is behind another one. The browser stops
+    // delivering them, and it throttles the poll as well — so the page learns
+    // nothing at all about that stretch.
+    //
+    // It was reporting that stretch as idleness anyway. An operator who spent
+    // forty-five minutes in the fleet monitoring window — which IS the work —
+    // came back to the CRM and was immediately shown a forty-five minute
+    // automatic break, backdated to the moment they had switched away. They
+    // had been working the entire time. On nights, where almost everything is
+    // watched in the other window, people were being put on breaks over and
+    // over for doing their job.
+    //
+    // Coming back is the first thing this page can actually observe, so that
+    // is where the mark goes. Not knowing is not the same as knowing somebody
+    // was away, and it must never be recorded as if it were.
+    //
+    // The case the automatic break is really for is untouched: an employee who
+    // leaves this page open and in front of them and walks away sends no
+    // events, no visibility change and no focus change, and their idle time
+    // grows exactly as before.
+    const onBack = () => {
+      if (document.visibilityState === 'hidden') return
+      last = Date.now()
+      lastInputRef.current = last
+      // Ask again straight away, so an overlay that should not be there goes
+      // rather than sitting on screen until the next poll.
+      loadBreakStatus()
+    }
+    window.addEventListener('focus', onBack)
+    document.addEventListener('visibilitychange', onBack)
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, onInput))
+      window.removeEventListener('focus', onBack)
+      document.removeEventListener('visibilitychange', onBack)
+    }
+  }, [loadBreakStatus])
 
   useEffect(() => {
     if (!user) return
