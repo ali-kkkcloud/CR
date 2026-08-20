@@ -1,4 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
+import { guardSession } from '../../../lib/session'
 import {
   readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate,
@@ -24,6 +25,10 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
   const user = getUserFromReq(req)
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
+  // Signing in somewhere else ends this session. Checked on the polled
+  // endpoints, so a replaced session is noticed within one poll rather than
+  // leaving two live browsers under one name. See lib/session.js.
+  if (!(await guardSession(user, res))) return
 
   try {
     // Every tab this screen needs, asked for in one go before anything else

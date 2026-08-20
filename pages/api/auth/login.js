@@ -1,5 +1,6 @@
 import { readSheetCached, CRM_SHEET_ID, TABS, TTL } from '../../../lib/sheets'
 import { signToken } from '../../../lib/auth'
+import { newSessionId, recordSignIn } from '../../../lib/session'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end()
@@ -25,7 +26,14 @@ export default async function handler(req, res) {
       isNight:    (userRow[6]||'').toLowerCase()==='yes',
       isWeekOff:  (userRow[7]||'').toLowerCase()==='yes',
     }
-    const token = signToken(user)
+    // ── One signed-in place per person ──────────────────────────────────
+    // Signing in here ends every other session for this employee: the newest
+    // sign-in is the machine somebody is actually sitting at. See
+    // lib/session.js for why two live sessions caused trouble.
+    const sid = newSessionId()
+    await recordSignIn(user, sid, (req.headers['user-agent'] || '').toString())
+
+    const token = signToken({ ...user, sid })
     res.setHeader('Set-Cookie', `cautio_token=${token}; Path=/; HttpOnly; Max-Age=86400; SameSite=Strict`)
     return res.status(200).json({ success:true, user })
   } catch(err) {
