@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr, TTL } from '../../../lib/sheets'
 import { sweepAutoBreaks, recordHeartbeat, recentDates, findOpenBreaks, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
 
 export default async function handler(req, res) {
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     // Cached briefly. Opening or closing a break writes to this tab and drops
     // the cache, so the overlay still appears and clears immediately — but a
     // dozen dashboards polling every 30s no longer each cost a read.
-    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 5000)
+    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE)
 
     const mine = rows.slice(1).filter(r =>
       (r[0] || '').toString().trim() === user.empId.toString().trim()

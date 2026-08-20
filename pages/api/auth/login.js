@@ -1,4 +1,4 @@
-import { readSheetCached, CRM_SHEET_ID, TABS } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, TTL } from '../../../lib/sheets'
 import { signToken } from '../../../lib/auth'
 
 export default async function handler(req, res) {
@@ -10,7 +10,7 @@ export default async function handler(req, res) {
     // team arriving at a shift change was spending one fresh read each on a
     // tab that changes about once a month. Editing Credentials drops the
     // cache, so a new joiner can sign in within the minute.
-    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`, 60000)
+    const rows = await readSheetCached(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`, TTL.ROSTER)
     const userRow = rows.slice(1).find(row =>
       (row[0]||'').toString().trim().toLowerCase() === empId.trim().toLowerCase() &&
       (row[2]||'').toString().trim() === password.trim()

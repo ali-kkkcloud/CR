@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   appendRow, readSheetCached, CRM_SHEET_ID, TABS, todayStr, nowStr, nowIST,
-  findOpenShiftRow, getShiftOverridesForDate,
+  findOpenShiftRow, getShiftOverridesForDate, TTL,
 } from '../../../lib/sheets'
 import { recentDates, findOpenBreaks, shiftEndMoment } from '../../../lib/attendance'
 import { loadScheduleData } from '../../../lib/roster'
@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   try {
     const today = todayStr()
     const now   = nowStr()
-    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 5000)
+    const rows  = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE)
 
     // Don't allow two overlapping breaks. Searched across both days, since a
     // break opened at 23:52 is still the one running at 00:05 — matching on
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     try {
       await loadScheduleData()
       const dates = recentDates()
-      const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 5000)
+      const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE)
       const open = findOpenShiftRow(shiftRows, user.empId, dates)
       if (open) {
         const overridesMap = await getShiftOverridesForDate(open.date)

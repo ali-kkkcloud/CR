@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, todayStr, yesterdayStr,
-  getShiftOverridesForDate, getLeaveMapForDate, fetchClientVehicleCounts,
+  getShiftOverridesForDate, getLeaveMapForDate, fetchClientVehicleCounts, TTL,
 } from '../../../lib/sheets'
 import { employees } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -59,9 +59,9 @@ export default async function handler(req, res) {
     const rangeDates = dateRangeArray(fromDDMMYYYY, toDDMMYYYY)
 
     const [shiftRows, updateRows, footageRows, summaryRows] = await Promise.all([
-      readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, 15000),
-      readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:L`, 15000),
-      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:L`, TTL.LIVE),
+      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES),
       readDailySummary(),
     ])
 
@@ -109,8 +109,8 @@ export default async function handler(req, res) {
           getShiftOverridesForDate(today),
           getLeaveMapForDate(today),
           fetchClientVehicleCounts(),
-          readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
-          readSheetCached(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`, 60000),
+          readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE),
+          readSheetCached(CRM_SHEET_ID, `${TABS.CREDENTIALS}!A:H`, TTL.ROSTER),
         ])
         livePlan = computeDayPlan({
           date: today, today,

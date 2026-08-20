@@ -2,7 +2,7 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowIST, hourHasPassed, whoWasOnShiftAtHour, fetchClientVehicleCounts,
   getLeaveMapForDate, getShiftOverridesForDate,
-  getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
+  getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, TTL,
 } from '../../../lib/sheets'
 import {
   employees, distributeClientsForHour, customTextFor, getScheduledEmployeesAtHour
@@ -33,11 +33,11 @@ export default async function handler(req, res) {
     const date = (req.query.date || todayStr()).toString()
 
     const [updateRows, shiftRows, breakRows, leaveMap, redistRows, vehicleMap, overridesMap] = await Promise.all([
-      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 10000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE),
       getLeaveMapForDate(date),
-      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 10000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, TTL.LIVE),
       fetchClientVehicleCounts(),
       getShiftOverridesForDate(date),
     ])

@@ -3,7 +3,7 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
   getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, yesterdayStr,
   hourHasPassed, whoWasOnShiftAtHour, businessHourOrder, DAY_START_HOUR,
-  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr,
+  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, TTL,
 } from '../../../lib/sheets'
 import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -42,12 +42,12 @@ export default async function handler(req, res) {
     catch (e) { console.error('daily summary sweep failed:', e.message) }
 
     const [credRows, shiftRows, breakRows, updateRows, redistRows, footageRows, overridesMap, leaveMap] = await Promise.all([
-      readSheetCached(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`, 60000),
-      readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, 15000),
-      readSheetCached(CRM_SHEET_ID,   `${TABS.BREAKS}!A:H`, 15000),
-      readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:L`, 15000),
-      readSheetCached(CRM_SHEET_ID,   `${TABS.REDISTRIB}!A:G`, 15000),
-      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`, TTL.ROSTER),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.BREAKS}!A:H`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:L`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.REDISTRIB}!A:G`, TTL.LIVE),
+      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES),
       getShiftOverridesForDate(today),
       getLeaveMapForDate(today),
     ])
