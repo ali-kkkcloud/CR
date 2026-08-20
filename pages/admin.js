@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { fetchJSON, isAuthFailure, retryDelayMs } from '../lib/fetchJson'
 import { useRouter } from 'next/router'
 import Head from 'next/head'
 import Sidebar, { TAB_SECTION } from '../components/Sidebar'
@@ -112,6 +113,9 @@ export default function Admin() {
   const [closeReason, setCloseReason] = useState('')
   const [closingFollowup, setClosingFollowup] = useState(false)
   const [showLogout, setShowLogout] = useState(false)
+  // Set when the page cannot reach the server at all, so it can say so
+  // rather than spinning with nothing behind it.
+  const [bootError, setBootError] = useState(null)
   const [clock, setClock] = useState('')
   // { title, rows } — roster drill-down opened from an Overview KPI card
   const [rosterModal, setRosterModal] = useState(null)
@@ -131,13 +135,43 @@ export default function Admin() {
     return () => clearInterval(id)
   }, [])
 
+  // Getting in, and staying in.
+  //
+  // This had no failure path at all: one attempt, no catch, no timeout. If the
+  // call did not come back the promise simply never settled, `loading` stayed
+  // true, and the Command Center sat on its spinner until somebody reloaded
+  // the site by hand. A rejection was worse — an unhandled one, with the page
+  // stuck the same way.
+  //
+  // Only an answer that actually says "not an admin" sends anybody to the
+  // login screen. Anything else is the server being unreachable, which is
+  // temporary, and is retried.
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => {
-      if (!d.user || d.user.role !== 'admin') { router.replace('/login'); return }
-      setUser(d.user)
+    let cancelled = false
+    let attempt = 0
+    let timer = null
+
+    async function boot() {
+      if (cancelled) return
+      const me = await fetchJSON('/api/auth/me')
+      if (cancelled) return
+
+      if (isAuthFailure(me) || (me.ok && me.data?.user && me.data.user.role !== 'admin')) {
+        router.replace('/login'); return
+      }
+      if (!me.ok || !me.data?.user) {
+        setBootError(me.error || 'Could not reach the server')
+        timer = setTimeout(boot, retryDelayMs(attempt++))
+        return
+      }
+      setBootError(null)
+      setUser(me.data.user)
       loadData()
       setLoading(false)
-    })
+    }
+
+    boot()
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [])
 
   const loadData = useCallback(async () => {
@@ -145,10 +179,11 @@ export default function Admin() {
     // storing an error payload — a 500 body written into state would be
     // read as real data downstream and crash the page on render.
     try {
-      const [ov, ft] = await Promise.all([
-        fetch('/api/admin/overview').then(r => r.json()).catch(() => ({})),
-        fetch('/api/footage/list').then(r => r.json()).catch(() => ({})),
+      const [ovR, ftR] = await Promise.all([
+        fetchJSON('/api/admin/overview'),
+        fetchJSON('/api/footage/list'),
       ])
+      const ov = ovR.data, ft = ftR.data
       if (ov && ov.employees) setOverview(ov)
       if (ft && Array.isArray(ft.pending)) {
         setFootage({ pending: ft.pending, completed: ft.completed || [], followups: ft.followups || [] })
@@ -159,7 +194,7 @@ export default function Admin() {
   const loadBreaks = useCallback(async (range, from, to) => {
     const qs = range === 'today' ? '' : `?from=${from}&to=${to}`
     try {
-      const data = await fetch(`/api/admin/breaks${qs}`).then(r => r.json())
+      const { data } = await fetchJSON(`/api/admin/breaks${qs}`)
       if (data && data.employees) setBreaks(data)
     } catch (e) { console.error('loadBreaks failed:', e) }
   }, [])
@@ -179,7 +214,7 @@ export default function Admin() {
 
   const loadProgress = useCallback(async (from, to) => {
     try {
-      const data = await fetch(`/api/admin/employee-progress?from=${from}&to=${to}`).then(r => r.json())
+      const { data } = await fetchJSON(`/api/admin/employee-progress?from=${from}&to=${to}`)
       if (data && data.progress) setProgress(data)
     } catch (e) { console.error('loadProgress failed:', e) }
   }, [])
@@ -203,7 +238,7 @@ export default function Admin() {
     fullDayReqRef.current = dateISO
     const ddmmyyyy = dateISO.split('-').reverse().join('/')
     try {
-      const data = await fetch(`/api/admin/full-day-view?date=${ddmmyyyy}`).then(r => r.json())
+      const { data } = await fetchJSON(`/api/admin/full-day-view?date=${ddmmyyyy}`, { timeoutMs: 30000 })
       if (fullDayReqRef.current !== dateISO) return   // the admin moved on
       if (data && Array.isArray(data.employees)) setFullDayData(data)
       else if (!silent) setFullDayData({ employees: [] })
@@ -390,9 +425,29 @@ export default function Admin() {
     return items.slice(0,8)
   }, [overview, recentCompletedFootage])
 
+  // A spinner is right while it is still trying, and wrong once it is not —
+  // one that never resolves is indistinguishable from a dead site, and the
+  // only thing left to try is reloading by hand. Both cases keep retrying in
+  // the background; this just says so.
   if (loading || !overview) return (
-    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}>
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg,gap:'18px',padding:'24px',textAlign:'center'}}>
       <div className="spinner"></div>
+      {(bootError || !loading) && (
+        <>
+          <div style={{ color:C.text2, fontSize:'13px', maxWidth:'360px', lineHeight:1.7 }}>
+            {bootError
+              ? `Could not reach the server (${bootError}). Still trying — you do not need to do anything.`
+              : 'Waiting for the floor to load. Still trying — you do not need to do anything.'}
+          </div>
+          <button
+            onClick={() => typeof window !== 'undefined' && window.location.reload()}
+            style={{
+              background:C.accentDark, color:C.accent, border:'none', borderRadius:'8px',
+              padding:'9px 16px', fontSize:'12.5px', fontWeight:700, cursor:'pointer',
+            }}
+          >Try now</button>
+        </>
+      )}
     </div>
   )
 
