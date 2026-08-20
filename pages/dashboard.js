@@ -265,9 +265,21 @@ export default function Dashboard() {
     loadMyDay()
     loadSummary(summaryRange)
     loadBreakStatus()
+    // Everything on the screen refreshes, every thirty seconds.
+    //
+    // The board and the hour strip used to refresh ONLY when the clock rolled
+    // into a new hour. Everything else on the page moved and those two sat
+    // still, so the work itself — the one thing an operator is looking at —
+    // was the single most stale thing on screen: up to a full hour behind. A
+    // colleague clocking in or going home reshapes who holds what immediately,
+    // and none of it appeared until the hour turned or somebody pressed reload.
+    //
+    // Both are safe to poll: loadClients merges rather than clobbers, so
+    // anything typed in the last two minutes survives, and loadMyDay keeps the
+    // last good payload if the response is not well-formed.
     autoRef.current = setInterval(() => {
-      const h = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'})).getHours()
-      if (h !== hourRef.current) { loadClients(); loadMyDay() }
+      loadClients()
+      loadMyDay()
       loadFootage()
       loadBreakStatus()
       loadSummary(summaryRangeRef.current)
