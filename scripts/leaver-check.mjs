@@ -155,5 +155,122 @@ console.log('\n5  The hour strip after clocking out')
   console.log(`   Nesiya's strip ends at ${Math.max(...hours)}, Rahul's at ${Math.max(...rahulHours)}`)
 }
 
+// ══ NIGHT SHIFT ═══════════════════════════════════════════════════════
+//
+// The hand-back rule is anchored to the hour somebody clocked out in, and
+// hours are compared by their position in the OPERATING day — 7am first,
+// through midnight, to 6am last. Compared as plain numbers instead, 2am
+// would sort before 10pm and a night worker who left at two would be judged
+// to have missed their entire shift.
+//
+// This is the run that would catch it. Everything below happens on the far
+// side of midnight.
+console.log('\n── Night shift ──')
+
+const NIGHT = [
+  { empId: 'N1', name: 'Imran', start: 22, end: 7, isNight: true },
+  { empId: 'N2', name: 'Farah', start: 22, end: 7, isNight: true },
+]
+const NIGHT_HOURS = { 22: 20, 23: 22, 0: 18, 1: 24, 2: 30, 3: 21, 4: 19, 5: 17, 6: 12 }
+const nightTimings = {}
+Object.entries(NIGHT_HOURS).forEach(([h, n]) => {
+  for (let i = 1; i <= n; i++) nightTimings[`N${h}_C${i}`] = [parseInt(h)]
+})
+const nightVehicles = {}
+Object.keys(nightTimings).forEach((c, i) => { nightVehicles[c.toLowerCase()] = { vehicleCount: 6 + (i % 9) } })
+const NIGHT_OVR = { Imran: { start: 22, end: 7 }, Farah: { start: 22, end: 7 } }
+
+const nightPlan = (opts) => {
+  setScheduleData({ employees: NIGHT, timings: nightTimings, employeeHours: {} })
+  return computeDayPlan({
+    date: DATE, today: DATE, nowHour: opts.nowHour,
+    shiftRows: [HEAD, ...(opts.shifts || [])],
+    updateRows: [HEAD, ...(opts.updates || [])],
+    breakRows: [HEAD], leaveMap: {}, overridesMap: NIGHT_OVR,
+    vehicleMap: nightVehicles, weekOffNames: new Set(),
+  })
+}
+
+// ── 6 · Leaving at 2am hands back 2am onwards, and nothing before ──────
+console.log('\n6  A night worker clocks out at ten past two')
+{
+  const both = [
+    shiftRow('N1', 'Imran', '10:02:00 pm', '', 'Active'),
+    shiftRow('N2', 'Farah', '10:05:00 pm', '', 'Active'),
+  ]
+  const before = nightPlan({ nowHour: 2, shifts: both })
+  const after = nightPlan({
+    nowHour: 2,
+    shifts: [
+      shiftRow('N1', 'Imran', '10:02:00 pm', '02:10:00 am', 'Ended'),
+      shiftRow('N2', 'Farah', '10:05:00 pm', '', 'Active'),
+    ],
+  })
+
+  ok(held(before, 'Imran', 2).length > 0, `Imran held nothing at 2am before he left`)
+  ok(held(after, 'Imran', 2).length === 0, `Imran went home and still holds ${held(after,'Imran',2).length} clients at 2am`)
+  ok(held(after, 'Farah', 2).length === NIGHT_HOURS[2],
+     `2am has ${held(after,'Farah',2).length} of ${NIGHT_HOURS[2]} clients after he left`)
+
+  // The hours he DID work, all of them on the other side of midnight, are
+  // untouched. This is the assertion that fails if hours are compared as
+  // plain numbers: 22 and 23 sort ABOVE 2, so he would lose the whole evening.
+  ok(held(after, 'Imran', 22).length > 0, `his 10pm hour is empty — he worked it`)
+  ok(held(after, 'Imran', 23).length > 0, `his 11pm hour is empty — he worked it`)
+  ok(held(after, 'Imran', 0).length > 0, `his midnight hour is empty — he worked it`)
+  ok(held(after, 'Imran', 1).length > 0, `his 1am hour is empty — he worked it`)
+  ok(held(after, 'Imran', 4).length === 0, `he holds ${held(after,'Imran',4).length} clients at 4am, two hours after going home`)
+
+  const kept = [22, 23, 0, 1].map(h => held(after, 'Imran', h).length)
+  console.log(`   Imran keeps 10pm–1am: ${kept.join(', ')} · holds 0 from 2am on · Farah takes all ${NIGHT_HOURS[2]} at 2am`)
+}
+
+// ── 7 · It still does not flip once those hours pass ───────────────────
+console.log('\n7  Checked again at six in the morning')
+{
+  const shifts = [
+    shiftRow('N1', 'Imran', '10:02:00 pm', '02:10:00 am', 'Ended'),
+    shiftRow('N2', 'Farah', '10:05:00 pm', '', 'Active'),
+  ]
+  const at2 = nightPlan({ nowHour: 2, shifts })
+  const at6 = nightPlan({ nowHour: 6, shifts })
+  const ownerAt = (p, hour) => {
+    const m = {}
+    Object.entries(p.byEmployee).forEach(([name, e]) => {
+      (e.hours?.[hour] || []).forEach(c => { m[c.client] = name })
+    })
+    return m
+  }
+  let moved = 0, checked = 0
+  ;[22, 23, 0, 1, 2].forEach(hour => {
+    const a = ownerAt(at2, hour), b = ownerAt(at6, hour)
+    Object.entries(a).forEach(([c, who]) => { checked++; if (b[c] !== who) moved++ })
+  })
+  ok(moved === 0, `${moved} of ${checked} clients across the night changed hands between 2am and 6am`)
+  ok(held(at6, 'Imran', 2).length === 0, `Imran got the 2am hour back once it was over`)
+  console.log(`   10pm–2am replayed at 2am and at 6am: ${moved} of ${checked} clients moved`)
+}
+
+// ── 8 · His strip covers the night he worked, and stops ────────────────
+console.log('\n8  The night strip after clocking out')
+{
+  const shifts = [
+    shiftRow('N1', 'Imran', '10:02:00 pm', '02:10:00 am', 'Ended'),
+    shiftRow('N2', 'Farah', '10:05:00 pm', '', 'Active'),
+  ]
+  const p = nightPlan({ nowHour: 6, shifts })
+  const hours = employeeDayHours(p, NIGHT[0], { start: 22, end: 7 })
+  ok(hours.includes(22) && hours.includes(23) && hours.includes(0) && hours.includes(1),
+     `his strip is missing hours he worked: ${hours.join(', ')}`)
+  ok(!hours.includes(3) && !hours.includes(4) && !hours.includes(5),
+     `his strip runs past when he went home: ${hours.join(', ')}`)
+  // In operating-day order, so the evening comes first and the small hours last.
+  ok(hours[0] === 22, `the strip starts at ${hours[0]} — the night should read from 10pm, not from midnight`)
+  console.log(`   Imran's strip: ${hours.join(' ')}`)
+
+  const farah = employeeDayHours(p, NIGHT[1], { start: 22, end: 7 })
+  ok(farah.includes(6), `Farah is still on shift and her strip stops at ${Math.max(...farah)}`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
