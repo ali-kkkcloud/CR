@@ -13,6 +13,10 @@ export const behaviour = {
   // range -> rows, for tests that need a particular tab to hold something
   // specific rather than the self-describing default.
   data: {},
+  // Milliseconds a call to Google takes. A real Sheets request from a
+  // serverless function is a couple of hundred; set this to measure how much
+  // of a screen's wall-clock time is round trips rather than our own work.
+  latencyMs: 0,
 }
 
 export function reset() {
@@ -24,7 +28,12 @@ export function reset() {
   behaviour.rateLimited = new Set()
   behaviour.failBatch = false
   behaviour.data = {}
+  behaviour.latencyMs = 0
 }
+
+const wait = () => behaviour.latencyMs > 0
+  ? new Promise(r => setTimeout(r, behaviour.latencyMs))
+  : Promise.resolve()
 
 // Every range answers with one header row and one row naming itself, so a test
 // can prove each caller got ITS range back and not a neighbour's — unless the
@@ -45,6 +54,7 @@ export const google = {
         values: {
           async get({ range }) {
             calls.get.push(range)
+            await wait()
             if (behaviour.rateLimited.has(range)) throw rateLimit()
             if (behaviour.broken.has(range)) throw new Error(`Unable to parse range: ${range}`)
             return { data: { values: rowsFor(range) } }
@@ -53,15 +63,18 @@ export const google = {
           // reach the real spreadsheet, and the platform is live.
           async append({ range }) {
             calls.append.push(range)
+            await wait()
             return { data: {} }
           },
           async update({ range }) {
             calls.update.push(range)
+            await wait()
             return { data: {} }
           },
           async batchUpdate() { return { data: {} } },
           async batchGet({ ranges }) {
             calls.batchGet.push([...ranges])
+            await wait()
             if (behaviour.failBatch) throw new Error('batch blew up')
             for (const r of ranges) {
               if (behaviour.rateLimited.has(r)) throw rateLimit()
