@@ -2,11 +2,11 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate,
-  getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames,
+  getOnShiftNamesFromLog, TTL,
 } from '../../../lib/sheets'
-import { getClientsForEmployeeAtHour, getScheduledEmployeesAtHour, employees, isScheduledAtHour } from '../../../lib/schedule'
+import { getScheduledEmployeesAtHour, employees, isScheduledAtHour, customTextFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
-import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
+import { computeDayPlan } from '../../../lib/dayplan'
 import { sweepShiftAutoClose } from '../../../lib/attendance'
 
 function ddmmyyyyFromDate(d) {
@@ -53,9 +53,9 @@ export default async function handler(req, res) {
       getLeaveMapForDate(yesterday),
       getShiftOverridesForDate(today),
       getShiftOverridesForDate(yesterday),
-      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 8000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE),
     ])
 
     // ── Resolve MY operating "shift date" — the date my shift actually
@@ -133,61 +133,49 @@ export default async function handler(req, res) {
     })
     if (newLeaveRows.length) await appendRows(CRM_SHEET_ID, TABS.LEAVES, newLeaveRows)
 
-    // ── Who this hour's clients get shared between ─────────────────────
-    // The roster says who COULD be on this hour; Shift_Log says who
-    // actually is. Distribution follows the second one. Splitting by
-    // roster meant an hour rostered to six people was still carved six
-    // ways when only one had clocked in, so that one employee saw (and
-    // could update) barely a sixth of the clients due that hour, and
-    // anyone who had already gone home kept being handed new work.
-    //
-    // Deriving the pool from who is clocked in makes the split
-    // self-correcting: a lone employee covers the whole hour, and every
-    // start or end reshuffles the remainder on the next refresh.
-    //
-    // The pool is built by lib/distribution, shared with the Command Center,
-    // so the split an employee is shown and the split an admin is shown can
-    // never be worked out two different ways.
-    //
-    // Somebody who has clocked out is done for the day and must not be given
-    // work again. They were still being handed a full client list they could
-    // go on updating, which pinned those clients to a name that had gone home
-    // and took them off the board of whoever was still working.
     const myShiftRows = shiftLogRows.slice(1).filter(r =>
       (r[0] || '').toString().trim() === user.empId.toString().trim() &&
       (r[2] === today || r[2] === yesterday)
     )
     const iHaveClockedOut = myShiftRows.length > 0 && !myShiftRows.some(r => r[6] === 'Active')
-    // Am I actually clocked in? Not "am I not clocked out" — those differ for
-    // the person who never started at all, and the difference mattered: with no
-    // Shift_Log row whatsoever they were force-added to the pool and handed the
-    // entire hour, seventy-seven clients, without ever pressing Start Shift.
-    // Their own day and the admin both showed zero for the same hour, because
-    // only this screen was bending the rule. Start Shift clears the cached
-    // attendance read, so a genuine arrival is in the pool on the next poll
-    // rather than waiting out a stale cache — which is all the exception was
-    // ever for.
-    const iAmOnShift = myShiftRows.some(r => r[6] === 'Active')
 
-    // Anyone away on a long break is left out of the split. Their clients had
-    // been sitting on a board nobody was looking at — invisible to every
-    // colleague, and only discovered as a missed hour after the fact.
-    const awayNames = getAwayOnBreakNames(breakRows, [today, yesterday])
-
-    const { poolNames, scheduledNames } = buildHourPool({
-      hour, leaveMap, overridesMap, onShiftNames,
-      clockedOutNames: getClockedOutNamesFromLog(shiftLogRows, [today, yesterday]),
-      awayNames,
-      alwaysInclude: iAmOnShift ? user.name : null,
+    // ── What this hour holds for me ────────────────────────────────────
+    //
+    // Read from computeDayPlan — the same computation the employee's own day,
+    // the admin's Dashboard and the admin's Hour by hour all read.
+    //
+    // This screen used to work its own split out, and it was the ONE screen
+    // that did. The pool it built was "who has clocked in"; the plan's pool is
+    // "who the roster puts on this hour, minus anyone demonstrably not here".
+    // Those two differ for exactly as long as somebody rostered on an hour has
+    // not arrived yet — which is every shift change, every single morning.
+    //
+    // The result was not a cosmetic disagreement between panels. This is the
+    // screen people RECORD WORK ON. It handed out clients the plan had given
+    // to somebody else, so two people could each be shown the same client in
+    // the same hour and both work it, while the count on the board did not
+    // match the count on the strip directly above it — 13 against 12, for the
+    // same hour of the same day.
+    //
+    // One computation, one answer. The screen the work is done on does not get
+    // to be the exception to it.
+    const vehicleMap = await fetchClientVehicleCounts()
+    const plan = computeDayPlan({
+      date: myShiftDate, today, nowHour: hour, yesterday,
+      shiftRows: shiftLogRows, updateRows, breakRows,
+      leaveMap, overridesMap, vehicleMap,
+      weekOffNames: new Set(employees().filter(e => e.isWeekOff).map(e => e.name)),
     })
 
-    const vehicleMap = await fetchClientVehicleCounts()
-    const lockedAssignments = buildLockedAssignments(updateRows, myShiftDate, hour)
+    // A custom duty replaces the client list outright — it is what this person
+    // is doing this hour instead of watching clients.
+    const customText = customTextFor(user.name, hour)
+    const clients = customText
+      ? [{ client: customText, isCustom: true }]
+      : (plan.byEmployee[user.name]?.hours?.[hour] || [])
 
-    // reserveOffShiftLocks=true: every lock here is finished work, so a
-    // client someone completed before going home stays done instead of
-    // bouncing back onto a colleague's board.
-    const clients = getClientsForEmployeeAtHour(user.name, hour, poolNames, vehicleMap, lockedAssignments, true)
+    const poolNames = plan.hours.find(h => h.hour === hour)?.pool || []
+    const scheduledNames = getScheduledEmployeesAtHour(hour, leaveMap, overridesMap).map(e => e.name)
 
     // ── No placeholder rows ────────────────────────────────────────────
     //
