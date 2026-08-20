@@ -59,8 +59,14 @@ export default async function handler(req, res) {
     // midnight still belongs to the shift in progress, and searching only
     // today would leave the employee free to carry on while the row stayed
     // open forever — which would also stop any further break being opened.
-    const dates  = recentDates()
-    const active = findOpenBreaks(rows, user.empId, dates)[0] || null
+    const dates = recentDates()
+    // The EARLIEST open row, which is the one the sweep keeps and the one
+    // Resume writes the real duration onto. Reporting the newest instead made
+    // the banner name a different row from the one everything else was acting
+    // on, so the start time on screen could change under the employee without
+    // anything having happened.
+    const openBreaks = findOpenBreaks(rows, user.empId, dates)
+    const active = openBreaks[openBreaks.length - 1] || null
     const history = myToday.map(r => ({
       startTime: r[3] || '',
       endTime:   r[4] || '',
