@@ -3,7 +3,7 @@ import { getHistoryFor } from '../../../lib/history'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, parseOperatingDateTime, getShiftOverridesForDate,
-  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, yesterdayStr,
+  getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, yesterdayStr, TTL,
 } from '../../../lib/sheets'
 import { employees, distributeClientsForHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -68,7 +68,7 @@ export default async function handler(req, res) {
     // (attendance, today's targets, the active override) must stay
     // attached to the date the shift STARTED, not the new calendar date.
     const yesterday = yesterdayStr()
-    const shiftLogPeek = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000)
+    const shiftLogPeek = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE)
     const myToday     = shiftLogPeek.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===calendarToday)
     const myYesterday = shiftLogPeek.slice(1).filter(r => (r[0]||'').toString().trim()===user.empId.toString().trim() && r[2]===yesterday)
     const today = (myToday.length === 0 && myYesterday.some(r => r[6] === 'Active')) ? yesterday : calendarToday
@@ -77,13 +77,13 @@ export default async function handler(req, res) {
     const myOverride = todayOverride[user.name]
 
     const [updateRows, footageRows, followupRows, redistRows, shiftRows, breakRows, leaveRows, vehicleMap] = await Promise.all([
-      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, 15000),
-      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, 90000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, 15000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, 15000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, 15000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, 15000),
-      readSheetCached(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`, 30000),
+      readSheetCached(CRM_SHEET_ID, `${TABS.CRM_UPDATES}!A:L`, TTL.LIVE),
+      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES),
+      readSheetCached(CRM_SHEET_ID, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, TTL.QUEUE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.REDISTRIB}!A:G`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE),
+      readSheetCached(CRM_SHEET_ID, `${TABS.LEAVES}!A:H`, TTL.DAY),
       fetchClientVehicleCounts(),
     ])
 
@@ -153,7 +153,16 @@ export default async function handler(req, res) {
     const footagePending = myFootage.filter(r => !footageResolved(r)).length // pending is "live", not range-scoped
 
     // ── Follow-ups ──
-    const myFollowups = followupRows.slice(1).filter(r => r[5]===user.name || r[6]===user.name)
+    // Counted per REQUEST, not per row. The follow-up tab appends a row for
+    // every hand-off, so a request passed on twice appeared as two pending
+    // items — two on the count, and twice the penalty on the day's score, for
+    // one piece of work. The last row for a request is where it stands.
+    const latestFollowup = new Map()
+    followupRows.slice(1).forEach(r => {
+      const id = (r[2] || '').toString().trim()
+      if (id) latestFollowup.set(id, r)
+    })
+    const myFollowups = [...latestFollowup.values()].filter(r => r[5]===user.name || r[6]===user.name)
     const followupsClosed  = myFollowups.filter(r => (r[7]||'').toString().toLowerCase().startsWith('closed')).length
     const followupsPending = myFollowups.filter(r => !(r[7]||'').toString().toLowerCase().startsWith('closed')).length
 
