@@ -2,11 +2,11 @@ import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheet, readSheetCached, appendRow, appendRows, updateRowCells,
   CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST, calcDuration, calcDurationMinutes, parseISTDateTime,
-  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog,
-  getAwayOnBreakNames, findOpenShiftRow, TTL } from '../../../lib/sheets'
-import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, distributeClientsForHour, specificClientsFor, customTextFor } from '../../../lib/schedule'
+  fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate, getOnShiftNamesFromLog,
+  findOpenShiftRow, TTL } from '../../../lib/sheets'
+import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, specificClientsFor, customTextFor, employees } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
-import { buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
+import { computeDayPlan } from '../../../lib/dayplan'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -82,9 +82,8 @@ export default async function handler(req, res) {
     const onShiftNames = getOnShiftNamesFromLog(shiftRows, [today, yesterday])
     // A break is part of a shift, not an absence from it — somebody away from
     // their desk for ten minutes is still working this hour and can take the
-    // leaver's unfinished clients. Excluding them used to concentrate the
+    // leaver's unfinished clients. Leaving them out used to concentrate the
     // hand-over onto whoever happened not to be on a break at that second.
-    const awayNames = new Set()
     //
     // Somebody holding a NAMED client this hour, or on a custom duty, is not a
     // target for the hand-over. Naming a client against them in Employee_Hours
@@ -99,26 +98,39 @@ export default async function handler(req, res) {
       .filter(n => !specificClientsFor(n, currentHour) && !customTextFor(n, currentHour))
     const vehicleMap = await fetchClientVehicleCounts()
 
-    // What this employee is actually still holding, taken from the live
-    // split rather than from their CRM_Updates rows.
+    // ── What this employee is actually still holding ──────────────────────
     //
-    // Those rows are append-only and keep a placeholder for every client the
-    // employee held at any point in the hour — including ones handed on when
-    // somebody else clocked in. Counting them meant an employee who had been
-    // working alone and then shared the hour with two colleagues was reported
-    // as handing over 51 clients on the way out when they were holding 11,
-    // and the audit log grew by the same wrong number.
-    const { poolNames } = buildHourPool({
-      hour: currentHour, leaveMap, overridesMap, onShiftNames,
-      clockedOutNames: getClockedOutNamesFromLog(shiftRows, [today, yesterday]),
-      awayNames,
-      alwaysInclude: user.name,
+    // Read from computeDayPlan, which is what their board reads.
+    //
+    // This used to build its own pool and run its own split, and it was the
+    // last screen doing so. Its pool was "who has clocked in"; the plan's is
+    // "who the roster puts on this hour". Those differ whenever somebody is
+    // running late, so the two disagreed about how much this person was
+    // holding — and the disagreement went straight into the audit log.
+    //
+    // An employee whose own board showed twenty clients in the six o'clock
+    // hour was recorded here as handing over forty. The admin then had a
+    // hand-over trail for work that had never been on that board, against a
+    // day the employee could not recognise, and no way to tell which number
+    // was the real one.
+    // shiftRows is deliberately the copy read BEFORE this shift was closed
+    // above: the question is what they were holding when they pressed End,
+    // not what they hold now that they have gone.
+    const plan = computeDayPlan({
+      date: shiftDate, today, nowHour: currentHour, yesterday,
+      shiftRows, updateRows, breakRows,
+      leaveMap, overridesMap, vehicleMap,
+      weekOffNames: new Set(employees().filter(e => e.isWeekOff).map(e => e.name)),
     })
-    const locked = buildLockedAssignments(updateRows, shiftDate, currentHour)
-    const dist = distributeClientsForHour(currentHour, poolNames, vehicleMap, locked, true)
-    const unfilledClients = (dist[user.name] || [])
+    const doneThisHour = new Set(
+      updateRows.slice(1)
+        .filter(r => r[0] === shiftDate && r[2] === user.name && parseInt(r[4]) === currentHour)
+        .filter(r => (r[5] || '').toString().trim())
+        .map(r => r[3])
+    )
+    const unfilledClients = (plan.byEmployee[user.name]?.hours?.[currentHour] || [])
       .map(c => c.client)
-      .filter(c => locked[c] !== user.name)   // already finished — stays theirs
+      .filter(c => !doneThisHour.has(c))      // already finished — stays theirs
 
     const redistribution = computeCurrentHourRedistribution(
       user.name, currentHour, unfilledClients, stillWorking, vehicleMap

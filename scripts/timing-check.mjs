@@ -43,6 +43,19 @@ const CLIENTS = Array.from({ length: 46 }, (_, i) => `Client ${i + 1}`)
 const vehicleRows = [['Client','Vehicle']]
 CLIENTS.forEach((c, i) => { for (let v = 0; v < 6; v++) vehicleRows.push([c, `KA${i}-${v}`]) })
 
+// A clock string for "just now", so the fixture's employees read as present.
+// Without it every one of them is idle by hours, the sweep opens a break for
+// each, and the measurement becomes "what a poll costs on the rare occasion it
+// has work to do" rather than what it costs the rest of the time.
+function nowClock() {
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  let h = d.getHours()
+  const ampm = h >= 12 ? 'pm' : 'am'
+  h = h % 12; if (h === 0) h = 12
+  const p = (n) => String(n).padStart(2, '0')
+  return `${p(h)}:${p(d.getMinutes())}:${p(d.getSeconds())} ${ampm}`
+}
+
 function floor() {
   reset()
   behaviour.latencyMs = LATENCY_MS
@@ -55,7 +68,7 @@ function floor() {
     'Client_Timings!A:B': [['Client','Hours'], ...CLIENTS.map(c => [c, String(H)])],
     'Employee_Hours!A:D': [['Employee','Hour','Fixed','Custom']],
     'Shift_Log!A:H': [['EmpID','Name','Date','In','Out','','Status',''],
-      ...PEOPLE.map(([id, n]) => [id, n, TODAY, '07:05:00 am', '', '', 'Active', ''])],
+      ...PEOPLE.map(([id, n]) => [id, n, TODAY, '07:05:00 am', '', '', 'Active', nowClock()])],
     'CRM_Updates!A:L': [['Date','Time','Emp','Client','Hour','Status','','','','','','']],
     'Breaks!A:H': [['EmpID','Name','Date','Start','End','Mins','Type','']],
     'Leaves!A:H': [['EmpID','Name','Date','From','To','Reason','By','At']],

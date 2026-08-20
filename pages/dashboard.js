@@ -863,6 +863,11 @@ export default function Dashboard() {
         status: c.status || '', misalignVehicles: c.misalignVehicles || '',
         alertCount: c.alertCount || '', fatigue: c.fatigue || 'No',
         fatigueCount: c.fatigueCount || '', notes: c.notes || '',
+        // Every field the form holds has to be here. liveVehicles was not,
+        // so an earlier hour read back with the count blank however carefully
+        // it had been filled in — and because a save rewrites the whole row,
+        // re-saving that hour wrote the blank into the sheet.
+        liveVehicles: c.liveVehicles || '',
         updatedAt: c.updatedAt || '',
       }]))
 

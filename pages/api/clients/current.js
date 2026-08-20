@@ -7,7 +7,7 @@ import {
 import { getScheduledEmployeesAtHour, employees, isScheduledAtHour, customTextFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { computeDayPlan } from '../../../lib/dayplan'
-import { sweepShiftAutoClose } from '../../../lib/attendance'
+import { sweepShiftAutoClose, sweepAutoBreaks } from '../../../lib/attendance'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -43,6 +43,29 @@ export default async function handler(req, res) {
     // reads below, so this response already reflects it.
     try { await sweepShiftAutoClose(employees()) }
     catch (e) { console.error('shift auto-close sweep failed:', e.message) }
+
+    // ── The second layer of the idle rule, for the whole floor ────────────
+    //
+    // The first layer is the browser saying how long since it last saw the
+    // cursor. It only works while that browser is running: shut the laptop,
+    // switch the machine off, or log out, and the page stops polling — so the
+    // one place that checked for idleness stopped being called for exactly the
+    // person who had gone.
+    //
+    // The rule was always meant to have a fallback: with nothing coming from
+    // the screen, judge on when they last recorded something. That fallback
+    // was written, and then never reached. It ran only from the employee's own
+    // poll, and from the admin's Breaks tab — a screen nobody has open most of
+    // the day. Somebody who closed their laptop at two o'clock and came back at
+    // four had no break recorded for any of it.
+    //
+    // Swept for everybody here instead, from the request every working
+    // employee makes every thirty seconds. As long as one person is on the
+    // platform, the whole floor is being checked. Reads are cached and a row
+    // is only written when a break is actually due, so a sweep that finds
+    // nothing costs nothing.
+    try { await sweepAutoBreaks(employees()) }
+    catch (e) { console.error('auto-break sweep failed:', e.message) }
 
     const hour  = nowIST().getHours()
     const today = todayStr()
