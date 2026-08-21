@@ -176,12 +176,20 @@ rule(5, 'An automatic break is backdated to the last activity, not to the thresh
   const minsAgo = (m) => new Date(NOW.getTime() - m*60000)
 
   const clockIn = minsAgo(180), stopped = minsAgo(12)
+  // Each row carries the operating day of ITS OWN moment, exactly as the
+  // platform writes them — a clock-in at 06:45 belongs to the day that began
+  // at 7am YESTERDAY. And the candidate dates are the ones recentDates()
+  // produces, which are anchored to now, not to the clock-in: deriving them
+  // from the clock-in left the current operating day off the list, so a
+  // heartbeat recorded this morning could not resolve at all and the idle
+  // calculation fell back to the start of the shift.
   const opDay = opDayOf(clockIn)
-  const prev = new Date(clockIn); prev.setDate(prev.getDate()-1)
+  const prevOfNow = new Date(NOW); prevOfNow.setDate(prevOfNow.getDate()-1)
+  const dates = [opDayOf(NOW), opDayOf(prevOfNow)]
   const ctx = {
     shiftRows: [HEAD, ['E9','Naveen',opDay,clockOf(clockIn),'','','Active',clockOf(stopped)]],
     updateRows: [HEAD], breakRows: [HEAD],
-    dates: [opDay, opDayOf(prev)], nowMs: NOW.getTime(), overridesMap: {},
+    dates, nowMs: NOW.getTime(), overridesMap: {},
   }
   const opened = evaluateAutoBreak({ empId:'E9', name:'Naveen' }, ctx, opDay)
   ok(opened !== null, `twelve minutes of silence did not open a break`)
@@ -272,9 +280,10 @@ rule(8, 'Cursor first; when the machine is off, the last update decides')
   const EMP = { empId:'E9', name:'Naveen' }
 
   const clockIn = minsAgo(200)
+  // Per-row operating days, and candidate dates anchored to now — see rule 5.
   const opDay = opDayOf(clockIn)
-  const prev = new Date(clockIn); prev.setDate(prev.getDate()-1)
-  const dates = [opDay, opDayOf(prev)]
+  const prevOfNow = new Date(NOW); prevOfNow.setDate(prevOfNow.getDate()-1)
+  const dates = [opDayOf(NOW), opDayOf(prevOfNow)]
 
   // Layer 1 — the browser's reading, passed in as the override.
   const base = {
@@ -291,14 +300,14 @@ rule(8, 'Cursor first; when the machine is off, the last update decides')
   // The decision falls to the last thing they recorded.
   const savedRecently = {
     ...base,
-    updateRows: [HEAD, [opDay, clockOf(minsAgo(4)), 'Naveen', 'X', '9', 'All Good', '', '0', 'No', '0', '', '5']],
+    updateRows: [HEAD, [opDayOf(minsAgo(4)), clockOf(minsAgo(4)), 'Naveen', 'X', '9', 'All Good', '', '0', 'No', '0', '', '5']],
   }
   ok(evaluateAutoBreak(EMP, savedRecently, opDay) === null,
      'they saved a client four minutes ago and were still put on a break')
 
   const savedLongAgo = {
     ...base,
-    updateRows: [HEAD, [opDay, clockOf(minsAgo(25)), 'Naveen', 'X', '9', 'All Good', '', '0', 'No', '0', '', '5']],
+    updateRows: [HEAD, [opDayOf(minsAgo(25)), clockOf(minsAgo(25)), 'Naveen', 'X', '9', 'All Good', '', '0', 'No', '0', '', '5']],
   }
   const opened = evaluateAutoBreak(EMP, savedLongAgo, opDay)
   ok(opened !== null, 'the machine is off and nothing has been recorded for 25 minutes — no break was opened')
@@ -309,7 +318,7 @@ rule(8, 'Cursor first; when the machine is off, the last update decides')
   // And a resume counts as being back.
   const resumed = {
     ...base,
-    breakRows: [HEAD, ['E9','Naveen',opDay,clockOf(minsAgo(40)),clockOf(minsAgo(2)),38,'Completed','Auto']],
+    breakRows: [HEAD, ['E9','Naveen',opDayOf(minsAgo(40)),clockOf(minsAgo(40)),clockOf(minsAgo(2)),38,'Completed','Auto']],
   }
   ok(lastActivityAt(EMP, resumed) === minsAgo(2).getTime(), 'resuming was not read as activity')
   ok(evaluateAutoBreak(EMP, resumed, opDay) === null, 'a break was re-opened two minutes after Resume')

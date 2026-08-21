@@ -42,10 +42,21 @@ export default async function handler(req, res) {
 
     const pending = [], completed = []
     const byIssueId = {}
+    // Every row whose Sub-request says this is a footage request, counted as
+    // it stands in the sheet.
+    //
+    // The lists below deliberately fold rows that share an Issue Id into one,
+    // because a request showing twice on a queue is worse than useless. But
+    // "how many have come in" is a question about the SHEET, and folding made
+    // that number quietly smaller than the one the sheet gives when you filter
+    // the same column by hand — which is the number anybody would check it
+    // against.
+    let totalRaised = 0
 
     rows.slice(1).forEach((row, idx) => {
       const sub = (row[COL.SUB_REQUEST] || '').toString().trim().toLowerCase()
       if (!sub.includes('customer request for video')) return
+      totalRaised++
 
       const raisedBy  = (row[COL.RAISED_BY] || '').toString().trim().toLowerCase()
       const empName   = user.name.toLowerCase()
@@ -142,7 +153,7 @@ export default async function handler(req, res) {
     const followups = (user.role === 'admin' ? open : open.filter(r => r[6] === user.name))
       .map(asFollowup)
 
-    return res.status(200).json({ pending, completed, followups })
+    return res.status(200).json({ pending, completed, followups, totalRaised })
 
   } catch (err) {
     console.error('Footage list error:', err)

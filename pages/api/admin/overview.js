@@ -4,6 +4,7 @@ import {
   getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, yesterdayStr,
   hourHasPassed, whoWasOnShiftAtHour, businessHourOrder, DAY_START_HOUR,
   getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, TTL, warmSheetCache, SHIFT_SCREEN_TABS,
+  vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
 import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -210,10 +211,25 @@ export default async function handler(req, res) {
       // the vehicle totals, so a fleet of forty reads as a fleet of none. The
       // schedule and the vehicle source disagree about them, and only a person
       // can decide which one is right.
+      // Same key the map is built under — see vehicleKey in lib/sheets.
       Object.keys(clientTimings()).forEach(client => {
-        const known = vehicleMap[(client || '').toString().trim().toLowerCase()]
+        const known = vehicleMap[vehicleKey(client)]
         if (!known) clientIssues.push({ client, reason: 'not in the vehicle list — counts as 0 vehicles' })
       })
+
+      // A vehicle list that did not finish loading is indistinguishable from
+      // "nobody has any vehicles" everywhere downstream: every client reads 0,
+      // and the split — which is balanced BY vehicles — has nothing to balance
+      // on. The floor saw exactly this one night, a whole hour of clients at
+      // "0 vehicles". Said out loud rather than left to be inferred from a
+      // screen full of zeros.
+      const vh = vehicleMapHealth()
+      if (!vh.complete) {
+        clientIssues.unshift({
+          client: 'The vehicle list did not load completely',
+          reason: `only ${vh.clients} clients have vehicle counts — every other client is being treated as 0, which also flattens the split`,
+        })
+      }
 
       // Work that reaches nobody. The one failure nothing else would report:
       // a client on no board cannot be missed by any employee, so without this

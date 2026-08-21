@@ -64,11 +64,17 @@ const EVENING = (() => {
   return d
 })()
 
-// Dates a running shift can span, as the code builds them.
-const datesFor = (d) => {
-  const prev = new Date(d); prev.setDate(prev.getDate() - 1)
-  return [opDayOf(d), opDayOf(prev)]
-}
+// The dates a running shift can span, exactly as recentDates() builds them:
+// the operating day in progress NOW, and the one before it.
+//
+// Deriving them from the row's own moment instead left the current operating
+// day off the list, so a time recorded this morning could not resolve against
+// any candidate — and the idle calculation silently fell back to the start of
+// the shift. It only shows up when the clock is on one side of 07:00 and the
+// fixture's times are on the other, which is why it passed for hours and then
+// did not.
+const PREV_OF_NOW = (() => { const d = new Date(NOW); d.setDate(d.getDate() - 1); return d })()
+const datesFor = () => [opDayOf(NOW), opDayOf(PREV_OF_NOW)]
 
 const EMP = { empId: 'E9', name: 'Naveen' }
 const HEAD = ['h']
@@ -79,13 +85,13 @@ const breakRow = (opDay, start, end, mins, status, type) =>
 // ── 1 · A small-hours time is not twenty-four hours ago ────────────────
 console.log('\n1  Reading a time recorded after midnight')
 {
-  const dates = datesFor(SMALL_HOURS)
+  const dates = datesFor()
   const got = resolveMoment(clockOf(SMALL_HOURS), dates, NOW.getTime())
   const hoursOut = got === null ? null : (SMALL_HOURS.getTime() - got) / 3600000
   ok(got === SMALL_HOURS.getTime(),
      `${clockOf(SMALL_HOURS)} on operating day ${opDayOf(SMALL_HOURS)} read ${hoursOut}h early`)
 
-  const ev = resolveMoment(clockOf(EVENING), datesFor(EVENING), NOW.getTime())
+  const ev = resolveMoment(clockOf(EVENING), datesFor(), NOW.getTime())
   ok(ev === EVENING.getTime(),
      `an evening time should be unaffected; ${clockOf(EVENING)} came out ${ev === null ? 'null' : ((EVENING - ev) / 3600000) + 'h'} out`)
   console.log(`   ${clockOf(SMALL_HOURS)} on ${opDayOf(SMALL_HOURS)} → ${new Date(got).toLocaleString('en-GB')}`)
@@ -122,7 +128,7 @@ console.log('\n3  The moment after Resume')
     shiftRows:  [HEAD, shiftRow(opDay, clockOf(clockIn), clockOf(breakFrom))],
     updateRows: [HEAD],
     breakRows:  [HEAD, breakRow(opDay, clockOf(breakFrom), clockOf(resumedAt), 39, 'Completed')],
-    dates: datesFor(clockIn),
+    dates: datesFor(),
     nowMs: NOW.getTime(),
     overridesMap: {},
   }
@@ -149,7 +155,7 @@ console.log('\n4  A duplicate row left Active after the break was closed')
     breakRow(opDay, clockOf(started), clockOf(ended), 11, 'Completed'),
     breakRow(opDay, clockOf(started), '', null, 'Active'),   // the twin nothing closed
   ]
-  const open = findOpenBreaks(rows, 'E9', datesFor(started))
+  const open = findOpenBreaks(rows, 'E9', datesFor())
   ok(open.length === 0, `${open.length} break(s) still read as open after the break was resumed`)
   console.log(`   same start time, one Completed → nothing reads as open`)
 }
@@ -165,7 +171,7 @@ console.log('\n5  A break that really is running')
     breakRow(opDay, clockOf(oldStart), clockOf(oldEnd), 11, 'Completed'),
     breakRow(opDayOf(liveStart), clockOf(liveStart), '', null, 'Active'),
   ]
-  const open = findOpenBreaks(rows, 'E9', datesFor(liveStart))
+  const open = findOpenBreaks(rows, 'E9', datesFor())
   ok(open.length === 1 && open[0].startTime === clockOf(liveStart),
      `expected the ${clockOf(liveStart)} break, got ${JSON.stringify(open.map(o => o.startTime))}`)
 
@@ -185,7 +191,7 @@ console.log('\n6  A real idle stretch still opens a break')
     shiftRows:  [HEAD, shiftRow(opDay, clockOf(clockIn), clockOf(stopped))],
     updateRows: [HEAD],
     breakRows:  [HEAD],
-    dates: datesFor(clockIn),
+    dates: datesFor(),
     nowMs: NOW.getTime(),
     overridesMap: {},
   }
