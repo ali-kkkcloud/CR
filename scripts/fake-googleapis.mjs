@@ -21,6 +21,9 @@ export const behaviour = {
   // serverless function is a couple of hundred; set this to measure how much
   // of a screen's wall-clock time is round trips rather than our own work.
   latencyMs: 0,
+  // Whether an append is actually added to behaviour.data. Off by default;
+  // see the append handler below.
+  appendWritesBack: false,
   // Tabs the book reports as already existing, for code that checks before
   // creating one.
   sheetTitles: ['Credentials','Shift_Log','CRM_Updates','Redistribution_Log','Leaves',
@@ -39,6 +42,7 @@ export function reset() {
   behaviour.failBatch = false
   behaviour.data = {}
   behaviour.latencyMs = 0
+  behaviour.appendWritesBack = false
 }
 
 const wait = () => behaviour.latencyMs > 0
@@ -81,10 +85,29 @@ export const google = {
           },
           // Writes are recorded and go nowhere. A test must never be able to
           // reach the real spreadsheet, and the platform is live.
-          async append({ range }) {
+          // Google answers an append with the range it actually wrote to, and
+          // lib/sheets uses that to decide whether its cached copy of the tab
+          // is still in step with the sheet. Answering without it would send
+          // every append down the "throw the tab away" path and quietly stop
+          // the test exercising the patch at all.
+          //
+          // By default the row is NOT added to behaviour.data: several tests
+          // depend on the sheet still looking un-written immediately after an
+          // append, which is exactly the window the in-memory guards exist to
+          // cover. Set behaviour.appendWritesBack when the test wants a sheet
+          // that really grows — a load measurement does, because whether the
+          // cached copy stays in step with the sheet is part of what is being
+          // measured.
+          async append({ range, requestBody }) {
             calls.append.push(range)
             await wait()
-            return { data: {} }
+            const tab = range.split('!')[0]
+            const key = Object.keys(behaviour.data).find(k => k.split('!')[0] === tab)
+            const n = (key ? behaviour.data[key].length : 1) + 1
+            if (behaviour.appendWritesBack && key) {
+              behaviour.data[key] = [...behaviour.data[key], ...(requestBody?.values || [])]
+            }
+            return { data: { updates: { updatedRange: `${tab}!A${n}:Z${n}` } } }
           },
           async update({ range }) {
             calls.update.push(range)

@@ -34,8 +34,18 @@ const opDayOf = (d) => { const x = new Date(d); if (x.getHours() < 7) x.setDate(
 const minsAgo = (m) => new Date(NOW.getTime() - m * 60000)
 
 const EMP = [{ empId: 'E9', name: 'Naveen' }]
+// The shift starts three hours ago, not on the hour we happen to be in.
+//
+// It used to be `start: NOW.getHours()`, and that quietly made this file a
+// test that only passed for part of the day. Arriving before your shift opens
+// is not idling, so a break is never backdated past the start of the window —
+// which is correct — but with the window opening at the top of THIS hour, the
+// fixture's "last seen 25 minutes ago" fell before it any time the clock read
+// less than 25 past. The assertion then failed on the shift start, and the
+// code it was accusing was right.
+const SHIFT_START_HOUR = (NOW.getHours() + 21) % 24
 setScheduleData({
-  employees: [{ empId: 'E9', name: 'Naveen', start: NOW.getHours(), end: (NOW.getHours() + 9) % 24, isNight: false }],
+  employees: [{ empId: 'E9', name: 'Naveen', start: SHIFT_START_HOUR, end: (SHIFT_START_HOUR + 9) % 24, isNight: false }],
   timings: { X: [NOW.getHours()] },
   employeeHours: {},
 })

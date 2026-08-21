@@ -3,7 +3,7 @@ import { guardSession } from '../../../lib/session'
 import {
   readSheetCached, appendRows, CRM_SHEET_ID, TABS, todayStr, yesterdayStr, nowStr, nowIST,
   fetchClientVehicleCounts, getLeaveMapForDate, getShiftOverridesForDate,
-  getOnShiftNamesFromLog, TTL, warmSheetCache, SHIFT_SCREEN_TABS,
+  getOnShiftNamesFromLog, TTL, warmTogether, SHIFT_SCREEN_TABS,
 } from '../../../lib/sheets'
 import { getScheduledEmployeesAtHour, employees, isScheduledAtHour, customTextFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -30,8 +30,8 @@ export default async function handler(req, res) {
   // Ahead of the session check on purpose: the Sessions tab is in that list,
   // so the check reads from the same batch instead of spending a request of
   // its own on the endpoint every dashboard on the floor polls.
-  // See warmSheetCache in lib/sheets.
-  try { await warmSheetCache(CRM_SHEET_ID, SHIFT_SCREEN_TABS) }
+  // See warmTogether in lib/sheets.
+  try { await warmTogether(CRM_SHEET_ID, SHIFT_SCREEN_TABS) }
   catch (e) { console.error('warm failed:', e.message) }
 
   // Signing in somewhere else ends this session. Checked on the polled

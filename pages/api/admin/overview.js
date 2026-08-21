@@ -3,7 +3,7 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
   getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, yesterdayStr,
   hourHasPassed, whoWasOnShiftAtHour, businessHourOrder, DAY_START_HOUR,
-  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, TTL, warmSheetCache, SHIFT_SCREEN_TABS,
+  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, TTL, warmTogether, SHIFT_SCREEN_TABS,
   vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
 import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
@@ -24,10 +24,10 @@ export default async function handler(req, res) {
   try {
     // Every tab this screen needs, asked for in one go before anything else
     // runs — so they cost one request between them instead of one per stage.
-    // See warmSheetCache in lib/sheets.
-    await warmSheetCache(CRM_SHEET_ID, [
+    // See warmTogether in lib/sheets.
+    await warmTogether(CRM_SHEET_ID, [
       ...SHIFT_SCREEN_TABS,
-      [`${TABS.DAILY_SUMMARY}!A:N`, TTL.ROSTER],
+      `${TABS.DAILY_SUMMARY}!A:N`,
     ])
 
     // Roster and client hours come from the sheet; this makes sure this

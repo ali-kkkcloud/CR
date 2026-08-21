@@ -190,6 +190,33 @@ const SPARSE = {
   '/api/footage/followup-options':() => ({ active: [], others: [] }),
 }
 
+// ── The combined poll ──────────────────────────────────────────────────
+//
+// The dashboard's thirty-second refresh is one request now, not six — see
+// pages/api/dashboard/tick.js. It is built here out of the SAME six fixtures
+// the individual endpoints answer with, so the two can never disagree about
+// what a payload looks like.
+//
+// The sparse pass deliberately drops three of the six. A section that could
+// not be produced comes back as null, and the page has to keep whatever it
+// already had on screen for that panel rather than blanking it.
+ROUTES['/api/dashboard/tick'] = () => ({
+  clients:     ROUTES['/api/clients/current'](),
+  myDay:       ROUTES['/api/dashboard/my-day'](),
+  summary:     ROUTES['/api/dashboard/summary'](),
+  footage:     ROUTES['/api/footage/list'](),
+  breakStatus: ROUTES['/api/break/status'](),
+  shiftStatus: ROUTES['/api/shift/status'](),
+})
+SPARSE['/api/dashboard/tick'] = () => ({
+  clients:     SPARSE['/api/clients/current'](),
+  myDay:       null,
+  summary:     SPARSE['/api/dashboard/summary'](),
+  footage:     null,
+  breakStatus: null,
+  shiftStatus: SPARSE['/api/shift/status'](),
+})
+
 ;(async () => {
   const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
   let problems = 0
