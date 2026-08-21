@@ -33,6 +33,7 @@ const board    = (await import('../pages/api/clients/current.js')).default
 const myDay    = (await import('../pages/api/dashboard/my-day.js')).default
 const summary  = (await import('../pages/api/dashboard/summary.js')).default
 const footage  = (await import('../pages/api/footage/list.js')).default
+const tick     = (await import('../pages/api/dashboard/tick.js')).default
 
 const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
 const TODAY = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -117,7 +118,14 @@ const ADMIN = { name: 'Admin',  empId: 'A1', role: 'admin' }
 const cases = [
   ['admin Dashboard', async () => { await run(overview, ADMIN) }],
   ['admin Hour by hour', async () => { await run(fullDay, ADMIN, { date: TODAY }) }],
-  ['employee opening the app', async () => {
+  // What the employee's screen actually does now: one request, every thirty
+  // seconds, and again the moment they open the app.
+  ['employee refresh (tick)', async () => {
+    await run(tick, EMP, { range: 'month', activeAgoMs: '1000' })
+  }],
+  // The six on their own, for comparison — still the fallback if the
+  // combined one fails.
+  ['employee, the old six', async () => {
     await Promise.all([
       run(board, EMP), run(myDay, EMP),
       run(summary, EMP, { range: 'month' }), run(footage, EMP),
