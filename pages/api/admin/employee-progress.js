@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import {
   readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, todayStr, yesterdayStr,
-  getShiftOverridesForDate, getLeaveMapForDate, fetchClientVehicleCounts, TTL, warmSheetCache, SHIFT_SCREEN_TABS,
+  getShiftOverridesForDate, getLeaveMapForDate, fetchClientVehicleCounts, TTL, warmTogether, SHIFT_SCREEN_TABS,
 } from '../../../lib/sheets'
 import { employees } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -41,8 +41,8 @@ export default async function handler(req, res) {
   try {
     // Every tab this screen needs, asked for in one go before anything else
     // runs — so they cost one request between them instead of one per stage.
-    // See warmSheetCache in lib/sheets.
-    await warmSheetCache(CRM_SHEET_ID, [...SHIFT_SCREEN_TABS, [`${TABS.DAILY_SUMMARY}!A:N`, TTL.ROSTER]])
+    // See warmTogether in lib/sheets.
+    await warmTogether(CRM_SHEET_ID, [...SHIFT_SCREEN_TABS, `${TABS.DAILY_SUMMARY}!A:N`])
 
     // Roster and client hours come from the sheet; this makes sure this
     // request is working from the current ones.

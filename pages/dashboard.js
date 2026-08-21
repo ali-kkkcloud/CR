@@ -149,14 +149,16 @@ export default function Dashboard() {
 
   // Where the shift stands. Kept apart from init so the poll can refresh it,
   // and so a failed read can leave it alone rather than overwrite it.
-  const loadShiftStatus = useCallback(async () => {
-    const r = await fetchJSON('/api/shift/status')
+  // Applying a payload is kept apart from fetching it, so the combined poll
+  // (/api/dashboard/tick) can hand these exactly the same payloads the
+  // individual endpoints return. One copy of the handling, two ways in.
+  const applyShiftStatus = useCallback((data) => {
     // Only a well-formed answer is allowed to move this. A failed read used to
     // fall through to "not started", which showed an employee who was mid-shift
     // a Start shift button — and pressing it would have opened a second,
     // duplicate shift row for the same day.
-    if (!r.ok || !r.data?.status) return false
-    const d = r.data
+    if (!data?.status) return false
+    const d = data
     if (d.status === 'active') {
       setShiftStatus('active'); setStartTime(d.startTime); setShiftDate(d.shiftDate || '')
     } else if (d.status === 'ended') {
@@ -166,6 +168,12 @@ export default function Dashboard() {
     }
     return true
   }, [])
+
+  const loadShiftStatus = useCallback(async () => {
+    const r = await fetchJSON('/api/shift/status')
+    if (!r.ok) return false
+    return applyShiftStatus(r.data)
+  }, [applyShiftStatus])
 
   // ── Getting in, and staying in ────────────────────────────────────────
   //
@@ -220,15 +228,9 @@ export default function Dashboard() {
     return () => { cancelled = true; clearTimeout(bootTimerRef.current) }
   }, [loadShiftStatus])
 
-  const loadClients = useCallback(async () => {
+  const applyClients = useCallback((data) => {
     try {
-      const r = await fetchJSON('/api/clients/current')
-      // Somebody has signed in as this employee somewhere else. Two live
-      // browsers under one name is the thing being prevented, so this one
-      // stops here rather than carrying on with a board it no longer owns.
-      if (r.data?.reason === 'session-replaced') { router.replace('/login?reason=elsewhere'); return }
-      if (!r.ok) return                   // keep last good state, retry on next poll
-      const data = r.data
+      if (!data) return                   // keep last good state, retry on next poll
       if (data.clients) setClients(data.clients)
       // Why the list looks the way it does — an empty one needs explaining.
       setClientContext({
@@ -250,25 +252,46 @@ export default function Dashboard() {
         })
       }
       if (typeof data.hour === 'number') { setCurrentHour(data.hour); hourRef.current = data.hour }
-    } catch (e) { console.error('loadClients failed:', e) }
+    } catch (e) { console.error('applyClients failed:', e) }
+  }, [])
+
+  const loadClients = useCallback(async () => {
+    const r = await fetchJSON('/api/clients/current')
+    // Somebody has signed in as this employee somewhere else. Two live
+    // browsers under one name is the thing being prevented, so this one
+    // stops here rather than carrying on with a board it no longer owns.
+    if (r.data?.reason === 'session-replaced') { router.replace('/login?reason=elsewhere'); return }
+    if (!r.ok) return
+    applyClients(r.data)
+  }, [applyClients, router])
+
+  const applyFootage = useCallback((data) => {
+    if (!data) return
+    setFootage({ pending: data.pending || [], completed: data.completed || [], followups: data.followups || [] })
   }, [])
 
   const loadFootage = useCallback(async () => {
-    try {
-      const r = await fetchJSON('/api/footage/list')
-      if (!r.ok) return
-      const data = r.data
-      setFootage({ pending: data.pending || [], completed: data.completed || [], followups: data.followups || [] })
-    } catch (e) { console.error('loadFootage failed:', e) }
+    const r = await fetchJSON('/api/footage/list')
+    if (!r.ok) return
+    applyFootage(r.data)
+  }, [applyFootage])
+
+  const applyMyDay = useCallback((data) => {
+    if (!Array.isArray(data?.timeline)) return
+    setMyDay(data)
   }, [])
 
   const loadMyDay = useCallback(async () => {
-    try {
-      const r = await fetchJSON('/api/dashboard/my-day')
-      const data = r.data
-      if (!r.ok || !Array.isArray(data?.timeline)) return
-      setMyDay(data)
-    } catch (e) { console.error('loadMyDay failed:', e) }
+    const r = await fetchJSON('/api/dashboard/my-day')
+    if (!r.ok) return
+    applyMyDay(r.data)
+  }, [applyMyDay])
+
+  const applySummary = useCallback((data) => {
+    // Only accept a well-formed payload; a 500 body would otherwise be
+    // stored as "summary" and crash the dashboard on first render.
+    if (data?.trend) { setSummary(data); summaryRef.current = data }
+    else if (!summaryRef.current) setSummary({ error: (data && data.error) || 'Server is busy, retrying…' })
   }, [])
 
   const loadSummary = useCallback(async (range) => {
@@ -292,15 +315,51 @@ export default function Dashboard() {
     }
   }, [])
 
-  const loadBreakStatus = useCallback(async () => {
-    try {
-      const agoMs = Math.max(0, Date.now() - lastInputRef.current)
-      const r = await fetchJSON(`/api/break/status?activeAgoMs=${agoMs}`)
-      if (!r.ok) return
-      const data = r.data
-      setBreakStatus(data)
-    } catch (e) { console.error('loadBreakStatus failed:', e) }
+  const applyBreakStatus = useCallback((data) => {
+    if (!data) return
+    setBreakStatus(data)
   }, [])
+
+  const loadBreakStatus = useCallback(async () => {
+    const agoMs = Math.max(0, Date.now() - lastInputRef.current)
+    const r = await fetchJSON(`/api/break/status?activeAgoMs=${agoMs}`)
+    if (!r.ok) return
+    applyBreakStatus(r.data)
+  }, [applyBreakStatus])
+
+  // ── The thirty-second refresh, as ONE request ─────────────────────────
+  //
+  // This was six fetches side by side. On Vercel each API route is its own
+  // serverless function with its own memory, so six routes meant six separate
+  // copies of the read cache, each fetching the same tabs from Google — and
+  // Google's allowance is 60 reads a minute for the WHOLE platform. The floor
+  // was using all of it, which is why saving a client was taking half a
+  // minute: its reads and its write were being refused and retried.
+  //
+  // /api/dashboard/tick runs the same six handlers in one process, so they
+  // share one cache and the tab reads collapse. See the comment at the top of
+  // that file.
+  //
+  // If it fails outright, the six endpoints are still there and still work —
+  // fall back to them rather than leaving the screen frozen.
+  const loadTick = useCallback(async () => {
+    const agoMs = Math.max(0, Date.now() - lastInputRef.current)
+    const r = await fetchJSON(`/api/dashboard/tick?activeAgoMs=${agoMs}&range=${summaryRangeRef.current}`)
+    if (r.data?.reason === 'session-replaced') { router.replace('/login?reason=elsewhere'); return }
+    if (!r.ok || !r.data) {
+      loadClients(); loadMyDay(); loadFootage(); loadBreakStatus(); loadShiftStatus()
+      loadSummary(summaryRangeRef.current)
+      return
+    }
+    const d = r.data
+    applyClients(d.clients)
+    applyMyDay(d.myDay)
+    applyFootage(d.footage)
+    applyBreakStatus(d.breakStatus)
+    applyShiftStatus(d.shiftStatus)
+    if (d.summary) applySummary(d.summary)
+  }, [applyClients, applyMyDay, applyFootage, applyBreakStatus, applyShiftStatus, applySummary,
+      loadClients, loadMyDay, loadFootage, loadBreakStatus, loadShiftStatus, loadSummary, router])
 
   // Mouse, keys, scroll, touch — throttled, because mousemove fires
   // constantly and we only need the timestamp, not every event.
@@ -358,11 +417,12 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!user) return
-    loadClients()
-    loadFootage()
-    loadMyDay()
-    loadSummary(summaryRange)
-    loadBreakStatus()
+    // First load goes through the same one request the poll uses. Five
+    // fetches at once was five cold serverless functions each reading the
+    // same tabs — the most expensive moment of the day, repeated every time
+    // somebody opened the platform.
+    if (!summaryRef.current) setSummaryLoading(true)
+    loadTick().finally(() => setSummaryLoading(false))
     // Everything on the screen refreshes, every thirty seconds.
     //
     // The board and the hour strip used to refresh ONLY when the clock rolled
@@ -375,14 +435,7 @@ export default function Dashboard() {
     // Both are safe to poll: loadClients merges rather than clobbers, so
     // anything typed in the last two minutes survives, and loadMyDay keeps the
     // last good payload if the response is not well-formed.
-    autoRef.current = setInterval(() => {
-      loadClients()
-      loadMyDay()
-      loadFootage()
-      loadBreakStatus()
-      loadShiftStatus()
-      loadSummary(summaryRangeRef.current)
-    }, 30000)
+    autoRef.current = setInterval(() => { loadTick() }, 30000)
     return () => clearInterval(autoRef.current)
   }, [user])
 

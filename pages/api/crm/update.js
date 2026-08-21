@@ -63,8 +63,14 @@ export default async function handler(req, res) {
       // hour. The client's fleet size is what it is; this is what was seen.
       String(liveVehicles ?? ''),
     ]
-    if (existingRowIndex > 0) await updateRowCells(CRM_SHEET_ID, TABS.CRM_UPDATES, existingRowIndex, 1, rowData)
-    else await appendRow(CRM_SHEET_ID, TABS.CRM_UPDATES, rowData)
+    // Applied to the cached copy of the tab rather than throwing the whole
+    // tab away. This is the busiest write on the platform — a floor of
+    // eighteen saves a client every few seconds — and dropping a 3,700-row
+    // tab on each one meant the next save, and every dashboard poll behind
+    // it, had to fetch all of it back from Google. See patchCachedRows.
+    const cachedRange = `${TABS.CRM_UPDATES}!A:L`
+    if (existingRowIndex > 0) await updateRowCells(CRM_SHEET_ID, TABS.CRM_UPDATES, existingRowIndex, 1, rowData, { cachedRange })
+    else await appendRow(CRM_SHEET_ID, TABS.CRM_UPDATES, rowData, { cachedRange })
     return res.status(200).json({ success:true, updatedAt: now, shiftDate })
   } catch(err) {
     console.error('crm/update failed:', err?.message || err)
