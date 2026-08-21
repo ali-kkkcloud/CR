@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { guardSession } from '../../../lib/session'
 import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr, TTL } from '../../../lib/sheets'
-import { sweepAutoBreaks, recordHeartbeat, recentDates, findOpenBreaks, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
+import { sweepAutoBreaks, recordHeartbeat, recentDates, findOpenBreaks, totalBreakMinutes, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -93,7 +93,10 @@ export default async function handler(req, res) {
       })
     }
 
-    const totalMinutesToday = history.reduce((s,h) => s + (h.minutes||0), 0)
+    // Counted as the union of the stretches, not the sum of the rows —
+    // overlapping breaks (see totalBreakMinutes) would otherwise be added
+    // together and read as far longer than the person was actually away.
+    const totalMinutesToday = totalBreakMinutes(rows, user.empId, dates)
 
     return res.status(200).json({
       onBreak: !!active,

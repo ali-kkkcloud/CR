@@ -10,7 +10,7 @@ import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, 
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan } from '../../../lib/dayplan'
-import { sweepShiftAutoClose } from '../../../lib/attendance'
+import { sweepShiftAutoClose, totalBreakMinutes } from '../../../lib/attendance'
 import { sweepDailySummary } from '../../../lib/rollup'
 import { getHistory } from '../../../lib/history'
 
@@ -178,6 +178,11 @@ export default async function handler(req, res) {
     // date + start time), so a break opened twice is never counted twice.
     const breakTotals = {}
     {
+      const empIdByName = {}
+      breakRows.slice(1).forEach(r => {
+        const n = (r[1] || '').toString().trim()
+        if (n && !empIdByName[n]) empIdByName[n] = (r[0] || '').toString().trim()
+      })
       const seen = new Set()
       breakRows.slice(1).forEach(r => {
         if (r[2] !== today) return
@@ -189,10 +194,18 @@ export default async function handler(req, res) {
         const open = (r[6] || '').toString().trim() === 'Active'
         const mins = open ? calcDurationMinutes(r[2], r[3], r[2], nowStr()) : (parseInt(r[5]) || 0)
         const t = breakTotals[name] || (breakTotals[name] = { minutes: 0, sessions: 0, autoSessions: 0, openSince: null })
-        t.minutes += Math.max(0, mins)
         t.sessions++
         if ((r[7] || '') === 'Auto') t.autoSessions++
         if (open) t.openSince = r[3] || null
+      })
+      // The minutes are the UNION of each person's break stretches rather than
+      // the sum of their rows. Two automatic breaks can overlap — one opened
+      // while another was still running, because nothing was polling for the
+      // person whose machine was off — and adding them together reported six
+      // hours away for a stretch of under three.
+      Object.keys(breakTotals).forEach(name => {
+        const id = (empIdByName[name] || '').toString().trim()
+        breakTotals[name].minutes = id ? totalBreakMinutes(breakRows, id, [today]) : 0
       })
     }
 
