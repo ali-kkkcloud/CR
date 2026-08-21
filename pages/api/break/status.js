@@ -1,7 +1,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { guardSession } from '../../../lib/session'
 import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr, TTL } from '../../../lib/sheets'
-import { sweepAutoBreaks, recordHeartbeat, recentDates, findOpenBreaks, totalBreakMinutes, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
+import { sweepAutoBreaks, recordHeartbeat, recentDates, findOpenBreaks, totalBreakMinutes, isSupersededBreak, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -54,6 +54,8 @@ export default async function handler(req, res) {
     const seenBreak = new Set()
     const myToday = mine.filter(r => {
       if (r[2] !== today) return false
+      // A row the repair superseded is history, not a break that was taken.
+      if (isSupersededBreak(r)) return false
       const key = `${r[2]}|${r[3]}`
       if (seenBreak.has(key)) return false
       seenBreak.add(key)

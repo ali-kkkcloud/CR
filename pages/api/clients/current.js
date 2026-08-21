@@ -8,7 +8,7 @@ import {
 import { getScheduledEmployeesAtHour, employees, isScheduledAtHour, customTextFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { computeDayPlan } from '../../../lib/dayplan'
-import { sweepShiftAutoClose, sweepAutoBreaks } from '../../../lib/attendance'
+import { sweepShiftAutoClose, sweepAutoBreaks, shouldSweepFloor } from '../../../lib/attendance'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -25,17 +25,21 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
   const user = getUserFromReq(req)
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
+  // Every tab this screen needs, asked for in one go before anything else
+  // runs — so they cost one request between them instead of one per stage.
+  // Ahead of the session check on purpose: the Sessions tab is in that list,
+  // so the check reads from the same batch instead of spending a request of
+  // its own on the endpoint every dashboard on the floor polls.
+  // See warmSheetCache in lib/sheets.
+  try { await warmSheetCache(CRM_SHEET_ID, SHIFT_SCREEN_TABS) }
+  catch (e) { console.error('warm failed:', e.message) }
+
   // Signing in somewhere else ends this session. Checked on the polled
   // endpoints, so a replaced session is noticed within one poll rather than
   // leaving two live browsers under one name. See lib/session.js.
   if (!(await guardSession(user, res))) return
 
   try {
-    // Every tab this screen needs, asked for in one go before anything else
-    // runs — so they cost one request between them instead of one per stage.
-    // See warmSheetCache in lib/sheets.
-    await warmSheetCache(CRM_SHEET_ID, SHIFT_SCREEN_TABS)
-
     // Roster and client hours come from the sheet; this makes sure this
     // request is working from the current ones.
     await loadScheduleData()
@@ -69,8 +73,12 @@ export default async function handler(req, res) {
     // platform, the whole floor is being checked. Reads are cached and a row
     // is only written when a break is actually due, so a sweep that finds
     // nothing costs nothing.
-    try { await sweepAutoBreaks(employees()) }
-    catch (e) { console.error('auto-break sweep failed:', e.message) }
+    // Throttled — see shouldSweepFloor. Running this on every request to the
+    // busiest endpoint spent the quota the floor needs to save their work.
+    if (shouldSweepFloor()) {
+      try { await sweepAutoBreaks(employees()) }
+      catch (e) { console.error('auto-break sweep failed:', e.message) }
+    }
 
     const hour  = nowIST().getHours()
     const today = todayStr()

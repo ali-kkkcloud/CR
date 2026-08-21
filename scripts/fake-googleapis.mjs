@@ -13,6 +13,10 @@ export const behaviour = {
   // range -> rows, for tests that need a particular tab to hold something
   // specific rather than the self-describing default.
   data: {},
+  // Ranges that fail ONLY on a single-range read, not in a batch. The read
+  // layer batches its cached reads and falls back to values.get for the
+  // uncached ones, so this is how a test reaches the uncached path alone.
+  rateLimitedSingle: new Set(),
   // Milliseconds a call to Google takes. A real Sheets request from a
   // serverless function is a couple of hundred; set this to measure how much
   // of a screen's wall-clock time is round trips rather than our own work.
@@ -31,6 +35,7 @@ export function reset() {
   calls.update.length = 0
   behaviour.broken = new Set()
   behaviour.rateLimited = new Set()
+  behaviour.rateLimitedSingle = new Set()
   behaviour.failBatch = false
   behaviour.data = {}
   behaviour.latencyMs = 0
@@ -70,7 +75,7 @@ export const google = {
           async get({ range }) {
             calls.get.push(range)
             await wait()
-            if (behaviour.rateLimited.has(range)) throw rateLimit()
+            if (behaviour.rateLimited.has(range) || behaviour.rateLimitedSingle.has(range)) throw rateLimit()
             if (behaviour.broken.has(range)) throw new Error(`Unable to parse range: ${range}`)
             return { data: { values: rowsFor(range) } }
           },
