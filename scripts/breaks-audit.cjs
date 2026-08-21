@@ -102,10 +102,23 @@ const hm = (m) => `${Math.floor(m / 60)}h ${m % 60}m`
   // duplicate waiting to be dealt with. Counting it again would report work
   // still to do on a tab that is already clean.
   const superseded = (r) => (r[6] || '').toString().startsWith('Duplicate')
+  // Each pass below corrects what the passes after it should see — capping a
+  // row that ran over the next break has to be visible to the overlap rule,
+  // or the overlap rule merges the very stretch that was just cut back. So
+  // these are COPIES, corrected in place as we go. `rows` keeps the sheet as
+  // it actually stands, which is what the "as recorded" column reports.
   const entries = rows.slice(1)
-    .map((r, i) => ({ row: i + 2, r }))
+    .map((r, i) => ({ row: i + 2, r: [...r] }))
     .filter(x => !superseded(x.r))
   const supersededCount = rows.length - 1 - entries.length
+
+  // Taken before anything is corrected, so the report can show what the sheet
+  // says today against what it would say afterwards.
+  const recordedByEmp = {}
+  entries.forEach(({ r }) => {
+    const n = (r[1] || '').toString().trim(); if (!n) return
+    recordedByEmp[n] = (recordedByEmp[n] || 0) + (parseInt(r[5], 10) || 0)
+  })
 
   // ── Group by the break they belong to ────────────────────────────────
   const groups = new Map()
@@ -136,6 +149,57 @@ const hm = (m) => `${Math.floor(m / 60)}h ${m % 60}m`
       survivors.push(list[0])
     }
   })
+
+  // ── A break cannot still be running when the next one starts ─────────
+  //
+  // The 21 August damage, and it is the opposite shape to everything above.
+  // A row went invisible at 02:37 pm, stayed Active all afternoon while seven
+  // ordinary breaks were taken and resumed on top of it, and was finally
+  // closed by End shift at 09:06 pm — 389 minutes, for a man who was working.
+  //
+  // Merging it into the breaks it spans, which is what the rule below would
+  // do, would make it worse: one 389-minute stretch swallowing seven real
+  // breaks. So it is CAPPED first.
+  //
+  // Starting another break is proof of being back at the desk — nothing else
+  // can start one. So a finished row that runs past the start of the same
+  // employee's next break on the same operating day is cut off there. The
+  // start time is never touched, nothing is deleted, and the result is the
+  // most that can honestly be claimed: away from when the break began until
+  // the moment they were demonstrably back.
+  //
+  // Only finished rows. An Active row belongs to a shift that may still be
+  // running and is left for the platform to close.
+  let capped = 0
+  {
+    const perEmpDay = new Map()
+    survivors.forEach(x => {
+      const key = [(x.r[0] || '').toString().trim(), x.r[2] || ''].join('|')
+      ;(perEmpDay.get(key) || perEmpDay.set(key, []).get(key)).push(x)
+    })
+    perEmpDay.forEach(list => {
+      const spans = list.map(x => ({ x, s: spanOf(x.r, nowMs) })).filter(v => v.s)
+      spans.sort((a, b) => a.s.start - b.s.start)
+      for (let i = 0; i < spans.length; i++) {
+        const cur = spans[i]
+        if (cur.s.open) continue
+        // The next break that starts AFTER this one began.
+        const next = spans.slice(i + 1).find(v => v.s.start > cur.s.start)
+        if (!next || cur.s.end <= next.s.start) continue
+        const trimmed = mins(next.s.start - cur.s.start)
+        capped++
+        if (trimmed <= 0) {
+          fixes.set(cur.x.row, [cur.x.r[3], 0, 'Duplicate — merged'])
+          cur.x.r[4] = cur.x.r[3]; cur.x.r[5] = '0'; cur.x.r[6] = 'Duplicate — merged'
+        } else {
+          // The next break's own start time, as the sheet already writes it.
+          fixes.set(cur.x.row, [next.x.r[3], trimmed, 'Completed'])
+          cur.x.r[4] = next.x.r[3]; cur.x.r[5] = String(trimmed); cur.x.r[6] = 'Completed'
+        }
+        cur.s = spanOf(cur.x.r, nowMs) || cur.s
+      }
+    })
+  }
 
   // ── Overlapping stretches are one stretch ────────────────────────────
   //
@@ -208,10 +272,7 @@ const hm = (m) => `${Math.floor(m / 60)}h ${m % 60}m`
     if (ce !== null) total += ce - cs
     return mins(total)
   }
-  entries.forEach(({ r }) => {
-    const n = (r[1] || '').toString().trim(); if (!n) return
-    beforeByEmp[n] = (beforeByEmp[n] || 0) + (parseInt(r[5], 10) || 0)
-  })
+  Object.assign(beforeByEmp, recordedByEmp)
   const byEmp = {}
   survivors.forEach(x => {
     const n = (x.r[1] || '').toString().trim(); if (!n) return
@@ -221,6 +282,7 @@ const hm = (m) => `${Math.floor(m / 60)}h ${m % 60}m`
 
   console.log(`\n  already marked superseded       ${supersededCount}`)
   console.log(`  duplicate rows for one break    ${twins}`)
+  console.log(`  rows cut back to the next break  ${capped}`)
   console.log(`  overlapping rows merged into one ${merged}`)
   console.log(`  durations that disagree          ${durations}`)
   console.log(`  rows to correct                  ${fixes.size}`)
@@ -236,6 +298,24 @@ const hm = (m) => `${Math.floor(m / 60)}h ${m % 60}m`
   if (!APPLY) {
     console.log(`\nNothing written. Re-run with --apply.`)
     return
+  }
+
+  // ── Never touch a break that is still running ────────────────────────
+  //
+  // This runs against a live sheet with a shift on the floor. A row still
+  // marked Active belongs to somebody who is away from their desk right now,
+  // and the platform is about to close it the moment they press Resume. If
+  // this wrote to it in the same second, one of the two writes would be lost
+  // — and the one that matters is theirs, not ours.
+  //
+  // Anything skipped here is simply picked up by the next run, once the shift
+  // has closed it normally.
+  const isActive = (row) => ((rows[row - 1] || [])[6] || '').toString().trim() === 'Active'
+  const skipped = [...fixes.keys()].filter(isActive)
+  skipped.forEach(row => fixes.delete(row))
+  if (skipped.length) {
+    console.log(`\n  ${skipped.length} row(s) left alone — still on a break right now: ` +
+                skipped.map(r => `${(rows[r - 1] || [])[1]} row ${r}`).join(', '))
   }
 
   // One batch. Columns E, F and G only — a start time is never touched.

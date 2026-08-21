@@ -7,6 +7,7 @@ import {
 import { getScheduledEmployeesAtHour, computeCurrentHourRedistribution, specificClientsFor, customTextFor, employees } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { computeDayPlan } from '../../../lib/dayplan'
+import { findOpenBreaks } from '../../../lib/attendance'
 
 const ISSUE_TAB = 'Issues- Realtime'
 
@@ -50,26 +51,45 @@ export default async function handler(req, res) {
     // from a previous day that were never resumed) — a shift ending should
     // never leave a break "ongoing" forever. ──
     const breakRows = await readSheetCached(CRM_SHEET_ID, `${TABS.BREAKS}!A:H`, TTL.LIVE)
-    // Every open row is closed, not just the newest. An employee should only
-    // ever have one break running, but two writers landing together can leave
-    // a duplicate behind, and any row still marked Active would block the
-    // next shift's breaks entirely.
+    // Every open row is closed, not just the newest — any row still marked
+    // Active would block the next shift's breaks entirely.
+    //
+    // ── But only ONE of them is a break ────────────────────────────────
+    //
+    // An employee can only be away once at a time, so several open rows means
+    // duplicates, and each was being credited the FULL length from its own
+    // start to now. Rakesh on 21 August ended his shift at 09:06 pm with five
+    // stale rows open from 02:37 pm: five times 389 minutes, thirty-two hours
+    // of break in a nine-hour shift, on top of the seven real breaks he had
+    // actually taken and resumed.
+    //
+    // The earliest open row is the break. The rest are marked as duplicates at
+    // zero, the same way the idle sweep collapses them, so they are closed —
+    // which is what this block is for — without being counted.
+    const openNow = findOpenBreaks(breakRows, user.empId, [today, yesterday])
+    const primary = openNow[openNow.length - 1] || null
+    for (const b of openNow) {
+      const isPrimary = primary && b.rowIndex === primary.rowIndex
+      // calcDurationMinutes works off the row's own date, so a break that
+      // started before midnight on a night shift reports 13 minutes rather
+      // than a negative.
+      const minutes = isPrimary ? calcDurationMinutes(b.startDate, b.startTime, today, now) : 0
+      // Cols E=EndTime F=DurationMinutes G=Status. Writing from column D
+      // instead overwrote StartTime and left Status on Active, so the break
+      // was never actually closed — which then blocked every later break.
+      await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, b.rowIndex, 5,
+                           [now, minutes, isPrimary ? 'Completed' : 'Duplicate — merged'])
+    }
+
+    // Anything still Active from a shift that was never closed out is a
+    // genuine orphan: zeroed and closed at its own start time rather than
+    // credited to today.
     for (let i = breakRows.length - 1; i >= 1; i--) {
       const r = breakRows[i]
       if ((r[0] || '').toString().trim() !== user.empId.toString().trim()) continue
       if (r[6] !== 'Active') continue
-      // A break belonging to this shift is measured properly, including one
-      // that started before midnight on a night shift — calcDurationMinutes
-      // works off the row's own date, so it reports 13 minutes rather than a
-      // negative. Anything older is a genuine orphan from a shift that was
-      // never closed out, so it is simply zeroed rather than credited.
-      const belongsToThisShift = r[2] === today || r[2] === yesterday
-      const minutes = belongsToThisShift ? calcDurationMinutes(r[2], r[3], today, now) : 0
-      const endTimeToWrite = belongsToThisShift ? now : r[3]
-      // Cols E=EndTime F=DurationMinutes G=Status. Writing from column D
-      // instead overwrote StartTime and left Status on Active, so the break
-      // was never actually closed — which then blocked every later break.
-      await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 5, [endTimeToWrite, minutes, 'Completed'])
+      if (r[2] === today || r[2] === yesterday) continue
+      await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 5, [r[3], 0, 'Completed'])
     }
 
     // ── 2. Redistribute only THIS HOUR's unfilled clients ──
