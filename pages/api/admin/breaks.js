@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr, TTL } from '../../../lib/sheets'
-import { sweepAutoBreaks, findOpenBreaks, recentDates } from '../../../lib/attendance'
+import { sweepAutoBreaks, findOpenBreaks, recentDates, isSupersededBreak, totalBreakMinutes } from '../../../lib/attendance'
 
 // GET /api/admin/breaks?from=YYYY-MM-DD&to=YYYY-MM-DD  (both optional — defaults to today)
 export default async function handler(req, res) {
@@ -89,14 +89,29 @@ export default async function handler(req, res) {
       liveBreaks[r[1] || 'Unknown'] = { since: open.startTime, date: open.startDate, isAuto: open.isAuto }
     })
 
+    // Rows the repair superseded are history at zero minutes. Listing them
+    // would put hundreds of "0m" sessions on this screen and inflate every
+    // session count with breaks nobody took.
+    const real = relevant.filter(r => !isSupersededBreak(r))
+
     const byEmployee = {}
-    relevant.forEach(r => {
+    const rowsOf = {}
+    real.forEach(r => {
       const name = r[1] || 'Unknown'
       if (!byEmployee[name]) byEmployee[name] = { name, sessions: 0, autoSessions: 0, totalMinutes: 0, currentlyOnBreak: false, activeSince: null, activeIsAuto: false }
-      const minutes = r[6] === 'Active' ? calcDurationMinutes(r[2], r[3], r[2], nowStr()) : (parseInt(r[5]) || 0)
       byEmployee[name].sessions++
-      byEmployee[name].totalMinutes += minutes
       if ((r[7] || '') === 'Auto') byEmployee[name].autoSessions = (byEmployee[name].autoSessions || 0) + 1
+      ;(rowsOf[name] || (rowsOf[name] = [])).push(r)
+    })
+
+    // Counted the same way the employee's own screen counts it: the union of
+    // the stretches, not the sum of the rows. Adding the rows up made two
+    // overlapping breaks read as one long one twice over, and the admin's
+    // figure then disagreed with what the employee was being shown for the
+    // same day. The rows are already filtered to the chosen range and to the
+    // one employee, so no further filtering is wanted here.
+    Object.entries(rowsOf).forEach(([name, rs]) => {
+      byEmployee[name].totalMinutes = totalBreakMinutes([null, ...rs], null, null)
     })
 
     // Somebody on a break right now may have no session inside the selected
@@ -112,7 +127,7 @@ export default async function handler(req, res) {
 
     const employees = Object.values(byEmployee).sort((a,b) => b.totalMinutes - a.totalMinutes)
 
-    const sessions = relevant.map(r => ({
+    const sessions = real.map(r => ({
       name: r[1] || '', date: r[2] || '', startTime: r[3] || '', endTime: r[4] || '',
       minutes: r[6] === 'Active' ? calcDurationMinutes(r[2], r[3], r[2], nowStr()) : (parseInt(r[5]) || 0),
       status: r[6] || '',

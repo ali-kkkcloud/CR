@@ -10,7 +10,7 @@ import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, 
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan } from '../../../lib/dayplan'
-import { sweepShiftAutoClose, totalBreakMinutes } from '../../../lib/attendance'
+import { sweepShiftAutoClose, totalBreakMinutes, isSupersededBreak } from '../../../lib/attendance'
 import { sweepDailySummary } from '../../../lib/rollup'
 import { getHistory } from '../../../lib/history'
 
@@ -186,6 +186,10 @@ export default async function handler(req, res) {
       const seen = new Set()
       breakRows.slice(1).forEach(r => {
         if (r[2] !== today) return
+        // A row the repair superseded is history at zero minutes, not a break
+        // somebody took. Counting them put hundreds of extra "sessions"
+        // against names that had taken two.
+        if (isSupersededBreak(r)) return
         const name = (r[1] || '').toString().trim()
         if (!name) return
         const key = `${(r[0] || '').toString().trim()}|${r[2]}|${r[3]}`

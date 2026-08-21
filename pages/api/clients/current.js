@@ -25,17 +25,21 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
   const user = getUserFromReq(req)
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
+  // Every tab this screen needs, asked for in one go before anything else
+  // runs — so they cost one request between them instead of one per stage.
+  // Ahead of the session check on purpose: the Sessions tab is in that list,
+  // so the check reads from the same batch instead of spending a request of
+  // its own on the endpoint every dashboard on the floor polls.
+  // See warmSheetCache in lib/sheets.
+  try { await warmSheetCache(CRM_SHEET_ID, SHIFT_SCREEN_TABS) }
+  catch (e) { console.error('warm failed:', e.message) }
+
   // Signing in somewhere else ends this session. Checked on the polled
   // endpoints, so a replaced session is noticed within one poll rather than
   // leaving two live browsers under one name. See lib/session.js.
   if (!(await guardSession(user, res))) return
 
   try {
-    // Every tab this screen needs, asked for in one go before anything else
-    // runs — so they cost one request between them instead of one per stage.
-    // See warmSheetCache in lib/sheets.
-    await warmSheetCache(CRM_SHEET_ID, SHIFT_SCREEN_TABS)
-
     // Roster and client hours come from the sheet; this makes sure this
     // request is working from the current ones.
     await loadScheduleData()
