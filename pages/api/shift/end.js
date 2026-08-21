@@ -66,7 +66,22 @@ export default async function handler(req, res) {
     // The earliest open row is the break. The rest are marked as duplicates at
     // zero, the same way the idle sweep collapses them, so they are closed —
     // which is what this block is for — without being counted.
-    const openNow = findOpenBreaks(breakRows, user.empId, [today, yesterday])
+    // The days THIS shift can have written a break under, and no others.
+    //
+    // Not [today, yesterday]. A night shift that began yesterday evening is
+    // logged under yesterday's operating day, so today/yesterday happens to
+    // cover it — but so does a stale Active row left over from the shift
+    // BEFORE this one, and being the earliest it would have been picked as
+    // the break and credited from then until now. A whole extra day of
+    // "break" at the end of a night shift, which is the very shape of bug
+    // this block was rewritten to stop.
+    //
+    // The shift's own date, plus today for the case where somebody works past
+    // 07:00 and the operating day rolls over mid-shift — a break opened at
+    // 07:05 then carries the new day while the shift row still carries the
+    // old one. Anything outside those two belongs to a different shift.
+    const shiftDates = shiftDate === today ? [today] : [shiftDate, today]
+    const openNow = findOpenBreaks(breakRows, user.empId, shiftDates)
     const primary = openNow[openNow.length - 1] || null
     for (const b of openNow) {
       const isPrimary = primary && b.rowIndex === primary.rowIndex
@@ -88,7 +103,11 @@ export default async function handler(req, res) {
       const r = breakRows[i]
       if ((r[0] || '').toString().trim() !== user.empId.toString().trim()) continue
       if (r[6] !== 'Active') continue
-      if (r[2] === today || r[2] === yesterday) continue
+      // Handled above if it belongs to this shift. Everything else is a
+      // leftover from a shift that was never closed out — including one from
+      // yesterday's operating day, which used to be credited as though it
+      // were part of tonight.
+      if (shiftDates.includes(r[2])) continue
       await updateRowCells(CRM_SHEET_ID, TABS.BREAKS, i + 1, 5, [r[3], 0, 'Completed'])
     }
 

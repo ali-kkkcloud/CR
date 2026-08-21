@@ -56,6 +56,22 @@ function nowClock() {
   return `${p(h)}:${p(d.getMinutes())}:${p(d.getSeconds())} ${ampm}`
 }
 
+// The shift opened three hours ago, and the clock-in is expressed against
+// the clock rather than hard-coded.
+//
+// Starting it at the CURRENT hour with everybody clocked in at 07:05 is a
+// shift long finished if this is run in the evening, so the auto-close swept
+// the whole floor on every request and the measurement was of a sweep rather
+// than of a poll. Four fixtures here had that same fault; it is why a test
+// would pass in the morning and fail at night.
+const SHIFT_START = (H + 21) % 24
+const CLOCK_IN = (() => {
+  const pad = (n) => String(n).padStart(2, '0')
+  const x = new Date(d.getTime() - 3 * 3600000)
+  let h = x.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12
+  return `${pad(h)}:${pad(x.getMinutes())}:${pad(x.getSeconds())} ${a}`
+})()
+
 function floor() {
   reset()
   behaviour.latencyMs = LATENCY_MS
@@ -64,11 +80,11 @@ function floor() {
   globalThis.__cautioRoster = { lastGood: null }
   behaviour.data = {
     'Credentials!A:H': [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
-      ...PEOPLE.map(([id, n]) => [id, n, 'x', 'employee', String(H), String((H + 9) % 24), 'No', 'No'])],
+      ...PEOPLE.map(([id, n]) => [id, n, 'x', 'employee', String(SHIFT_START), String((SHIFT_START + 9) % 24), 'No', 'No'])],
     'Client_Timings!A:B': [['Client','Hours'], ...CLIENTS.map(c => [c, String(H)])],
     'Employee_Hours!A:D': [['Employee','Hour','Fixed','Custom']],
     'Shift_Log!A:H': [['EmpID','Name','Date','In','Out','','Status',''],
-      ...PEOPLE.map(([id, n]) => [id, n, TODAY, '07:05:00 am', '', '', 'Active', nowClock()])],
+      ...PEOPLE.map(([id, n]) => [id, n, TODAY, CLOCK_IN, '', '', 'Active', nowClock()])],
     'CRM_Updates!A:L': [['Date','Time','Emp','Client','Hour','Status','','','','','','']],
     'Breaks!A:H': [['EmpID','Name','Date','Start','End','Mins','Type','']],
     'Leaves!A:H': [['EmpID','Name','Date','From','To','Reason','By','At']],
