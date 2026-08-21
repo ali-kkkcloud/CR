@@ -4,12 +4,13 @@ import {
   getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, yesterdayStr,
   hourHasPassed, whoWasOnShiftAtHour, businessHourOrder, DAY_START_HOUR,
   getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, TTL, warmSheetCache, SHIFT_SCREEN_TABS,
+  vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
 import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan } from '../../../lib/dayplan'
-import { sweepShiftAutoClose } from '../../../lib/attendance'
+import { sweepShiftAutoClose, totalBreakMinutes } from '../../../lib/attendance'
 import { sweepDailySummary } from '../../../lib/rollup'
 import { getHistory } from '../../../lib/history'
 
@@ -177,6 +178,11 @@ export default async function handler(req, res) {
     // date + start time), so a break opened twice is never counted twice.
     const breakTotals = {}
     {
+      const empIdByName = {}
+      breakRows.slice(1).forEach(r => {
+        const n = (r[1] || '').toString().trim()
+        if (n && !empIdByName[n]) empIdByName[n] = (r[0] || '').toString().trim()
+      })
       const seen = new Set()
       breakRows.slice(1).forEach(r => {
         if (r[2] !== today) return
@@ -188,10 +194,18 @@ export default async function handler(req, res) {
         const open = (r[6] || '').toString().trim() === 'Active'
         const mins = open ? calcDurationMinutes(r[2], r[3], r[2], nowStr()) : (parseInt(r[5]) || 0)
         const t = breakTotals[name] || (breakTotals[name] = { minutes: 0, sessions: 0, autoSessions: 0, openSince: null })
-        t.minutes += Math.max(0, mins)
         t.sessions++
         if ((r[7] || '') === 'Auto') t.autoSessions++
         if (open) t.openSince = r[3] || null
+      })
+      // The minutes are the UNION of each person's break stretches rather than
+      // the sum of their rows. Two automatic breaks can overlap — one opened
+      // while another was still running, because nothing was polling for the
+      // person whose machine was off — and adding them together reported six
+      // hours away for a stretch of under three.
+      Object.keys(breakTotals).forEach(name => {
+        const id = (empIdByName[name] || '').toString().trim()
+        breakTotals[name].minutes = id ? totalBreakMinutes(breakRows, id, [today]) : 0
       })
     }
 
@@ -210,10 +224,25 @@ export default async function handler(req, res) {
       // the vehicle totals, so a fleet of forty reads as a fleet of none. The
       // schedule and the vehicle source disagree about them, and only a person
       // can decide which one is right.
+      // Same key the map is built under — see vehicleKey in lib/sheets.
       Object.keys(clientTimings()).forEach(client => {
-        const known = vehicleMap[(client || '').toString().trim().toLowerCase()]
+        const known = vehicleMap[vehicleKey(client)]
         if (!known) clientIssues.push({ client, reason: 'not in the vehicle list — counts as 0 vehicles' })
       })
+
+      // A vehicle list that did not finish loading is indistinguishable from
+      // "nobody has any vehicles" everywhere downstream: every client reads 0,
+      // and the split — which is balanced BY vehicles — has nothing to balance
+      // on. The floor saw exactly this one night, a whole hour of clients at
+      // "0 vehicles". Said out loud rather than left to be inferred from a
+      // screen full of zeros.
+      const vh = vehicleMapHealth()
+      if (!vh.complete) {
+        clientIssues.unshift({
+          client: 'The vehicle list did not load completely',
+          reason: `only ${vh.clients} clients have vehicle counts — every other client is being treated as 0, which also flattens the split`,
+        })
+      }
 
       // Work that reaches nobody. The one failure nothing else would report:
       // a client on no board cannot be missed by any employee, so without this

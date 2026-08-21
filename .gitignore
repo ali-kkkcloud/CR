@@ -31,3 +31,6 @@ yarn-error.log*
 
 # local dev server log
 dev.log
+
+# Snapshots taken before repairing a live tab. Employee data — never committed.
+.breaks-backup-*.json

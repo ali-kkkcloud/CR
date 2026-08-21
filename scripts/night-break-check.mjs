@@ -20,6 +20,7 @@ import {
   AUTO_BREAK_IDLE_MINUTES,
 } from '../lib/attendance.js'
 import { parseISTStamp, elapsedSecondsIST } from '../lib/clock.js'
+import { calcDuration, calcDurationMinutes } from '../lib/sheets.js'
 
 let pass = 0, fail = 0
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL  ' + m) } }
@@ -64,11 +65,17 @@ const EVENING = (() => {
   return d
 })()
 
-// Dates a running shift can span, as the code builds them.
-const datesFor = (d) => {
-  const prev = new Date(d); prev.setDate(prev.getDate() - 1)
-  return [opDayOf(d), opDayOf(prev)]
-}
+// The dates a running shift can span, exactly as recentDates() builds them:
+// the operating day in progress NOW, and the one before it.
+//
+// Deriving them from the row's own moment instead left the current operating
+// day off the list, so a time recorded this morning could not resolve against
+// any candidate — and the idle calculation silently fell back to the start of
+// the shift. It only shows up when the clock is on one side of 07:00 and the
+// fixture's times are on the other, which is why it passed for hours and then
+// did not.
+const PREV_OF_NOW = (() => { const d = new Date(NOW); d.setDate(d.getDate() - 1); return d })()
+const datesFor = () => [opDayOf(NOW), opDayOf(PREV_OF_NOW)]
 
 const EMP = { empId: 'E9', name: 'Naveen' }
 const HEAD = ['h']
@@ -79,13 +86,13 @@ const breakRow = (opDay, start, end, mins, status, type) =>
 // ── 1 · A small-hours time is not twenty-four hours ago ────────────────
 console.log('\n1  Reading a time recorded after midnight')
 {
-  const dates = datesFor(SMALL_HOURS)
+  const dates = datesFor()
   const got = resolveMoment(clockOf(SMALL_HOURS), dates, NOW.getTime())
   const hoursOut = got === null ? null : (SMALL_HOURS.getTime() - got) / 3600000
   ok(got === SMALL_HOURS.getTime(),
      `${clockOf(SMALL_HOURS)} on operating day ${opDayOf(SMALL_HOURS)} read ${hoursOut}h early`)
 
-  const ev = resolveMoment(clockOf(EVENING), datesFor(EVENING), NOW.getTime())
+  const ev = resolveMoment(clockOf(EVENING), datesFor(), NOW.getTime())
   ok(ev === EVENING.getTime(),
      `an evening time should be unaffected; ${clockOf(EVENING)} came out ${ev === null ? 'null' : ((EVENING - ev) / 3600000) + 'h'} out`)
   console.log(`   ${clockOf(SMALL_HOURS)} on ${opDayOf(SMALL_HOURS)} → ${new Date(got).toLocaleString('en-GB')}`)
@@ -122,7 +129,7 @@ console.log('\n3  The moment after Resume')
     shiftRows:  [HEAD, shiftRow(opDay, clockOf(clockIn), clockOf(breakFrom))],
     updateRows: [HEAD],
     breakRows:  [HEAD, breakRow(opDay, clockOf(breakFrom), clockOf(resumedAt), 39, 'Completed')],
-    dates: datesFor(clockIn),
+    dates: datesFor(),
     nowMs: NOW.getTime(),
     overridesMap: {},
   }
@@ -149,7 +156,7 @@ console.log('\n4  A duplicate row left Active after the break was closed')
     breakRow(opDay, clockOf(started), clockOf(ended), 11, 'Completed'),
     breakRow(opDay, clockOf(started), '', null, 'Active'),   // the twin nothing closed
   ]
-  const open = findOpenBreaks(rows, 'E9', datesFor(started))
+  const open = findOpenBreaks(rows, 'E9', datesFor())
   ok(open.length === 0, `${open.length} break(s) still read as open after the break was resumed`)
   console.log(`   same start time, one Completed → nothing reads as open`)
 }
@@ -165,7 +172,7 @@ console.log('\n5  A break that really is running')
     breakRow(opDay, clockOf(oldStart), clockOf(oldEnd), 11, 'Completed'),
     breakRow(opDayOf(liveStart), clockOf(liveStart), '', null, 'Active'),
   ]
-  const open = findOpenBreaks(rows, 'E9', datesFor(liveStart))
+  const open = findOpenBreaks(rows, 'E9', datesFor())
   ok(open.length === 1 && open[0].startTime === clockOf(liveStart),
      `expected the ${clockOf(liveStart)} break, got ${JSON.stringify(open.map(o => o.startTime))}`)
 
@@ -185,7 +192,7 @@ console.log('\n6  A real idle stretch still opens a break')
     shiftRows:  [HEAD, shiftRow(opDay, clockOf(clockIn), clockOf(stopped))],
     updateRows: [HEAD],
     breakRows:  [HEAD],
-    dates: datesFor(clockIn),
+    dates: datesFor(),
     nowMs: NOW.getTime(),
     overridesMap: {},
   }
@@ -237,6 +244,46 @@ console.log('\n7  The reported night, replayed')
 
   console.log(`   resumed 12:05:52 am → idle ${idleMin.toFixed(1)}m (was 29h)`)
   console.log(`   11:54:47 pm → 19/08 evening · 04:57:54 am → 20/08 morning`)
+}
+
+// ── 9 · How long a night break actually lasted ─────────────────────────
+//
+// Reported from the floor, with the numbers on screen: a break recorded as
+// 04:39:09 am → 07:00:14 am, listed as 1581 minutes. That is 26 hours and 21
+// minutes for a break that lasted 141.
+//
+// 07:00 is where the operating day turns over. The break opened at 04:39, so
+// it is filed under the day that began at 7am the morning BEFORE; the sweep
+// closed it at 07:00:14, by which time "today" is the new day. Both ends read
+// as calendar dates put a full day between them.
+console.log('\n9  The length of a break that ends at seven in the morning')
+{
+  const DAY_A = '19/08/2026'   // the operating day that began 7am on the 19th
+  const DAY_B = '20/08/2026'   // and the one that began 7am on the 20th
+
+  const m1 = calcDurationMinutes(DAY_A, '04:39:09 am', DAY_B, '07:00:14 am')
+  ok(m1 === 141, `04:39:09 am → 07:00:14 am came out as ${m1} minutes, should be 141`)
+
+  const m2 = calcDurationMinutes(DAY_A, '04:05:31 am', DAY_B, '07:00:23 am')
+  ok(m2 === 175, `04:05:31 am → 07:00:23 am came out as ${m2} minutes, should be 175`)
+
+  // Wholly inside one operating day, on the far side of midnight.
+  const m3 = calcDurationMinutes(DAY_A, '02:50:12 am', DAY_A, '03:57:13 am')
+  ok(m3 === 67, `02:50:12 am → 03:57:13 am came out as ${m3} minutes, should be 67`)
+
+  // Across midnight, one operating day.
+  const m4 = calcDurationMinutes(DAY_A, '11:54:00 pm', DAY_A, '12:05:00 am')
+  ok(m4 === 11, `11:54 pm → 12:05 am came out as ${m4} minutes, should be 11`)
+
+  // An ordinary daytime break, which was never affected.
+  const m5 = calcDurationMinutes(DAY_A, '02:10:00 pm', DAY_A, '02:32:00 pm')
+  ok(m5 === 22, `an afternoon break came out as ${m5} minutes, should be 22`)
+
+  // And a whole night shift's duration, which had the same fault.
+  const d1 = calcDuration(DAY_A, '10:02:00 pm', DAY_B, '07:00:00 am')
+  ok(d1 === '8h 58m', `a 10pm–7am shift measured ${d1}, should be 8h 58m`)
+
+  console.log(`   141m, 175m, 67m, 11m across midnight, 22m in the afternoon · night shift ${d1}`)
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)

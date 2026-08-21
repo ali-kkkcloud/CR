@@ -171,8 +171,16 @@ export default function FootageTab({ footageAll, downloadCSV, onCloseFollowup, t
         display:'flex', alignItems:'baseline', gap:'12px', flexWrap:'wrap',
       }}>
         <span style={{ color:C.muted, fontSize:'10.5px', fontWeight:700, letterSpacing:'0.5px' }}>TOTAL REQUESTS</span>
-        <span style={{ color:C.text, fontSize:'32px', fontWeight:800, lineHeight:1 }}>{kpis.total}</span>
-        <span style={{ color:C.dim, fontSize:'11px' }}>raised in all</span>
+        {/* Counted from the sheet, not from the lists below. The lists fold
+            rows sharing an Issue Id into one so a request cannot appear on a
+            queue twice; this number must match what the sheet gives when you
+            filter Sub-request by hand, so it counts rows. */}
+        <span style={{ color:C.text, fontSize:'32px', fontWeight:800, lineHeight:1 }}>
+          {footageAll.totalRaised ?? kpis.total}
+        </span>
+        <span style={{ color:C.dim, fontSize:'11px' }}>
+          rows in the tracker where Sub-request is “Customer request for video”
+        </span>
       </div>
 
       {/* The three states a request can be in. Each opens the list below.
