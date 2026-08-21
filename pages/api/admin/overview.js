@@ -22,12 +22,25 @@ export default async function handler(req, res) {
   if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Forbidden' })
 
   try {
-    // Every tab this screen needs, asked for in one go before anything else
-    // runs — so they cost one request between them instead of one per stage.
-    // See warmTogether in lib/sheets.
-    await warmTogether(CRM_SHEET_ID, [
-      ...SHIFT_SCREEN_TABS,
-      `${TABS.DAILY_SUMMARY}!A:N`,
+    // ── Every book at once, not one after the other ──────────────────
+    //
+    // A batch cannot span two spreadsheets, so the CRM book, the Issue Tracker
+    // and the vehicle source are always separate requests. What matters is
+    // that they are not separate requests IN SERIES: warming only the CRM book
+    // left the other two waiting behind it, and the screen took three round
+    // trips to answer data that needed one. Fired together, the slowest is
+    // what the admin waits for.
+    //
+    // Failures are swallowed — this is a prefetch, and the real read further
+    // down decides whether a missing tab matters.
+    await Promise.all([
+      warmTogether(CRM_SHEET_ID, [
+        ...SHIFT_SCREEN_TABS,
+        `${TABS.DAILY_SUMMARY}!A:N`,
+      ]).catch(() => null),
+      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES).catch(() => null),
+      fetchClientVehicleCounts().catch(() => null),
+      getHistory().catch(() => null),
     ])
 
     // Roster and client hours come from the sheet; this makes sure this

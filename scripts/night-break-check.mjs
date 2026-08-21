@@ -17,7 +17,7 @@
 //   node --import ./scripts/test-hooks.mjs scripts/night-break-check.mjs
 import {
   resolveMoment, findOpenBreaks, lastActivityAt, evaluateAutoBreak,
-  AUTO_BREAK_IDLE_MINUTES,
+  totalBreakMinutes, AUTO_BREAK_IDLE_MINUTES,
 } from '../lib/attendance.js'
 import { parseISTStamp, elapsedSecondsIST } from '../lib/clock.js'
 import { calcDuration, calcDurationMinutes } from '../lib/sheets.js'
@@ -147,6 +147,18 @@ console.log('\n3  The moment after Resume')
 }
 
 // ── 4 · A closed break's open twin does not hold anybody ───────────────
+//
+// This used to assert that such a row read as NOT open — every reader was
+// expected to ignore it. That is what put the platform's worst break data in
+// the sheet on 21 August: the duplicate sweep closes an extra row by writing
+// END = START, which produced a "Completed twin" for a break that was still
+// genuinely running, and the running one went invisible to Resume, to the
+// overlay and to the sweep. See scripts/ghost-break-check.mjs.
+//
+// The row is REPORTED now, so that Resume and the sweep can actually close
+// it, and the sweep settles it at zero within one cycle. The employee is
+// still not held: what frees them is the row being closed, not every reader
+// agreeing to pretend it is not there.
 console.log('\n4  A duplicate row left Active after the break was closed')
 {
   const started = minsAgo(50), ended = minsAgo(39)
@@ -157,8 +169,25 @@ console.log('\n4  A duplicate row left Active after the break was closed')
     breakRow(opDay, clockOf(started), '', null, 'Active'),   // the twin nothing closed
   ]
   const open = findOpenBreaks(rows, 'E9', datesFor())
-  ok(open.length === 0, `${open.length} break(s) still read as open after the break was resumed`)
-  console.log(`   same start time, one Completed → nothing reads as open`)
+  ok(open.length === 1, `the leftover row must be visible so it can be closed; ${open.length} found`)
+  ok(open[0]?.startTime === clockOf(started), 'the wrong row came back')
+  // Until it is closed the row IS open, and an open row is counted up to now
+  // — which is exactly why leaving it Active was never acceptable and why
+  // hiding it only moved the damage somewhere the screens could not see.
+  const before = totalBreakMinutes(rows, 'E9', datesFor())
+  ok(before > 11, `an open row should still be counted while it is open; reads ${before}`)
+
+  // Once the sweep settles it — end at its own start, marked as a merged
+  // duplicate — the day reads the resumed break and nothing else.
+  const settled = [
+    HEAD,
+    breakRow(opDay, clockOf(started), clockOf(ended), 11, 'Completed'),
+    breakRow(opDay, clockOf(started), clockOf(started), 0, 'Duplicate — merged'),
+  ]
+  const after = totalBreakMinutes(settled, 'E9', datesFor())
+  ok(after === 11, `after the sweep the day should read 11 minutes, it reads ${after}`)
+  ok(findOpenBreaks(settled, 'E9', datesFor()).length === 0, 'the leftover row is still open after the sweep')
+  console.log(`   leftover reported so it can be closed (${before}m while open) → settled, day reads ${after}m`)
 }
 
 // ── 5 · A genuine open break is still found ────────────────────────────

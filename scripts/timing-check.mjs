@@ -33,6 +33,7 @@ const board    = (await import('../pages/api/clients/current.js')).default
 const myDay    = (await import('../pages/api/dashboard/my-day.js')).default
 const summary  = (await import('../pages/api/dashboard/summary.js')).default
 const footage  = (await import('../pages/api/footage/list.js')).default
+const tick     = (await import('../pages/api/dashboard/tick.js')).default
 
 const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
 const TODAY = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -56,6 +57,22 @@ function nowClock() {
   return `${p(h)}:${p(d.getMinutes())}:${p(d.getSeconds())} ${ampm}`
 }
 
+// The shift opened three hours ago, and the clock-in is expressed against
+// the clock rather than hard-coded.
+//
+// Starting it at the CURRENT hour with everybody clocked in at 07:05 is a
+// shift long finished if this is run in the evening, so the auto-close swept
+// the whole floor on every request and the measurement was of a sweep rather
+// than of a poll. Four fixtures here had that same fault; it is why a test
+// would pass in the morning and fail at night.
+const SHIFT_START = (H + 21) % 24
+const CLOCK_IN = (() => {
+  const pad = (n) => String(n).padStart(2, '0')
+  const x = new Date(d.getTime() - 3 * 3600000)
+  let h = x.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12
+  return `${pad(h)}:${pad(x.getMinutes())}:${pad(x.getSeconds())} ${a}`
+})()
+
 function floor() {
   reset()
   behaviour.latencyMs = LATENCY_MS
@@ -64,11 +81,11 @@ function floor() {
   globalThis.__cautioRoster = { lastGood: null }
   behaviour.data = {
     'Credentials!A:H': [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
-      ...PEOPLE.map(([id, n]) => [id, n, 'x', 'employee', String(H), String((H + 9) % 24), 'No', 'No'])],
+      ...PEOPLE.map(([id, n]) => [id, n, 'x', 'employee', String(SHIFT_START), String((SHIFT_START + 9) % 24), 'No', 'No'])],
     'Client_Timings!A:B': [['Client','Hours'], ...CLIENTS.map(c => [c, String(H)])],
     'Employee_Hours!A:D': [['Employee','Hour','Fixed','Custom']],
     'Shift_Log!A:H': [['EmpID','Name','Date','In','Out','','Status',''],
-      ...PEOPLE.map(([id, n]) => [id, n, TODAY, '07:05:00 am', '', '', 'Active', nowClock()])],
+      ...PEOPLE.map(([id, n]) => [id, n, TODAY, CLOCK_IN, '', '', 'Active', nowClock()])],
     'CRM_Updates!A:L': [['Date','Time','Emp','Client','Hour','Status','','','','','','']],
     'Breaks!A:H': [['EmpID','Name','Date','Start','End','Mins','Type','']],
     'Leaves!A:H': [['EmpID','Name','Date','From','To','Reason','By','At']],
@@ -101,7 +118,14 @@ const ADMIN = { name: 'Admin',  empId: 'A1', role: 'admin' }
 const cases = [
   ['admin Dashboard', async () => { await run(overview, ADMIN) }],
   ['admin Hour by hour', async () => { await run(fullDay, ADMIN, { date: TODAY }) }],
-  ['employee opening the app', async () => {
+  // What the employee's screen actually does now: one request, every thirty
+  // seconds, and again the moment they open the app.
+  ['employee refresh (tick)', async () => {
+    await run(tick, EMP, { range: 'month', activeAgoMs: '1000' })
+  }],
+  // The six on their own, for comparison — still the fallback if the
+  // combined one fails.
+  ['employee, the old six', async () => {
     await Promise.all([
       run(board, EMP), run(myDay, EMP),
       run(summary, EMP, { range: 'month' }), run(footage, EMP),

@@ -34,9 +34,24 @@ const TODAY = (() => {
 const NOW_HOUR = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours()
 
 // Everyone works a window that certainly contains the hour running right now,
-// whenever the test happens to be run.
-const WINDOW_START = NOW_HOUR
-const WINDOW_END   = (NOW_HOUR + 9) % 24
+// whenever the test happens to be run — and that STARTED three hours ago.
+//
+// It used to open at the current hour with everybody clocked in at 07:05, and
+// that is a shift long finished if you run this in the evening: the auto-close
+// swept the floor and the "this test wrote nothing" check failed. Run at ten
+// in the morning it passed. A test that only holds for part of the day is not
+// a test, and this is the third fixture here to have had the same fault.
+const WINDOW_START = (NOW_HOUR + 21) % 24
+const WINDOW_END   = (WINDOW_START + 9) % 24
+// Clocked in when the shift opened, expressed against the clock rather than
+// hard-coded, for the same reason.
+const p2n = (n) => String(n).padStart(2, '0')
+const CLOCK_IN = (() => {
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  d.setTime(d.getTime() - 3 * 3600000)
+  let h = d.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12
+  return `${p2n(h)}:${p2n(d.getMinutes())}:${p2n(d.getSeconds())} ${a}`
+})()
 
 const PEOPLE = [
   { empId: 'E1', name: 'Mahesh' },
@@ -45,9 +60,19 @@ const PEOPLE = [
 ]
 
 // Credentials: EmpID | Name | Password | Role | Start | End | IsNight | WeekOff
+// Nikita is rostered from THIS hour, the other two from three hours ago.
+//
+// Case 2 is about somebody who has not arrived YET — still inside the grace
+// hour their first hour gives them. Rostering her from three hours ago would
+// make her a no-show instead, and the no-show sweep would rightly write a
+// "Week Off" row into the Leaves tab, which is a different rule and not the
+// one this file is checking.
+const LATE_START = NOW_HOUR
 const credentials = [
   ['EmpID','Name','Password','Role','ShiftStart','ShiftEnd','IsNight','WeekOff'],
-  ...PEOPLE.map(p => [p.empId, p.name, 'x', 'employee', String(WINDOW_START), String(WINDOW_END), 'No', 'No']),
+  ...PEOPLE.map(p => p.name === 'Nikita'
+    ? [p.empId, p.name, 'x', 'employee', String(LATE_START), String((LATE_START + 9) % 24), 'No', 'No']
+    : [p.empId, p.name, 'x', 'employee', String(WINDOW_START), String(WINDOW_END), 'No', 'No']),
 ]
 
 // 46 clients in the hour that is running now, so a three-way split is uneven
@@ -114,7 +139,7 @@ const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
 // ── 1 · Everybody at work: the board and the strip agree ───────────────
 console.log('\n1  Three people at work')
 {
-  loadFloor({ shifts: PEOPLE.map(p => shiftRow(p, '07:05:00 am', '', 'Active')) })
+  loadFloor({ shifts: PEOPLE.map(p => shiftRow(p, CLOCK_IN, '', 'Active')) })
   const seen = {}
   for (const p of PEOPLE) {
     const board = await call(boardHandler, p)
@@ -138,8 +163,8 @@ console.log('\n1  Three people at work')
 console.log('\n2  One rostered person has not arrived')
 {
   loadFloor({ shifts: [
-    shiftRow(PEOPLE[0], '07:05:00 am', '', 'Active'),
-    shiftRow(PEOPLE[1], '07:11:00 am', '', 'Active'),
+    shiftRow(PEOPLE[0], CLOCK_IN, '', 'Active'),
+    shiftRow(PEOPLE[1], CLOCK_IN, '', 'Active'),
   ]})
   const seen = {}
   for (const p of PEOPLE.slice(0, 2)) {

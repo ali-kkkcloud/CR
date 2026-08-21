@@ -61,6 +61,17 @@ if (process.env.ROUTE) {
   const TODAY = `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}`
   const H = d.getHours()
   const nowClock = () => { let h = d.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12; return `${p2(h)}:${p2(d.getMinutes())}:${p2(d.getSeconds())} ${a}` }
+  const clockOf = (x) => { let h = x.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12; return `${p2(h)}:${p2(x.getMinutes())}:${p2(x.getSeconds())} ${a}` }
+  // The shift opened three hours ago and runs nine, so it is comfortably in
+  // progress WHATEVER time this is run.
+  //
+  // It used to start at the current hour with everybody clocked in at 07:05,
+  // which is a shift three hours past its end if you run this in the evening —
+  // so the auto-close swept the whole floor on every single request and the
+  // measurement read 584 writes a minute. That was the fixture, not the
+  // platform. Anchored to now, the way every other fixture here is.
+  const SHIFT_START = (H + 21) % 24
+  const CLOCK_IN = clockOf(new Date(d.getTime() - 3 * 3600000))
 
   const NAMES = ['Sunil','Mahesh','Nikita','BRINDA','Nesiya','Rakesh','GUNASAGARI','HARI','KIRAN','MANTU',
                  'CHANDAN','RISHI','Ritanjali','Shashi','Yunus','Afzal','Darshan','Naveen']
@@ -92,11 +103,11 @@ if (process.env.ROUTE) {
   }
   behaviour.data = {
     'Credentials!A:H': [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
-      ...PEOPLE.map(([id, n]) => [id, n, 'x', 'employee', String(H), String((H + 9) % 24), 'No', 'No'])],
+      ...PEOPLE.map(([id, n]) => [id, n, 'x', 'employee', String(SHIFT_START), String((SHIFT_START + 9) % 24), 'No', 'No'])],
     'Client_Timings!A:B': [['Client','Hours'], ...CLIENTS.map(c => [c, String(H)])],
     'Employee_Hours!A:D': [['Employee','Hour','Fixed','Custom']],
     'Shift_Log!A:H': [['EmpID','Name','Date','In','Out','','Status','Seen'],
-      ...PEOPLE.map(([id, n]) => [id, n, TODAY, '07:05:00 am', '', '', 'Active', nowClock()])],
+      ...PEOPLE.map(([id, n]) => [id, n, TODAY, CLOCK_IN, '', '', 'Active', nowClock()])],
     'CRM_Updates!A:L': updateRows,
     'Breaks!A:H': [['EmpID','Name','Date','Start','End','Mins','Status','Type']],
     'Leaves!A:H': [['EmpID','Name','Date','From','To','Reason','By','At']],
@@ -186,6 +197,8 @@ if (process.env.ROUTE) {
     const tally = new Map()
     calls.batchGet.forEach(b => { const k = 'batch: ' + b.join(', '); tally.set(k, (tally.get(k) || 0) + 1) })
     calls.get.forEach(g => { const k = 'get:   ' + g; tally.set(k, (tally.get(k) || 0) + 1) })
+    calls.append.forEach(g => { const k = 'APPEND ' + g; tally.set(k, (tally.get(k) || 0) + 1) })
+    calls.update.forEach(g => { const k = 'UPDATE ' + g; tally.set(k, (tally.get(k) || 0) + 1) })
     ;[...tally.entries()].sort((a, b) => b[1] - a[1])
       .forEach(([k, n]) => console.error(`  ×${String(n).padStart(3)}  ${k}`))
   }

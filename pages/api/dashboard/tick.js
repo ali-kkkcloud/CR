@@ -32,7 +32,16 @@
 // ══════════════════════════════════════════════════════════════════════
 import { getUserFromReq } from '../../../lib/auth'
 import { guardSession } from '../../../lib/session'
-import { warmTogether, CRM_SHEET_ID, SHIFT_SCREEN_TABS, TABS } from '../../../lib/sheets'
+import {
+  warmTogether, readSheetCached, fetchClientVehicleCounts,
+  CRM_SHEET_ID, ISSUE_SHEET_ID, SHIFT_SCREEN_TABS, TABS, TTL,
+} from '../../../lib/sheets'
+import { getHistory } from '../../../lib/history'
+
+// The footage queue's tab, in the Issue Tracker book. Named the same way
+// /api/footage/list names it, because it has to be the same string for the
+// warm above to be the read below.
+const ISSUE_TAB = 'Issues- Realtime'
 
 import board       from '../clients/current'
 import myDay       from './my-day'
@@ -96,8 +105,32 @@ export default async function handler(req, res) {
     `${TABS.FOOTAGE_FOLLOWUP}!A:J`,
     `${TABS.DAILY_SUMMARY}!A:N`,
   ]
-  try { await warmTogether(CRM_SHEET_ID, EVERY_TAB) }
-  catch (e) { console.error('tick: warm failed —', e.message) }
+  // ── All three books at once, not one after the other ─────────────────
+  //
+  // A batch cannot span two spreadsheets, so the CRM book, the Issue Tracker
+  // and the vehicle source are always three separate requests. That is fine —
+  // what is not fine is making them three requests IN SERIES.
+  //
+  // Warming only the CRM book here meant the footage queue went to the Issue
+  // Tracker, and the vehicle counts went to the source book, AFTER this had
+  // finished — a second round trip's wait for two requests that could have
+  // travelled alongside the first. The screen took two round trips to answer
+  // when the data needed only one.
+  //
+  // Fired together, the slowest of the three is what the employee waits for.
+  // Every failure is swallowed: this is a prefetch, and the real read further
+  // down decides whether a missing tab actually matters.
+  await Promise.all([
+    warmTogether(CRM_SHEET_ID, EVERY_TAB).catch(e => console.error('tick: warm failed —', e.message)),
+    // The footage queue's own book, far the largest thing read here.
+    readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES).catch(() => null),
+    // Vehicle counts, from a third book again. Behind its own long-lived
+    // cache, so this is usually free — but when it is not, it was costing a
+    // whole round trip of its own.
+    fetchClientVehicleCounts().catch(() => null),
+    // Finished months, behind a half-hour cache. Same reasoning.
+    getHistory().catch(() => null),
+  ])
 
   // Checked once here rather than six times over. Signing in somewhere else
   // ends this session — see lib/session.js.
