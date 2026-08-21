@@ -8,7 +8,7 @@ import {
 import { getScheduledEmployeesAtHour, employees, isScheduledAtHour, customTextFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { computeDayPlan } from '../../../lib/dayplan'
-import { sweepShiftAutoClose, sweepAutoBreaks } from '../../../lib/attendance'
+import { sweepShiftAutoClose, sweepAutoBreaks, shouldSweepFloor } from '../../../lib/attendance'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -69,8 +69,12 @@ export default async function handler(req, res) {
     // platform, the whole floor is being checked. Reads are cached and a row
     // is only written when a break is actually due, so a sweep that finds
     // nothing costs nothing.
-    try { await sweepAutoBreaks(employees()) }
-    catch (e) { console.error('auto-break sweep failed:', e.message) }
+    // Throttled — see shouldSweepFloor. Running this on every request to the
+    // busiest endpoint spent the quota the floor needs to save their work.
+    if (shouldSweepFloor()) {
+      try { await sweepAutoBreaks(employees()) }
+      catch (e) { console.error('auto-break sweep failed:', e.message) }
+    }
 
     const hour  = nowIST().getHours()
     const today = todayStr()
