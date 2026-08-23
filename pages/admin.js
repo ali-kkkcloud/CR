@@ -16,6 +16,7 @@ import ProgressTab from '../components/tabs/ProgressTab'
 import FootageTab from '../components/tabs/FootageTab'
 import BreaksTab, { liveBreakMinutes } from '../components/tabs/BreaksTab'
 import FloorPanel from '../components/tabs/FloorPanel'
+import StalePanel from '../components/tabs/StalePanel'
 import AttendancePanel from '../components/tabs/AttendancePanel'
 import HistoryPanel from '../components/tabs/HistoryPanel'
 import ErrorBoundary from '../components/ErrorBoundary'
@@ -46,6 +47,7 @@ const TAB_META = {
   overview:       { title: 'Dashboard',           sub: 'The floor right now, and how much of today is done' },
   fullday:        { title: 'Hour by hour',        sub: 'Every hour of today, for every employee' },
   redistribution: { title: 'Hour by hour',        sub: "Where today's work moved, and why" },
+  stale:          { title: 'Hour by hour',        sub: 'Clients with no update against them since seven this morning' },
   footage:        { title: 'Requests',            sub: 'Footage requests raised by the floor' },
   followups:      { title: 'Requests',            sub: 'Requests handed on at the end of a shift' },
   progress:       { title: 'Team',                sub: 'Attendance and output across a date range' },
@@ -64,6 +66,7 @@ const SECTION_TABS = {
   day: [
     { value:'fullday',        label:'Hour by hour' },
     { value:'redistribution', label:'Work moved' },
+    { value:'stale',          label:'Not updated' },
   ],
   requests: [
     { value:'footage',   label:'Footage' },
@@ -987,6 +990,12 @@ export default function Admin() {
                   empty={<EmptyState icon="shuffle" title="No redistributions today." detail="Work moves between people when somebody ends their shift with clients unfinished, or an admin marks leave." />}
                 />
               </Card>
+            </div>
+          )}
+
+          {activeTab === 'stale' && (
+            <div style={{ maxWidth:'940px', margin:'0 auto' }}>
+              <StalePanel clients={overview?.staleClients || []} />
             </div>
           )}
 

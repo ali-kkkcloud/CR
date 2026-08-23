@@ -4,17 +4,43 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, parseOperatingDateTime, getShiftOverridesForDate,
   getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, yesterdayStr, TTL, warmTogether, SHIFT_SCREEN_TABS,
+  businessDate,
 } from '../../../lib/sheets'
 import { employees, distributeClientsForHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { collapseSlotOwners, buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 import { computeDayPlan } from '../../../lib/dayplan'
+import { totalBreakMinutes } from '../../../lib/attendance'
 
 const ISSUE_TAB = 'Issues- Realtime'
 // Same real column layout as pages/api/footage/list.js
 const COL = {
   ISSUE_ID: 1, CLIENT: 2, VEHICLE: 3, RAISED_AT: 4, RAISED_BY: 7,
   SUB_REQUEST: 9, DETAILS: 10, RESOLVED: 17, RESOLVED_AT: 18,
+}
+
+// ── Which OPERATING day a footage request belongs to ─────────────────
+//
+// The Issue Tracker stamps a request with the calendar moment it was raised:
+// "23/08/2026, 01:14:00 am". Every date this platform files work under is the
+// OPERATING day, 07:00 to 07:00 — so a request raised at one in the morning
+// carries tomorrow's calendar date while belonging to the shift that began
+// last evening.
+//
+// Comparing the two directly is the mistake that has caused nearly every
+// night-shift fault here, and it did it again: a request raised after
+// midnight counted for nobody in the day's footage total, so a night shift's
+// score was worked out from a share of a number that did not include their
+// own work.
+function raisedOperatingDay(raisedAt) {
+  const s = (raisedAt || '').toString().trim()
+  if (!s) return ''
+  const [datePart, ...rest] = s.split(',')
+  const timePart = rest.join(',').trim()
+  const d = parseISTDateTime((datePart || '').trim(), timePart || '12:00:00 pm')
+  // Unparseable — fall back to the bare date rather than dropping the row.
+  if (!d) return (datePart || '').trim().split(' ')[0]
+  return businessDate(d)
 }
 
 function ddmmyyyy(d) {
@@ -121,6 +147,35 @@ export default async function handler(req, res) {
       if ((r[5]||'').toString().trim()) byDate[r[0]].completed++
       else byDate[r[0]].missed++
     })
+    // ── Days that are no longer in CRM_Updates ───────────────────────────
+    //
+    // The trend was built from CRM_Updates alone, and that tab only holds the
+    // last few days: a finished day is summarised into Daily_Summary and the
+    // detail is not kept for ever (see lib/rollup.js). Measured on the live
+    // book — CRM_Updates held five days while the month asked for twenty-
+    // three, so eighteen of the twenty-three points were zero. That is the
+    // "trend mostly shows 0" the floor reported. Nothing was lost; the trend
+    // was simply reading the one source that could not answer for those days.
+    //
+    // Daily_Summary is exactly the record for them. Used ONLY where
+    // CRM_Updates has nothing for that date, so a day still held in full
+    // always wins — the detail is the truth, the summary is the memory of it.
+    let summaryRows = []
+    try { summaryRows = await readSheetCached(CRM_SHEET_ID, `${TABS.DAILY_SUMMARY}!A:N`, TTL.ROSTER) }
+    catch (e) { console.error('daily summary read failed:', e.message) }
+    const daysWithDetail = new Set(myUpdatesInRange.map(r => r[0]))
+    // Date | EmpID | Employee | Clients_Assigned | Clients_Completed | …
+    summaryRows.slice(1).forEach(r => {
+      const d = (r[0] || '').toString().trim()
+      if (!byDate[d] || daysWithDetail.has(d)) return
+      if ((r[2] || '').toString().trim() !== user.name) return
+      const assigned  = parseInt(r[3], 10) || 0
+      const completed = parseInt(r[4], 10) || 0
+      byDate[d].completed = completed
+      byDate[d].missed    = Math.max(0, assigned - completed)
+      byDate[d].fromSummary = true
+    })
+
     const trendLabels = range === 'today' ? ['Today'] : dates.map(d => d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'}))
     // For readability, collapse >31 points (year view) into weekly buckets
     let trendCompleted, trendMissed, trendLabelsFinal
@@ -152,7 +207,7 @@ export default async function handler(req, res) {
       const by  = (r[COL.RAISED_BY]   || '').toString().trim().toLowerCase()
       return sub.includes('customer request for video') && by === user.name.toLowerCase()
     })
-    const myFootageInRange = myFootage.filter(r => dateStrSet.has((r[COL.RAISED_AT]||'').split(',')[0].split(' ')[0]) || range==='today')
+    const myFootageInRange = myFootage.filter(r => dateStrSet.has(raisedOperatingDay(r[COL.RAISED_AT])) || range==='today')
     const footageResolved = (r) => (r[COL.RESOLVED]||'').toString().toLowerCase() === 'yes'
     const footageTaken   = myFootageInRange.filter(footageResolved).length
     const footagePending = myFootage.filter(r => !footageResolved(r)).length // pending is "live", not range-scoped
@@ -279,16 +334,88 @@ export default async function handler(req, res) {
       .slice(0, 8)
       .map(({t, ...rest}) => rest)
 
-    // ── Performance score (0-100 heuristic) ──
-    const completionPct = (totalUpdatesCompleted+totalUpdatesMissed) > 0
-      ? (totalUpdatesCompleted/(totalUpdatesCompleted+totalUpdatesMissed))*100 : 100
-    const footagePenalty   = Math.min(15, footagePending*3)
-    const followupPenalty  = Math.min(15, followupsPending*3)
-    const attendanceBonus  = attendanceStatus === 'On Time' ? 20 : attendanceStatus === 'Late' ? 10 : 15
-    const performanceScore = Math.max(0, Math.min(100, Math.round(
-      completionPct*0.5 + (15-footagePenalty) + (15-followupPenalty) + attendanceBonus
-    )))
+    // ══ Performance score ══════════════════════════════════════════════
+    //
+    // Three parts, and every number behind them is returned alongside the
+    // score so the employee can see how it was arrived at rather than being
+    // handed a figure to argue with.
+    //
+    //   FOOTAGE   40 points. Share of the day's footage requests that came in
+    //             under this employee's name:
+    //                 (my footage ÷ everybody's footage) × 100 × 40%
+    //             The heaviest single weight, because a footage request is a
+    //             customer waiting.
+    //
+    //   VEHICLES  60 points. Against a floor of 800 vehicles seen — the count
+    //             typed into VEHICLES SEEN on each client, which is what the
+    //             employee actually watched:
+    //                 min(vehicles seen ÷ 800, 1) × 60
+    //             At 800 the sixty points are full; there is no extra credit
+    //             for going past it, and no cliff for being just short.
+    //
+    //   BREAK     −20 points if the day's total break runs past an hour.
+    //             Counted the way every other screen counts it: the union of
+    //             the stretches, so overlapping rows are one absence.
+    //
+    // The old score mixed a completion percentage with penalties for pending
+    // footage and follow-ups and a bonus for turning up on time. It is
+    // replaced, not extended — two scoring systems for one number is how
+    // nobody trusts either.
+    const dayFootageRows = footageRows.slice(1).filter(r => {
+      const sub = (r[COL.SUB_REQUEST] || '').toString().toLowerCase()
+      if (!sub.includes('customer request for video')) return false
+      return raisedOperatingDay(r[COL.RAISED_AT]) === today
+    })
+    const footageTotalToday = dayFootageRows.length
+    const footageMineToday  = dayFootageRows.filter(r =>
+      (r[COL.RAISED_BY] || '').toString().trim().toLowerCase() === user.name.toLowerCase()).length
+    // No footage at all today is nobody's failure. Scoring a share of zero as
+    // zero would put the whole floor on 60 for a quiet morning.
+    const footageSharePct = footageTotalToday > 0
+      ? (footageMineToday / footageTotalToday) * 100
+      : null
+    const footagePoints = footageSharePct === null ? 40 : (footageSharePct / 100) * 40
+
+    const VEHICLE_TARGET = 800
+    const vehiclesSeenToday = myUpdatesAll
+      .filter(r => r[0] === today)
+      .reduce((s, r) => s + (parseInt(r[11], 10) || 0), 0)
+    const vehiclePoints = Math.min(vehiclesSeenToday / VEHICLE_TARGET, 1) * 60
+
+    const BREAK_ALLOWANCE_MIN = 60
+    const BREAK_PENALTY = 20
+    const breakMinutesToday = totalBreakMinutes(breakRows, user.empId, [today, yesterday])
+    const breakPenalty = breakMinutesToday > BREAK_ALLOWANCE_MIN ? BREAK_PENALTY : 0
+
+    const performanceScore = Math.max(0, Math.min(100,
+      Math.round(footagePoints + vehiclePoints - breakPenalty)))
     const tier = performanceScore>=95?'Elite':performanceScore>=85?'Excellent':performanceScore>=70?'Good':performanceScore>=50?'Needs Improvement':'Critical'
+
+    // Everything the score was built from, so the screen can show the working.
+    const scoreBreakdown = {
+      footage: {
+        weight: 40,
+        mine: footageMineToday,
+        total: footageTotalToday,
+        sharePct: footageSharePct === null ? null : Math.round(footageSharePct * 10) / 10,
+        points: Math.round(footagePoints * 10) / 10,
+      },
+      vehicles: {
+        weight: 60,
+        seen: vehiclesSeenToday,
+        target: VEHICLE_TARGET,
+        pct: Math.round(Math.min(vehiclesSeenToday / VEHICLE_TARGET, 1) * 1000) / 10,
+        points: Math.round(vehiclePoints * 10) / 10,
+      },
+      breakPenalty: {
+        weight: -BREAK_PENALTY,
+        minutes: breakMinutesToday,
+        allowanceMinutes: BREAK_ALLOWANCE_MIN,
+        applied: breakPenalty > 0,
+        points: -breakPenalty,
+      },
+      total: performanceScore,
+    }
 
     // ── TODAY's real assigned-vs-completed, independent of `range` ──
     // (My Targets is meant to be a daily target, per the spec — it must not
@@ -342,7 +469,7 @@ export default async function handler(req, res) {
     const todayFootage = footageRows.slice(1).filter(r => {
       const sub = (r[COL.SUB_REQUEST] || '').toString().toLowerCase()
       const by  = (r[COL.RAISED_BY]   || '').toString().trim().toLowerCase()
-      return sub.includes('customer request for video') && by === user.name.toLowerCase() && (r[COL.RAISED_AT]||'').includes(today)
+      return sub.includes('customer request for video') && by === user.name.toLowerCase() && raisedOperatingDay(r[COL.RAISED_AT]) === today
     })
     todayTargets.footageAssigned  = todayFootage.length
     todayTargets.footageCompleted = todayFootage.filter(footageResolved).length
@@ -360,6 +487,10 @@ export default async function handler(req, res) {
     return res.status(200).json({
       range,
       performanceScore, performanceTier: tier,
+      // How that score was arrived at, number by number — see the comment
+      // above it. The screen shows this so nobody is handed a figure they
+      // cannot check.
+      scoreBreakdown,
       clientsAssigned, vehiclesCovered,
       updatesCompleted: totalUpdatesCompleted, updatesMissed: totalUpdatesMissed,
       misalignCount, alertTotal,
