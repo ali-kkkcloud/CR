@@ -77,6 +77,64 @@ function fmtShift(startHour, endHour) {
   return `${String(to12(startHour)).padStart(2,'0')}:00 ${suf(startHour)} - ${String(to12(endHour)).padStart(2,'0')}:00 ${suf(endHour)}`
 }
 
+
+// ── Which day the board is showing ─────────────────────────────────────
+//
+// The board only ever showed today, so nobody could check what they did — or
+// missed — yesterday. Read only, on purpose: every figure on every screen is
+// measured against what was recorded at the time, so a finished day must not
+// be editable after the fact.
+//
+// Seven days back is enough to answer "what happened on my last shift"
+// without turning this into a reporting tool; the Dashboard's calendar and
+// monthly view are where a longer look belongs.
+function DayPicker({ value, onChange, loading, shiftDate }) {
+  const days = []
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  // The operating day, which is what every date column in these sheets holds.
+  if (now.getHours() < 7) now.setDate(now.getDate() - 1)
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now)
+    d.setDate(d.getDate() - i)
+    const ddmmyyyy = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
+    days.push({
+      value: i === 0 ? null : ddmmyyyy,
+      label: i === 0 ? 'Today' : i === 1 ? 'Yesterday'
+        : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+    })
+  }
+
+  return (
+    <div style={{
+      display:'flex', alignItems:'center', gap:SP[2],
+      flexWrap:'wrap', marginBottom:SP[3],
+    }}>
+      {days.map(d => {
+        const on = (d.value || null) === (value || null)
+        return (
+          <button
+            key={d.label}
+            onClick={() => onChange(d.value)}
+            className="pressable"
+            style={{
+              background: on ? C.accentSoft : 'transparent',
+              border:`1px solid ${on ? C.accent : C.border2}`,
+              color: on ? C.accent : C.text2,
+              borderRadius:R.pill, padding:'5px 12px',
+              fontSize:T.xs, fontWeight:700, cursor:'pointer',
+            }}
+          >{d.label}</button>
+        )
+      })}
+      {value && (
+        <span style={{ color:C.amber, fontSize:T.xs, fontWeight:600, marginLeft:SP[2] }}>
+          {loading ? 'Loading…' : 'Viewing only — an earlier day cannot be edited'}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const router = useRouter()
   const [user, setUser] = useState(null)
@@ -101,6 +159,18 @@ export default function Dashboard() {
   // { [hour]: { [client]: record } } — what has been saved into an earlier
   // hour this session, so the board reflects it before the next my-day poll.
   const [pastEdits, setPastEdits] = useState({})
+  // ── Looking back at an earlier day ───────────────────────────────────
+  //
+  // The board only ever showed today, so an employee had no way of checking
+  // what they did — or did not do — yesterday. Asked for as VIEW only: an
+  // earlier day can be read, never edited. Editing a finished day would let
+  // work be back-filled after the fact, and every count on every screen is
+  // measured against what was recorded at the time.
+  //
+  // null means today. Anything else is an operating day, DD/MM/YYYY.
+  const [pastDate, setPastDate] = useState(null)
+  const [pastDay, setPastDay]   = useState(null)
+  const [pastLoading, setPastLoading] = useState(false)
   const [showReport, setShowReport] = useState(false)
   const [report, setReport] = useState(null)
   const [endShiftStep, setEndShiftStep] = useState(null)
@@ -731,6 +801,77 @@ export default function Dashboard() {
   // wrong once it has stopped working, because a spinner that never resolves
   // is indistinguishable from a dead site and the only thing left to try is
   // reloading by hand.
+  // ── Everything below is hooks, and hooks cannot be conditional ──────
+  //
+  // These were first written further down, beside the values they feed —
+  // which reads better and is wrong: there are early returns between here
+  // and there (no user yet, the end-of-shift report, the break overlay), so
+  // on those renders the hooks did not run and React counted a different
+  // number of them. The employee's page died with "Rendered more hooks than
+  // during the previous render" the moment the break overlay showed.
+
+  // ── Clients this employee has not touched at all today ───────────────
+  //
+  // Every hour is a separate piece of work, which is right — but it means a
+  // client they have never once opened looks exactly like one they saw an
+  // hour ago: a single pending row, on whichever hour happens to be on
+  // screen. Nothing added them up, so nothing said "start here".
+  //
+  // Worked out from the day they have already been sent, so it costs nothing
+  // extra. A client counts only if NO hour of their day has it done and at
+  // least one hour that has already passed does. The hour in progress is left
+  // out — nothing in it is late yet.
+  const staleMine = useMemo(() => {
+    const byClient = new Map()
+    ;(myDay?.timeline || []).forEach(h => {
+      if (h.hour === currentHour) return
+      ;(h.clients || []).forEach(c => {
+        if (c.isCustom) return
+        const rec = byClient.get(c.client) || {
+          client: c.client, vehicleCount: c.vehicleCount || 0,
+          done: 0, pendingHours: [],
+        }
+        if (c.filled) rec.done++
+        else rec.pendingHours.push(h.hour)
+        byClient.set(c.client, rec)
+      })
+    })
+    return [...byClient.values()]
+      .filter(r => r.done === 0 && r.pendingHours.length > 0)
+      .map(r => ({
+        ...r,
+        // The one to open: the most recent hour it was theirs, in the day's
+        // own order, so a night shift lands on the right side of midnight.
+        jumpHour: r.pendingHours.slice().sort(
+          (a, b) => businessOrder.indexOf(b) - businessOrder.indexOf(a))[0],
+      }))
+      .sort((a, b) => (b.vehicleCount || 0) - (a.vehicleCount || 0))
+  }, [myDay, currentHour])
+
+  // Fetched on demand — an earlier day is not part of the thirty-second poll,
+  // because it cannot change.
+  useEffect(() => {
+    if (!pastDate) { setPastDay(null); return }
+    let cancelled = false
+    setPastLoading(true)
+    fetchJSON(`/api/dashboard/my-day?date=${encodeURIComponent(pastDate)}`)
+      .then(r => { if (!cancelled && r.ok && Array.isArray(r.data?.timeline)) setPastDay(r.data) })
+      .finally(() => { if (!cancelled) setPastLoading(false) })
+    return () => { cancelled = true }
+  }, [pastDate])
+
+  // Open the client where it was last theirs, ready to record.
+  //
+  // Deliberately NOT memoised: selectHour is redeclared on every render and
+  // closes over currentHour, so a useCallback would freeze a stale copy of it
+  // and the board would stop following the clock at the wrong hour.
+  function goToStale(entry) {
+    if (!entry) return
+    setActiveTab('board')
+    selectHour(entry.jumpHour)
+    setFocusRequest({ client: entry.client, at: Date.now() })
+  }
+
   if (!user) return (
     <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg,gap:'18px',padding:'24px',textAlign:'center'}}>
       <div className="spinner"></div>
@@ -901,10 +1042,15 @@ export default function Dashboard() {
   // by the live split (/api/clients/current); any other hour comes from the
   // day's own record, which is what My Day always read. Same data, same save
   // path — it is just no longer behind a separate navigation item.
-  const timeline   = myDay?.timeline || []
+  // Looking at an earlier day swaps the whole board over to that day's record.
+  // isNowHour then has to be false whatever the hour reads, or the board would
+  // treat a finished day's hour as the live one and offer to save into it.
+  const viewingPast = !!pastDate
+  const dayShown   = viewingPast ? pastDay : myDay
+  const timeline   = dayShown?.timeline || []
   const shownHour  = viewHour == null ? currentHour : viewHour
   const viewEntry  = timeline.find(t => t.hour === shownHour)
-  const isNowHour  = shownHour === currentHour
+  const isNowHour  = !viewingPast && shownHour === currentHour
 
   const boardClients = isNowHour
     ? clients
@@ -940,55 +1086,8 @@ export default function Dashboard() {
     ? boardFilled
     : { ...boardFilled, ...(pastEdits[shownHour] || {}) }
 
-  // ── Clients this employee has not touched at all today ───────────────
-  //
-  // Every hour is a separate piece of work, which is right — but it means a
-  // client they have never once opened looks exactly like one they saw an
-  // hour ago: a single pending row, on whichever hour happens to be on
-  // screen. Nothing added them up, so nothing said "start here".
-  //
-  // Worked out from the day they have already been sent, so it costs nothing
-  // extra. A client counts only if NO hour of their day has it done and at
-  // least one hour that has already passed does. The hour in progress is left
-  // out — nothing in it is late yet.
-  const staleMine = useMemo(() => {
-    const byClient = new Map()
-    ;(myDay?.timeline || []).forEach(h => {
-      if (h.hour === currentHour) return
-      ;(h.clients || []).forEach(c => {
-        if (c.isCustom) return
-        const rec = byClient.get(c.client) || {
-          client: c.client, vehicleCount: c.vehicleCount || 0,
-          done: 0, pendingHours: [],
-        }
-        if (c.filled) rec.done++
-        else rec.pendingHours.push(h.hour)
-        byClient.set(c.client, rec)
-      })
-    })
-    return [...byClient.values()]
-      .filter(r => r.done === 0 && r.pendingHours.length > 0)
-      .map(r => ({
-        ...r,
-        // The one to open: the most recent hour it was theirs, in the day's
-        // own order, so a night shift lands on the right side of midnight.
-        jumpHour: r.pendingHours.slice().sort(
-          (a, b) => businessOrder.indexOf(b) - businessOrder.indexOf(a))[0],
-      }))
-      .sort((a, b) => (b.vehicleCount || 0) - (a.vehicleCount || 0))
-  }, [myDay, currentHour])
 
-  // Open the client where it was last theirs, ready to record.
-  //
-  // Deliberately NOT memoised: selectHour is redeclared on every render and
-  // closes over currentHour, so a useCallback would freeze a stale copy of it
-  // and the board would stop following the clock at the wrong hour.
-  function goToStale(entry) {
-    if (!entry) return
-    setActiveTab('board')
-    selectHour(entry.jumpHour)
-    setFocusRequest({ client: entry.client, at: Date.now() })
-  }
+
 
   const realBoard = boardClients.filter(c => !c.isCustom)
 
@@ -1236,6 +1335,18 @@ export default function Dashboard() {
                   </div>
                 </div>
 
+                {/* ── Which day ──────────────────────────────────────────
+                    View only. An earlier day can be read but never edited:
+                    every count on every screen is measured against what was
+                    recorded at the time, and back-filling a finished day
+                    would quietly rewrite all of them. */}
+                <DayPicker
+                  value={pastDate}
+                  onChange={(d) => { setPastDate(d); followRef.current = !d; setViewHour(null) }}
+                  loading={pastLoading}
+                  shiftDate={shiftDate}
+                />
+
                 <div style={{ marginBottom:SP[3] }}>
                   <HourRail
                     timeline={timeline}
@@ -1255,7 +1366,7 @@ export default function Dashboard() {
                       currentHour={currentHour}
                       hour={shownHour}
                       hourState={viewEntry?.state || (isNowHour ? 'current' : 'done')}
-                      canEdit={isActive}
+                      canEdit={isActive && !viewingPast}
                       focusRequest={focusRequest}
                       {...(isNowHour ? clientContext : {})}
                     />

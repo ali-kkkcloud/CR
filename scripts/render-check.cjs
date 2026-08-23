@@ -246,9 +246,22 @@ SPARSE['/api/dashboard/tick'] = () => ({
   ]) {
     const page = await b.newPage({ viewport: { width: 1440, height: 1000 } })
     const errs = []
+    let staleBuild = false
     page.on('pageerror', e => errs.push(String(e && e.stack ? e.stack.split('\n').slice(0,3).join(' | ') : e)))
     page.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text().slice(0, 300)) })
     page.on('response', r => { if (r.status() === 404) errs.push('404: ' + new URL(r.url()).pathname) })
+    // ── Is this server even serving the build we just made? ──────────
+    //
+    // A 404 on a _next/static chunk means the running server was started
+    // from a DIFFERENT build: the page never boots, so nothing renders, so
+    // nothing throws — and this file reports a clean pass on a build it
+    // never loaded. That is not hypothetical. A hooks-order bug that killed
+    // the employee dashboard outright passed here twice, because an older
+    // `next start` was still holding the port and this check filters 404s
+    // out of the error list a few lines down.
+    page.on('response', r => {
+      if (r.status() === 404 && r.url().includes('/_next/static/')) staleBuild = true
+    })
 
     await page.route('**/api/**', route => {
       const u = new URL(route.request().url())
@@ -274,6 +287,11 @@ SPARSE['/api/dashboard/tick'] = () => ({
       }
       await page.waitForTimeout(2500)
       const body = await page.evaluate(() => document.body.innerText).catch(() => '')
+      if (staleBuild) {
+        problems++
+        console.log(`  STALE   ${label} › ${tab}  — the server is serving a different build; restart it`)
+        continue
+      }
       const broke = /Application error|client-side exception/i.test(body)
       const caught = /could not be drawn/i.test(body)
       const mine = [...new Set(errs)].filter(e => !/404|Failed to load resource/.test(e))
