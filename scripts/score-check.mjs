@@ -34,6 +34,18 @@ const opDayOf = (d) => { const x = new Date(d); if (x.getHours() < 7) x.setDate(
 const clockOf = (d) => { let h = d.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12; return `${p2(h)}:${p2(d.getMinutes())}:${p2(d.getSeconds())} ${a}` }
 const minsAgo = (m) => new Date(NOW.getTime() - m * 60000)
 const daysAgo = (n) => { const x = new Date(NOW); x.setDate(x.getDate() - n); return opDayOf(x) }
+// Where a given operating day sits in the trend.
+//
+// NOT "the last point". The trend's labels are CALENDAR days, and between
+// midnight and seven the operating day is the calendar day before — so
+// assuming today is the last point made this file pass in the afternoon and
+// fail at one in the morning, which is the exact hour a night shift is using
+// it. Found by the label the endpoint actually builds.
+const labelFor = (opDayStr) => {
+  const [d, m, y] = opDayStr.split('/').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+}
+const pointFor = (trend, opDayStr) => trend.labels.indexOf(labelFor(opDayStr))
 const TODAY = opDayOf(NOW)
 const H = NOW.getHours()
 const SHIFT_START = (H + 21) % 24
@@ -184,7 +196,8 @@ console.log('\n6  A day that is only in Daily_Summary')
     daily: [[older, 'E1', 'Afzal', '40', '31', '500', '420', '2', '0', '1', '', '', '20', 'rollup']],
   })
   const s = await ask({ range: 'month' })
-  const i = s.trend.labels.length - 3          // two days back, labels end at today
+  const i = pointFor(s.trend, older)
+  ok(i >= 0, `the day ${older} is not in the trend at all`)
   ok(s.trend.completed[i] === 31,
      `the day held only in Daily_Summary reads ${s.trend.completed[i]} completed, expected 31 — this is the "trend shows 0"`)
   ok(s.trend.missed[i] === 9, `${s.trend.missed[i]} missed, expected 9 (40 assigned − 31 done)`)
@@ -200,10 +213,52 @@ console.log('\n7  A day that is in BOTH')
     daily: [[TODAY, 'E1', 'Afzal', '999', '999', '0', '0', '0', '0', '0', '', '', '0', 'rollup']],
   })
   const s = await ask({ range: 'month' })
-  const last = s.trend.completed.length - 1
-  ok(s.trend.completed[last] === 2,
-     `today reads ${s.trend.completed[last]} from the summary; the detail says 2 and the detail is the truth`)
-  console.log(`   detail 2, summary 999 → trend shows ${s.trend.completed[last]}`)
+  const i = pointFor(s.trend, TODAY)
+  ok(i >= 0, `today (${TODAY}) is not in the trend at all`)
+  ok(s.trend.completed[i] === 2,
+     `today reads ${s.trend.completed[i]} from the summary; the detail says 2 and the detail is the truth`)
+  ok(!s.trend.completed.includes(999), 'the summary overwrote a day the detail still holds')
+  console.log(`   detail 2, summary 999 → trend shows ${s.trend.completed[i]}`)
+}
+
+// ── 8 · A night shift's footage, raised after midnight ─────────────────
+//
+// The Issue Tracker stamps a request with the calendar moment it was raised.
+// A night shift's operating day does NOT roll at midnight, so a request
+// raised at 01:14 carries tomorrow's calendar date while belonging to the
+// shift that began last evening.
+//
+// Compared directly, such a request counted for nobody: it was missing from
+// the day's footage total AND from the employee's own share, so a night
+// shift's score was worked out from a number that did not include their work.
+console.log('\n8  Footage raised after midnight, on a night shift')
+{
+  // Yesterday's operating day, with a request stamped with TODAY's calendar
+  // date at 01:14 am — which is what the tracker really writes at that hour.
+  const opDay = TODAY
+  // 01:14 am on operating day TODAY falls on the CALENDAR day after it —
+  // derived from the operating day itself, not from the clock, or this only
+  // holds when the test happens to run before seven in the morning.
+  const tomorrowCal = (() => {
+    const [d, m, y] = TODAY.split('/').map(Number)
+    const x = new Date(y, m - 1, d); x.setDate(x.getDate() + 1)
+    return `${p2(x.getDate())}/${p2(x.getMonth() + 1)}/${x.getFullYear()}`
+  })()
+  const afterMidnight = (by) => { const r = new Array(20).fill('')
+    r[1] = 'ISS' + Math.random().toString(36).slice(2, 7)
+    r[4] = `${tomorrowCal}, 01:14:00 am`
+    r[7] = by; r[9] = 'Customer request for video'; r[17] = 'No'; return r }
+
+  floor({
+    updates: [upd(opDay, 'Client A', H, 'Completed', 400)],
+    issues: [afterMidnight('Afzal'), afterMidnight('Nesiya')],
+  })
+  const s = await ask()
+  const f = s.scoreBreakdown.footage
+  ok(f.total === 2, `${f.total} requests counted for the operating day, expected 2 — a request raised after midnight was dropped`)
+  ok(f.mine === 1, `${f.mine} of them mine, expected 1`)
+  ok(f.sharePct === 50, `share read as ${f.sharePct}%, expected 50%`)
+  console.log(`   raised ${tomorrowCal} 01:14 am → counted under operating day ${opDay}: ${f.mine} of ${f.total}`)
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)

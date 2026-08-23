@@ -27,8 +27,14 @@ let pass = 0, fail = 0
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL  ' + m) } }
 
 // ── The invented floor ─────────────────────────────────────────────────
+// The OPERATING day, which is what every date column in these sheets holds.
+// NOT the calendar date: the operating day runs 07:00 to 07:00, so between
+// midnight and seven the two differ, and a fixture filed under the calendar
+// date puts its rows where the platform never looks — every screen then reads
+// "shift not started, no clients" and the file fails only at night.
 const TODAY = (() => {
   const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  if (d.getHours() < 7) d.setDate(d.getDate() - 1)
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
 })()
 const NOW_HOUR = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })).getHours()

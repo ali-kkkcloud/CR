@@ -37,7 +37,19 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL  ' + m)
 
 const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
 const p2 = (n) => String(n).padStart(2, '0')
-const TODAY = `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}`
+// The OPERATING day, which is what every date column in these sheets holds.
+//
+// NOT the calendar date. The operating day runs 07:00 to 07:00, so between
+// midnight and seven the two differ — and a fixture that files its rows under
+// the calendar date puts them where the platform never looks. Every screen
+// then reads as "shift not started, no clients", and the file fails for the
+// six hours of the night shift while passing all day.
+//
+// This is the fifth fixture here to have had that exact fault, so it is
+// spelled out rather than left as a one-liner.
+const TODAY = (() => { const x = new Date(d); if (x.getHours() < 7) x.setDate(x.getDate() - 1)
+  const q = (n) => String(n).padStart(2, '0')
+  return `${q(x.getDate())}/${q(x.getMonth() + 1)}/${x.getFullYear()}` })()
 const H = d.getHours()
 const clockOf = (x) => { let h = x.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12; return `${p2(h)}:${p2(x.getMinutes())}:${p2(x.getSeconds())} ${a}` }
 const minsAgo = (m) => new Date(d.getTime() - m * 60000)

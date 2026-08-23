@@ -4,6 +4,7 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, parseOperatingDateTime, getShiftOverridesForDate,
   getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, yesterdayStr, TTL, warmTogether, SHIFT_SCREEN_TABS,
+  businessDate,
 } from '../../../lib/sheets'
 import { employees, distributeClientsForHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
@@ -16,6 +17,30 @@ const ISSUE_TAB = 'Issues- Realtime'
 const COL = {
   ISSUE_ID: 1, CLIENT: 2, VEHICLE: 3, RAISED_AT: 4, RAISED_BY: 7,
   SUB_REQUEST: 9, DETAILS: 10, RESOLVED: 17, RESOLVED_AT: 18,
+}
+
+// ── Which OPERATING day a footage request belongs to ─────────────────
+//
+// The Issue Tracker stamps a request with the calendar moment it was raised:
+// "23/08/2026, 01:14:00 am". Every date this platform files work under is the
+// OPERATING day, 07:00 to 07:00 — so a request raised at one in the morning
+// carries tomorrow's calendar date while belonging to the shift that began
+// last evening.
+//
+// Comparing the two directly is the mistake that has caused nearly every
+// night-shift fault here, and it did it again: a request raised after
+// midnight counted for nobody in the day's footage total, so a night shift's
+// score was worked out from a share of a number that did not include their
+// own work.
+function raisedOperatingDay(raisedAt) {
+  const s = (raisedAt || '').toString().trim()
+  if (!s) return ''
+  const [datePart, ...rest] = s.split(',')
+  const timePart = rest.join(',').trim()
+  const d = parseISTDateTime((datePart || '').trim(), timePart || '12:00:00 pm')
+  // Unparseable — fall back to the bare date rather than dropping the row.
+  if (!d) return (datePart || '').trim().split(' ')[0]
+  return businessDate(d)
 }
 
 function ddmmyyyy(d) {
@@ -182,7 +207,7 @@ export default async function handler(req, res) {
       const by  = (r[COL.RAISED_BY]   || '').toString().trim().toLowerCase()
       return sub.includes('customer request for video') && by === user.name.toLowerCase()
     })
-    const myFootageInRange = myFootage.filter(r => dateStrSet.has((r[COL.RAISED_AT]||'').split(',')[0].split(' ')[0]) || range==='today')
+    const myFootageInRange = myFootage.filter(r => dateStrSet.has(raisedOperatingDay(r[COL.RAISED_AT])) || range==='today')
     const footageResolved = (r) => (r[COL.RESOLVED]||'').toString().toLowerCase() === 'yes'
     const footageTaken   = myFootageInRange.filter(footageResolved).length
     const footagePending = myFootage.filter(r => !footageResolved(r)).length // pending is "live", not range-scoped
@@ -339,8 +364,7 @@ export default async function handler(req, res) {
     const dayFootageRows = footageRows.slice(1).filter(r => {
       const sub = (r[COL.SUB_REQUEST] || '').toString().toLowerCase()
       if (!sub.includes('customer request for video')) return false
-      const d = (r[COL.RAISED_AT] || '').split(',')[0].split(' ')[0]
-      return d === today
+      return raisedOperatingDay(r[COL.RAISED_AT]) === today
     })
     const footageTotalToday = dayFootageRows.length
     const footageMineToday  = dayFootageRows.filter(r =>
@@ -445,7 +469,7 @@ export default async function handler(req, res) {
     const todayFootage = footageRows.slice(1).filter(r => {
       const sub = (r[COL.SUB_REQUEST] || '').toString().toLowerCase()
       const by  = (r[COL.RAISED_BY]   || '').toString().trim().toLowerCase()
-      return sub.includes('customer request for video') && by === user.name.toLowerCase() && (r[COL.RAISED_AT]||'').includes(today)
+      return sub.includes('customer request for video') && by === user.name.toLowerCase() && raisedOperatingDay(r[COL.RAISED_AT]) === today
     })
     todayTargets.footageAssigned  = todayFootage.length
     todayTargets.footageCompleted = todayFootage.filter(footageResolved).length

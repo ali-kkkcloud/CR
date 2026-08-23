@@ -58,7 +58,13 @@ if (process.env.ROUTE) {
 
   const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
   const p2 = (n) => String(n).padStart(2, '0')
-  const TODAY = `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}`
+  // The OPERATING day, which is what every date column in these sheets holds.
+  // NOT the calendar date: the operating day runs 07:00 to 07:00, so between
+  // midnight and seven the two differ, and a fixture filed under the calendar
+  // date puts its rows where the platform never looks — every screen then reads
+  // "shift not started, no clients" and the file fails only at night.
+  const TODAY = (() => { const x = new Date(d); if (x.getHours() < 7) x.setDate(x.getDate() - 1)
+    return `${p2(x.getDate())}/${p2(x.getMonth() + 1)}/${x.getFullYear()}` })()
   const H = d.getHours()
   const nowClock = () => { let h = d.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12; return `${p2(h)}:${p2(d.getMinutes())}:${p2(d.getSeconds())} ${a}` }
   const clockOf = (x) => { let h = x.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12; return `${p2(h)}:${p2(x.getMinutes())}:${p2(x.getSeconds())} ${a}` }

@@ -343,7 +343,15 @@ rule(9, 'In, out and total break, per employee, on the admin Dashboard')
 
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
   const p2 = (n) => String(n).padStart(2, '0')
-  const TODAY = `${p2(now.getDate())}/${p2(now.getMonth() + 1)}/${now.getFullYear()}`
+  // The OPERATING day, not the calendar date. The times below are absolute
+  // (09:02 am in, 06:04 pm out, breaks at 11:00 and 15:00) and they belong to
+  // the operating day that contains them — so between midnight and seven,
+  // filing them under the calendar date puts them a day ahead of where the
+  // platform looks, and every one of these reads back blank.
+  const TODAY = (() => {
+    const x = new Date(now); if (x.getHours() < 7) x.setDate(x.getDate() - 1)
+    return `${p2(x.getDate())}/${p2(x.getMonth() + 1)}/${x.getFullYear()}`
+  })()
   const H = now.getHours()
 
   reset()
