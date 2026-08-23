@@ -57,6 +57,14 @@ const clientsFor = (h, n) => Array.from({ length: n }, (_, i) => ({
 
 const overview = {
   employees: NAMES.map(emp),
+  // Clients with no update against them all day — the 'Not updated' tab.
+  staleClients: [
+    { client:'Cityflo_Mumbai', vehicleCount:561, done:0, pending:3,
+      slots:[{hour:16,owner:'Nesiya',done:false},{hour:12,owner:'BRINDA',done:false},{hour:8,owner:'Sunil',done:false}],
+      lastOwner:'Nesiya', firstHour:8 },
+    { client:'Shatabdi Travels', vehicleCount:12, done:0, pending:1,
+      slots:[{hour:9,owner:'HARI',done:false}], lastOwner:'HARI', firstHour:9 },
+  ],
   workload: {
     byHour: HOURS.map((h, i) => ({ hour: h, passed: i < 4, clients: 40 + i, vehicles: 500 + i * 7, done: i })),
     soFar:   { clients: 300, clientsDone: 120, vehicles: 4000, vehiclesChecked: 1500, alerts: 4, fatigue: 1, alertsTotal: 5 },
@@ -169,6 +177,7 @@ const SPARSE = {
     ],
     workload: { byHour: [], soFar: {}, fullDay: {}, perEmployee: [] },
     rosterIssues: [], clientIssues: [], coverageGaps: [], redistribution: [],
+    staleClients: [],
     footage: { pending: 0, done: 0 }, kpis: {},
   }),
   '/api/admin/full-day-view':     () => ({ date: '19/08/2026', employees: [
@@ -229,7 +238,10 @@ SPARSE['/api/dashboard/tick'] = () => ({
   for (const [passName, TABLE] of PASSES) {
   console.log(`\n── ${passName} data ──`)
   for (const [label, path, tabs] of [
-    ['ADMIN',    '/admin',     ['Dashboard','Hour by hour','Requests','Team','More']],
+    // 'Work moved' and 'Not updated' are sub-tabs under Hour by hour; naming
+    // them here makes the check click into them too, which is where a panel
+    // that throws on its own data would otherwise go unnoticed.
+    ['ADMIN',    '/admin',     ['Dashboard','Hour by hour','Work moved','Not updated','Requests','Team','More']],
     ['EMPLOYEE', '/dashboard', ['Board','Dashboard','Footage','Follow-ups']],
   ]) {
     const page = await b.newPage({ viewport: { width: 1440, height: 1000 } })

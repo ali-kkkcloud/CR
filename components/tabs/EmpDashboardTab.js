@@ -97,7 +97,79 @@ function ScoreWorkings({ b, total, tier }) {
   )
 }
 
-export default function EmpDashboardTab({ summary, range, setRange, loading, onGoToTab, breakStatus }) {
+// ── Clients you have not touched at all today ──────────────────────────
+//
+// The board shows one hour at a time, which means a client never once opened
+// looks exactly like one seen an hour ago — a single pending row on whichever
+// hour happens to be up. This is the list that says where to start, and every
+// line opens that client at the hour it was last yours, ready to record.
+//
+// Biggest fleets first: a client with six hundred vehicles unwatched all day
+// is not the same problem as one with two.
+function StillNotUpdated({ clients, onOpen }) {
+  if (!clients || clients.length === 0) {
+    return (
+      <Card>
+        <div className="eyebrow" style={{ marginBottom:'8px' }}>Still not updated</div>
+        <div style={{ display:'flex', alignItems:'center', gap:SP[2], color:C.accent, fontSize:T.base, fontWeight:600 }}>
+          <Icon name="check-circle" size={16} color={C.accent} />
+          Every client on your day has been updated at least once.
+        </div>
+      </Card>
+    )
+  }
+  const vehicles = clients.reduce((s, c) => s + (c.vehicleCount || 0), 0)
+  return (
+    <Card pad={false} style={{ overflow:'hidden' }}>
+      <div style={{ padding:SP[3], borderBottom:`1px solid ${C.border}` }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:SP[2] }}>
+          <span className="eyebrow">Still not updated</span>
+          <span style={{ color:C.red, fontSize:'22px', fontWeight:800 }}>{clients.length}</span>
+        </div>
+        <div style={{ color:C.muted, fontSize:T.xs, marginTop:'3px' }}>
+          {vehicles.toLocaleString()} vehicles · not opened once today · tap one to go straight to it
+        </div>
+      </div>
+      <div style={{ maxHeight:'270px', overflowY:'auto' }}>
+        {clients.map(c => (
+          <button
+            key={c.client}
+            onClick={() => onOpen && onOpen(c)}
+            className="row-hover pressable"
+            style={{
+              display:'flex', alignItems:'center', gap:SP[3], width:'100%',
+              background:'transparent', border:'none',
+              borderBottom:`1px solid ${C.border}`,
+              padding:'11px 13px', textAlign:'left',
+            }}
+          >
+            <span style={{ width:'7px', height:'7px', borderRadius:'50%', background:C.red, flexShrink:0 }} />
+            <span style={{ flex:1, minWidth:0 }}>
+              <span className="ellip" style={{ display:'block', color:C.text, fontSize:T.base, fontWeight:600 }}>
+                {c.client}
+              </span>
+              <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'2px' }}>
+                {(c.vehicleCount || 0).toLocaleString()} vehicles · {c.pendingHours.length} slot{c.pendingHours.length === 1 ? '' : 's'} missed
+              </span>
+            </span>
+            <span style={{ color:C.blue, fontSize:T.xs, fontWeight:600, flexShrink:0 }}>
+              {fmtHour12(c.jumpHour)} →
+            </span>
+          </button>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+function fmtHour12(h) {
+  if (h == null) return '—'
+  const to12 = h % 12 === 0 ? 12 : h % 12
+  return `${to12}${h >= 12 ? 'pm' : 'am'}`
+}
+
+export default function EmpDashboardTab({ summary, range, setRange, loading, onGoToTab, breakStatus,
+                                          staleClients = [], onOpenStale }) {
   // Declared before the early return below — a hook cannot be called
   // conditionally.
   const [showScore, setShowScore] = useState(false)
@@ -189,6 +261,12 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
         )}
         <MiniStatusCard icon="overview" label="Shift status" value={breakStatus?.onBreak?'On break':'Active'} sub={breakStatus?.onBreak?'':`${fmtMinutes(summary.workingMinutes||0)} worked`} color={breakStatus?.onBreak?C.amber:C.accent} />
         <MiniStatusCard icon="clock" label="Break time today" value={fmtMinutes(breakStatus?.totalMinutesToday||0)} sub={breakStatus?.onBreak?'Currently on break':`${breakStatus?.history?.length||0} session${(breakStatus?.history?.length||0)===1?'':'s'}`} color={breakStatus?.onBreak?C.red:C.text} />
+      </div>
+
+      {/* Where to start. Above the charts on purpose: this is work
+          waiting, and the charts are a report on work already done. */}
+      <div style={{ marginBottom:SP[4] }}>
+        <StillNotUpdated clients={staleClients} onOpen={onOpenStale} />
       </div>
 
       {/* Trend + calendar + notifications */}

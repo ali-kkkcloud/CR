@@ -228,6 +228,8 @@ export default async function handler(req, res) {
 
     let plan = null
     let coverageGaps = []
+    // Clients nobody has touched all day — see where it is built, below.
+    let staleOut = []
     try {
       const vehicleMap = await fetchClientVehicleCounts()
       plan = computeDayPlan({
@@ -274,6 +276,57 @@ export default async function handler(req, res) {
           past: h.passed && h.hour !== currentHour,
           sample: h.unassigned.slice(0, 6),
         }))
+
+      // ── Clients nobody has touched since seven this morning ────────────
+      //
+      // Different from a coverage gap, and worse in a quieter way. A coverage
+      // gap is work that reached no board — nobody could have done it. This
+      // is work that DID reach somebody's board, in one hour or in six, and
+      // still has not a single update against it all day.
+      //
+      // Every hour is treated on its own everywhere else on this platform,
+      // which is right: a client scheduled at eleven and again at five is two
+      // pieces of work. But it means a client that has gone untouched from
+      // one end of the day to the other never appears as one fact anywhere —
+      // it is just a pending slot on six different screens, and no single
+      // screen says "this client has been waiting since seven".
+      //
+      // The hour in progress is left out of the reckoning. Nothing in it is
+      // late yet.
+      const staleClients = (() => {
+        const seen = new Map()
+        plan.hours.forEach(h => {
+          if (!h.passed || h.hour === currentHour) return
+          // isLocked is set by computeDayPlan on anything already recorded —
+          // it is what pins finished work to whoever did it, so it is also
+          // the honest answer to "was this slot updated?".
+          Object.entries(h.owners).forEach(([name, cs]) => {
+            cs.forEach(c => {
+              const rec = seen.get(c.client) || {
+                client: c.client, vehicleCount: c.vehicleCount || 0,
+                slots: [], done: 0, pending: 0,
+              }
+              const isDone = !!c.isLocked
+              rec.slots.push({ hour: h.hour, owner: name, done: isDone })
+              if (isDone) rec.done++; else rec.pending++
+              seen.set(c.client, rec)
+            })
+          })
+        })
+        return [...seen.values()]
+          // Untouched ALL DAY. One update anywhere and it is not this.
+          .filter(r => r.done === 0 && r.pending > 0)
+          .map(r => ({
+            ...r,
+            // Newest first, so "who had it last" is the first line.
+            slots: r.slots.sort((a, b) => businessHourOrder().indexOf(b.hour) - businessHourOrder().indexOf(a.hour)),
+            lastOwner: r.slots.length ? r.slots[0].owner : null,
+            firstHour: r.slots.length ? r.slots[r.slots.length - 1].hour : null,
+          }))
+          // The biggest fleets first — that is where the exposure is.
+          .sort((a, b) => (b.vehicleCount || 0) - (a.vehicleCount || 0))
+      })()
+      staleOut = staleClients
 
       // What each person is holding right now, for the floor list: finished
       // work wherever it happened, plus what is still open on their board.
@@ -491,6 +544,8 @@ export default async function handler(req, res) {
       rosterIssues,
       clientIssues,
       coverageGaps,
+      // Clients with not one update against them since seven this morning.
+      staleClients: staleOut,
       redistribution: todayRedistrib,
       history,
       footage: { pending: pendingFootage, done: doneFootage },

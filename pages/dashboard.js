@@ -16,6 +16,11 @@ import MyClientsTab from '../components/tabs/MyClientsTab'
 import EmpFootageTab from '../components/tabs/EmpFootageTab'
 import EmpFollowupTab from '../components/tabs/EmpFollowupTab'
 
+// The day's hours in the order they actually happen: 7am first, 6am last.
+// The same order the server uses (businessHourOrder in lib/sheets), so "the
+// most recent hour" lands on the right side of midnight for a night shift.
+const businessOrder = [...Array(17)].map((_, i) => i + 7).concat([...Array(7)].map((_, i) => i))
+
 function hourLabel(h) {
   const to12 = (n) => n === 0 ? 12 : n > 12 ? n - 12 : n
   const suf  = (n) => n >= 12 ? 'PM' : 'AM'
@@ -935,6 +940,56 @@ export default function Dashboard() {
     ? boardFilled
     : { ...boardFilled, ...(pastEdits[shownHour] || {}) }
 
+  // ── Clients this employee has not touched at all today ───────────────
+  //
+  // Every hour is a separate piece of work, which is right — but it means a
+  // client they have never once opened looks exactly like one they saw an
+  // hour ago: a single pending row, on whichever hour happens to be on
+  // screen. Nothing added them up, so nothing said "start here".
+  //
+  // Worked out from the day they have already been sent, so it costs nothing
+  // extra. A client counts only if NO hour of their day has it done and at
+  // least one hour that has already passed does. The hour in progress is left
+  // out — nothing in it is late yet.
+  const staleMine = useMemo(() => {
+    const byClient = new Map()
+    ;(myDay?.timeline || []).forEach(h => {
+      if (h.hour === currentHour) return
+      ;(h.clients || []).forEach(c => {
+        if (c.isCustom) return
+        const rec = byClient.get(c.client) || {
+          client: c.client, vehicleCount: c.vehicleCount || 0,
+          done: 0, pendingHours: [],
+        }
+        if (c.filled) rec.done++
+        else rec.pendingHours.push(h.hour)
+        byClient.set(c.client, rec)
+      })
+    })
+    return [...byClient.values()]
+      .filter(r => r.done === 0 && r.pendingHours.length > 0)
+      .map(r => ({
+        ...r,
+        // The one to open: the most recent hour it was theirs, in the day's
+        // own order, so a night shift lands on the right side of midnight.
+        jumpHour: r.pendingHours.slice().sort(
+          (a, b) => businessOrder.indexOf(b) - businessOrder.indexOf(a))[0],
+      }))
+      .sort((a, b) => (b.vehicleCount || 0) - (a.vehicleCount || 0))
+  }, [myDay, currentHour])
+
+  // Open the client where it was last theirs, ready to record.
+  //
+  // Deliberately NOT memoised: selectHour is redeclared on every render and
+  // closes over currentHour, so a useCallback would freeze a stale copy of it
+  // and the board would stop following the clock at the wrong hour.
+  function goToStale(entry) {
+    if (!entry) return
+    setActiveTab('board')
+    selectHour(entry.jumpHour)
+    setFocusRequest({ client: entry.client, at: Date.now() })
+  }
+
   const realBoard = boardClients.filter(c => !c.isCustom)
 
   // The rail's "This hour" card is about the hour in progress, always — not
@@ -1230,6 +1285,7 @@ export default function Dashboard() {
               <EmpDashboardTab
                 summary={summary} range={summaryRange} setRange={setSummaryRange}
                 loading={summaryLoading} onGoToTab={setActiveTab} breakStatus={breakStatus}
+                staleClients={staleMine} onOpenStale={goToStale}
               />
             )}
 
