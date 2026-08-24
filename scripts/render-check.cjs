@@ -238,10 +238,16 @@ SPARSE['/api/dashboard/tick'] = () => ({
   for (const [passName, TABLE] of PASSES) {
   console.log(`\n── ${passName} data ──`)
   for (const [label, path, tabs] of [
-    // 'Work moved' and 'Not updated' are sub-tabs under Hour by hour; naming
-    // them here makes the check click into them too, which is where a panel
-    // that throws on its own data would otherwise go unnoticed.
-    ['ADMIN',    '/admin',     ['Dashboard','Hour by hour','Work moved','Not updated','Requests','Team','More']],
+    // 'Work moved' and 'Still not updated' are sub-tabs under Hour by hour;
+    // naming them here makes the check click into them too, which is where a
+    // panel that throws on its own data would otherwise go unnoticed.
+    //
+    // These have to be the tab's EXACT label. The match below is an equality
+    // (or "label + a count"), so a name that no longer exists matches nothing,
+    // clicks nothing, and still prints `ok` — the tab reports a clean pass on
+    // a screen it never opened. That happened here: this list said 'Not
+    // updated' after the tab had been renamed to 'Still not updated'.
+    ['ADMIN',    '/admin',     ['Dashboard','Hour by hour','Work moved','Still not updated','Requests','Team','More']],
     ['EMPLOYEE', '/dashboard', ['Board','Dashboard','Footage','Follow-ups']],
   ]) {
     const page = await b.newPage({ viewport: { width: 1440, height: 1000 } })
@@ -281,9 +287,29 @@ SPARSE['/api/dashboard/tick'] = () => ({
     await page.waitForTimeout(4000)
 
     for (const tab of tabs) {
+      let clicked = false
+      const seen = []
       for (const el of await page.$$('a,button')) {
-        const t = ((await el.innerText().catch(() => '')) || '').trim()
-        if (t === tab || t.startsWith(tab + ' ')) { await el.click().catch(() => {}); break }
+        // A tab's label and its count sit on separate lines, so innerText
+        // comes back as "Requests\n12". Comparing that raw matched nothing
+        // and the tab was quietly skipped, so flatten the whitespace first.
+        const t = ((await el.innerText().catch(() => '')) || '').replace(/\s+/g, ' ').trim()
+        if (t) seen.push(t)
+        if (t === tab || t.startsWith(tab + ' ')) {
+          await el.click().catch(() => {})
+          clicked = true
+          break
+        }
+      }
+      // A tab named here that is nowhere on the screen used to be skipped in
+      // silence and still printed `ok`. Either the tab was renamed and this
+      // list is stale — in which case nothing has been checked — or the tab
+      // has genuinely gone missing, which is worse. Both are failures.
+      if (!clicked) {
+        problems++
+        console.log(`  MISSING ${label} › ${tab}  — no tab with that label; rename here or it is untested`)
+        console.log(`            on screen: ${seen.slice(0, 12).join(' · ') || '(nothing clickable)'}`)
+        continue
       }
       await page.waitForTimeout(2500)
       const body = await page.evaluate(() => document.body.innerText).catch(() => '')
