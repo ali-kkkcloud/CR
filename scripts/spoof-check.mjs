@@ -306,5 +306,41 @@ console.log('\n12  Spelling')
   console.log(`   "  SUNIL  " matches Sunil`)
 }
 
+
+// ── 13 · A watched name whose shift is not now ─────────────────────────
+//
+// Asked directly: does "Active" have to say Yes, and does a name on the list
+// do anything to somebody who is not working right now?
+//
+// Blank means watched — only No / Off / Paused suspend a row (see
+// getWatchlistNames). And the list changes WHO IS BELIEVED, not when a break
+// can happen: somebody with no open shift row has no break to open, and
+// somebody who has clocked in before their window opens is not idling, they
+// are early. Both rules are older than the watchlist and it does not touch
+// either.
+console.log('\n13  On the list, but not on shift')
+{
+  delete process.env.CAUTIO_HEARTBEAT_TRUST_MINUTES
+  const watched = new Set(['sunil'])
+
+  // No open shift row at all — the shift is later today, or tomorrow.
+  const notOnShift = {
+    shiftRows: [HEAD],                       // nobody clocked in
+    updateRows: [HEAD], breakRows: [HEAD],
+    dates: [DATE, yesterdayStr()], nowMs: NOW,
+    heartbeatOverride: null, overridesMap: {}, watchlist: watched,
+  }
+  ok(evaluateAutoBreak(EMP, notOnShift, DATE) === null,
+     'a watched employee who is not on shift was put on a break')
+
+  // Clocked in, but nothing recorded yet — the shift start is itself work,
+  // so the ten minutes run from arrival rather than from nowhere.
+  const justArrived = { ...ctxWith({ inAgo: 2, seenAgo: 0, updates: [] }), watchlist: watched }
+  ok(evaluateAutoBreak(EMP, justArrived, DATE) === null,
+     'a watched employee two minutes into their shift was put on a break')
+
+  console.log(`   not on shift → nothing · 2m into the shift → nothing`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
