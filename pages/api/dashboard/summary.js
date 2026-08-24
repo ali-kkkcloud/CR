@@ -384,7 +384,13 @@ export default async function handler(req, res) {
 
     const BREAK_ALLOWANCE_MIN = 60
     const BREAK_PENALTY = 20
-    const breakMinutesToday = totalBreakMinutes(breakRows, user.empId, [today, yesterday])
+    // ONE day, not two. `today` above is already resolved to the employee's
+    // own shift date, so this is the break taken during the shift being
+    // scored. Passing [today, yesterday] added YESTERDAY's break to it — a
+    // 95-minute day followed by a quiet one opened the new morning already
+    // past the hour's allowance, and took twenty points off a score for time
+    // away on a day that had ended.
+    const breakMinutesToday = totalBreakMinutes(breakRows, user.empId, [today])
     const breakPenalty = breakMinutesToday > BREAK_ALLOWANCE_MIN ? BREAK_PENALTY : 0
 
     const performanceScore = Math.max(0, Math.min(100,

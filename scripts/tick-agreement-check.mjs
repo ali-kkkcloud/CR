@@ -63,10 +63,22 @@ const minsAgo = (m) => new Date(d.getTime() - m * 60000)
 // open a break for somebody whose shift has not begun.
 //
 // So every time below is clamped inside the day that is actually running.
+// FLOORED, not rounded. Rounding can hand back a figure up to thirty seconds
+// LARGER than the day's real age, and `minsAgo(DAY_AGE_MIN)` then lands just
+// before seven o'clock instead of just after — 06:59:51 at 07:39:51.
+//
+// A second either side of seven is not a rounding detail here. Hour 6 is the
+// LAST hour of the operating day, not the first, so a fixture that reports a
+// roster start of 6 is describing a shift that begins tomorrow morning. The
+// idle rule then correctly refuses to open a break for somebody whose shift
+// has not started, and case 5 fails — but only between seven and eight in the
+// morning, which is the one hour of the day nobody is watching this run.
+//
+// Flooring guarantees `d - DAY_AGE_MIN` never precedes the day it belongs to.
 const DAY_AGE_MIN = (() => {
   const start = new Date(d); start.setHours(7, 0, 0, 0)
   if (d.getHours() < 7) start.setDate(start.getDate() - 1)
-  return Math.max(0, Math.round((d.getTime() - start.getTime()) / 60000))
+  return Math.max(0, Math.floor((d.getTime() - start.getTime()) / 60000))
 })()
 const within = (m) => Math.min(m, DAY_AGE_MIN)
 
@@ -84,10 +96,20 @@ const CLIENTS = Array.from({ length: 40 }, (_, i) => `Client ${i + 1}`)
 const vehicleRows = [['Client','Vehicle']]
 CLIENTS.forEach((c, i) => { for (let v = 0; v < 6; v++) vehicleRows.push([c, `KA${i}-${v}`]) })
 
+// The time on an update is a moment the employee was working, and the idle
+// rule reads it as activity. A fixed '09:00:00 am' is not inside this
+// fixture's shift for most of the day: run before nine and it resolves to
+// NINE YESTERDAY, so these rows describe work done on a day the fixture is
+// not about and contribute nothing to the decision they exist to exercise.
+//
+// Stamped at the clock-in instead — inside the shift, always in the past, and
+// never later than the heartbeat, so `lastSeenMins` alone still decides how
+// long the employee has been quiet.
+const UPDATE_AT = clockOf(minsAgo(CLOCK_IN_MIN))
 const updateRows = [['Date','Time','Emp','Client','Hour','Status','Mis','Alerts','Fatigue','FCount','Notes','Live']]
 PEOPLE.forEach(([, name], i) => {
   for (let c = 0; c < 6; c++) {
-    updateRows.push([TODAY, '09:00:00 am', name, CLIENTS[(i * 4 + c) % CLIENTS.length], String(H),
+    updateRows.push([TODAY, UPDATE_AT, name, CLIENTS[(i * 4 + c) % CLIENTS.length], String(H),
                      c % 2 ? 'Completed' : '', '', String(c % 3), 'No', '0', '', String(c)])
   }
 })

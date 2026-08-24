@@ -1,6 +1,6 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { guardSession } from '../../../lib/session'
-import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr, TTL } from '../../../lib/sheets'
+import { readSheetCached, CRM_SHEET_ID, TABS, todayStr, calcDurationMinutes, nowStr, findOpenShiftRow, TTL } from '../../../lib/sheets'
 import { sweepAutoBreaks, recordHeartbeat, recentDates, findOpenBreaks, totalBreakMinutes, isSupersededBreak, AUTO_BREAK_IDLE_MINUTES } from '../../../lib/attendance'
 
 export default async function handler(req, res) {
@@ -95,10 +95,26 @@ export default async function handler(req, res) {
       })
     }
 
+    // ── Today's total is ONE day's total ────────────────────────────
+    //
     // Counted as the union of the stretches, not the sum of the rows —
     // overlapping breaks (see totalBreakMinutes) would otherwise be added
     // together and read as far longer than the person was actually away.
-    const totalMinutesToday = totalBreakMinutes(rows, user.empId, dates)
+    //
+    // And over ONE day, not the two the lookup above searches. Finding an
+    // open break has to cover both, or a break opened at 06:50 is invisible
+    // at 07:10 and can never be closed. Totalling does not: at seven in the
+    // morning the day starts again, and adding yesterday to it opened the new
+    // shift already showing an hour and a half away.
+    //
+    // Which day is "today" is the employee's SHIFT date, not the clock's. A
+    // night shift still working at 07:10 belongs to the day it began, and
+    // reading the clock would have shown them nothing for a night they had
+    // spent on the floor. The open shift row is where that date lives.
+    const shiftRows = await readSheetCached(CRM_SHEET_ID, `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE)
+    const openShift = findOpenShiftRow(shiftRows, user.empId, dates)
+    const myDay = openShift ? openShift.date : today
+    const totalMinutesToday = totalBreakMinutes(rows, user.empId, [myDay])
 
     return res.status(200).json({
       onBreak: !!active,
