@@ -145,6 +145,10 @@ export default function Dashboard() {
   const [clients, setClients] = useState([])
   const [filled, setFilled] = useState({})
   const [clientContext, setClientContext] = useState({})
+  // { client: { at, by } } — every client ANYBODY has updated today. See
+  // /api/clients/current. "Still not updated" is a question about the
+  // client, not about who is looking at it.
+  const [updatedToday, setUpdatedToday] = useState({})
   const [footage, setFootage] = useState({ pending: [], completed: [], followups: [] })
   const [myDay, setMyDay] = useState(null)
   // Lands on the Board — the work — rather than on charts. An operator
@@ -326,6 +330,7 @@ export default function Dashboard() {
           return merged
         })
       }
+      if (data.updatedToday) setUpdatedToday(data.updatedToday)
       if (typeof data.hour === 'number') { setCurrentHour(data.hour); hourRef.current = data.hour }
     } catch (e) { console.error('applyClients failed:', e) }
   }, [])
@@ -831,7 +836,10 @@ export default function Dashboard() {
           client: c.client, vehicleCount: c.vehicleCount || 0,
           done: 0, pendingHours: [],
         }
-        if (c.filled) rec.done++
+        // Done if THIS employee recorded it, or if anybody else did — a
+        // client somebody filled at seven is not still waiting, whoever
+        // filled it. See updatedToday.
+        if (c.filled || updatedToday[c.client]) rec.done++
         else rec.pendingHours.push(h.hour)
         byClient.set(c.client, rec)
       })
@@ -846,7 +854,7 @@ export default function Dashboard() {
           (a, b) => businessOrder.indexOf(b) - businessOrder.indexOf(a))[0],
       }))
       .sort((a, b) => (b.vehicleCount || 0) - (a.vehicleCount || 0))
-  }, [myDay, currentHour])
+  }, [myDay, currentHour, updatedToday])
 
   // Fetched on demand — an earlier day is not part of the thirty-second poll,
   // because it cannot change.
