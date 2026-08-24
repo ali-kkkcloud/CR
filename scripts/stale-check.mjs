@@ -175,5 +175,73 @@ console.log('\n6  The hour that is still running')
   console.log(`   nothing due only in the current hour is listed`)
 }
 
+// ── 7 · Filled during the hour that is still running ───────────────────
+//
+// The rule is "seven this morning until NOW", and now includes the hour in
+// progress. A client due at eight and again at eleven, filled at 11:15, has
+// been filled — it must come off the list straight away rather than at noon.
+//
+// This is where the admin and the employee disagreed. The employee's panel
+// tests the whole day (updatedToday, built from every row of the operating
+// day), so the client vanished from their list the moment it was filled. The
+// admin's tested each client-HOUR, so the outstanding eight o'clock slot kept
+// it listed — one person looking at a client somebody had just done.
+console.log('\n7  Filled in the hour that is still running')
+{
+  const timings = { 'Zingbus': [HOUR_A, NOW_HOUR] }
+  setScheduleData({ employees: PEOPLE, timings, employeeHours: {} })
+  const build = (updates) => computeDayPlan({
+    date: DATE, today: DATE, nowHour: NOW_HOUR,
+    shiftRows: [HEAD, ...PEOPLE.map(shiftRow)], updateRows: [HEAD, ...updates],
+    breakRows: [HEAD], leaveMap: {}, overridesMap: {}, vehicleMap, weekOffNames: new Set(),
+  })
+
+  // Nothing filled: the finished eight o'clock slot puts it on the list.
+  const before = staleClientsFrom(build([]), NOW_HOUR).map(c => c.client)
+  ok(before.includes('Zingbus'), 'a client with a missed 8:00 slot should be listed')
+
+  // Filled at 11:15 — inside the hour that has not finished yet.
+  const plan = build([upd('Nesiya', 'Zingbus', NOW_HOUR, '11:15:00 am')])
+  const after = staleClientsFrom(plan, NOW_HOUR).map(c => c.client)
+  ok(!after.includes('Zingbus'),
+     'filled at 11:15 and still listed as never updated — the running hour is not being counted')
+
+  // And the day-wide record the employee's board reads is the same one.
+  ok(plan.filledToday?.get('Zingbus') === '11:15:00 am',
+     `the day-wide record says ${plan.filledToday?.get('Zingbus')}, expected 11:15:00 am`)
+  console.log(`   listed before · filled at 11:15 in the running hour → off the list at once`)
+}
+
+// ── 8 · A client that never comes at seven ─────────────────────────────
+//
+// Not every client is due first thing. One that only ever appears at eleven
+// cannot be "not updated since seven" while eleven is still running, and it
+// must not be listed before its hour has come round either.
+console.log('\n8  A client whose first hour is late in the day')
+{
+  const timings = { 'Zingbus': [HOUR_B] }          // due at 9 only
+  setScheduleData({ employees: PEOPLE, timings, employeeHours: {} })
+  const at = (nowHour, updates = []) => computeDayPlan({
+    date: DATE, today: DATE, nowHour,
+    shiftRows: [HEAD, ...PEOPLE.map(shiftRow)], updateRows: [HEAD, ...updates],
+    breakRows: [HEAD], leaveMap: {}, overridesMap: {}, vehicleMap, weekOffNames: new Set(),
+  })
+
+  // At eight its hour has not arrived — nothing is owed yet.
+  ok(staleClientsFrom(at(HOUR_A), HOUR_A).length === 0,
+     'a client due at nine is being called late at eight')
+
+  // At eleven, nine has passed and nobody filled it.
+  const late = staleClientsFrom(at(NOW_HOUR), NOW_HOUR)
+  ok(late.some(c => c.client === 'Zingbus'), 'nine has passed unfilled and the client is not listed')
+  ok(late.find(c => c.client === 'Zingbus')?.firstHour === HOUR_B,
+     'the list should say it has been due since nine')
+
+  // Filled at nine by anybody: gone, whatever hour it is now.
+  const filled = staleClientsFrom(at(NOW_HOUR, [upd('CHANDAN', 'Zingbus', HOUR_B)]), NOW_HOUR)
+  ok(!filled.some(c => c.client === 'Zingbus'), 'filled at nine and still listed at eleven')
+  console.log(`   not listed at ${HOUR_A}:00 · listed at ${NOW_HOUR}:00 · filled at ${HOUR_B}:00 → gone`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
