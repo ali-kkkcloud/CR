@@ -3,7 +3,7 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
   getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, yesterdayStr,
   hourHasPassed, whoWasOnShiftAtHour, businessHourOrder, DAY_START_HOUR,
-  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, nowIST, TTL, warmTogether, SHIFT_SCREEN_TABS,
+  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, nowIST, getWatchlistNames, TTL, warmTogether, SHIFT_SCREEN_TABS,
   vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
 import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
@@ -447,6 +447,18 @@ export default async function handler(req, res) {
       ;(autoBreaksByName[name] ||= []).push({ seconds: Math.round((e - s) / 1000) })
     })
 
+    // ── Who is on the watchlist, and does the spelling match ──────────
+    //
+    // The list is typed by hand into a tab, and a name that matches nobody
+    // watches nobody and says nothing — the exact kind of silence that gets
+    // discovered weeks later. Both halves are reported.
+    const watchNames = await getWatchlistNames()
+    const rosterLower = new Map(employees().map(e => [e.name.toLowerCase(), e.name]))
+    const watchlist = {
+      watched:   [...watchNames].filter(n => rosterLower.has(n)).map(n => rosterLower.get(n)),
+      unmatched: [...watchNames].filter(n => !rosterLower.has(n)),
+    }
+
     // Credentials is the authority on who an employee ID belongs to; the
     // Breaks tab only knows the people who have taken one.
     const idOf = {}
@@ -608,6 +620,7 @@ export default async function handler(req, res) {
       staleClients: staleOut,
       scores,
       integrityFlags,
+      watchlist,
       redistribution: todayRedistrib,
       history,
       footage: { pending: pendingFootage, done: doneFootage },

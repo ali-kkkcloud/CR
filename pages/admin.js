@@ -730,7 +730,7 @@ export default function Admin() {
                   Same function behind both, so the numbers agree. */}
               {/* ── Browsers whose story the sheet does not back up ──
                   Reported, never acted on: see the panel's own note. */}
-              <IntegrityPanel flags={overview?.integrityFlags || []} />
+              <IntegrityPanel flags={overview?.integrityFlags || []} watchlist={overview?.watchlist} />
 
               <ScoresPanel scores={overview?.scores || []} />
 

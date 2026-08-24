@@ -22,8 +22,10 @@ import Icon from '../Icons'
 import { C } from '../Widgets'
 import { Card, Tag, T, R, SP } from '../ui'
 
-export default function IntegrityPanel({ flags = [] }) {
-  if (!flags.length) return null
+export default function IntegrityPanel({ flags = [], watchlist = null }) {
+  const watched   = watchlist?.watched || []
+  const unmatched = watchlist?.unmatched || []
+  if (!flags.length && !watched.length && !unmatched.length) return null
 
   const high = flags.filter(f => f.severity === 'high')
 
@@ -37,13 +39,44 @@ export default function IntegrityPanel({ flags = [] }) {
         <Icon name="alerts" size={15} color={high.length ? C.amber : C.muted} />
         <span style={{ flex:1, minWidth:0 }}>
           <span style={{ display:'block', color: high.length ? C.amber : C.text, fontSize:T.base, fontWeight:700 }}>
-            {flags.length} {flags.length === 1 ? 'browser is' : 'browsers are'} reporting activity the sheet does not support
+            {flags.length
+              ? `${flags.length} ${flags.length === 1 ? 'browser is' : 'browsers are'} reporting activity the sheet does not support`
+              : 'Activity checks'}
           </span>
           <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'3px' }}>
             worth a look, not a conclusion — a genuinely quiet stretch reads the same way for a while
           </span>
         </span>
       </div>
+
+      {/* ── Who the browser is not believed for ──
+          A name on the Break_Watchlist tab has their idle time measured from
+          what they have actually recorded, so a faked cursor buys nothing. */}
+      {watched.length > 0 && (
+        <div style={{ padding:'11px 15px', borderBottom:`1px solid ${C.border}` }}>
+          <div className="eyebrow">Idle measured from work, not cursor</div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginTop:'7px' }}>
+            {watched.map(n => <Tag key={n} color={C.text2}>{n}</Tag>)}
+          </div>
+          <div style={{ color:C.muted, fontSize:T.xs, marginTop:'7px' }}>
+            10 minutes with no update opens a break, backdated to when they stopped.
+            Edit the <span style={{ color:C.text2 }}>Break_Watchlist</span> tab to change who.
+          </div>
+        </div>
+      )}
+
+      {/* A name that matches nobody watches nobody — and would do it in
+          complete silence, which is the failure worth naming. */}
+      {unmatched.length > 0 && (
+        <div style={{ padding:'11px 15px', borderBottom:`1px solid ${C.border}`, background: C.red + '0d' }}>
+          <div style={{ color:C.red, fontSize:T.base, fontWeight:700 }}>
+            {unmatched.length} name{unmatched.length === 1 ? '' : 's'} on the watchlist match nobody
+          </div>
+          <div style={{ color:C.muted, fontSize:T.xs, marginTop:'4px' }}>
+            {unmatched.join(', ')} — spelling must match Credentials exactly, or nothing happens
+          </div>
+        </div>
+      )}
 
       {flags.map(f => (
         <div key={f.name} style={{

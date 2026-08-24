@@ -242,5 +242,69 @@ console.log('\n10  Enforcement off — the default')
   if (saved != null) process.env.CAUTIO_HEARTBEAT_TRUST_MINUTES = saved
 }
 
+
+// ── 11 · The watchlist ─────────────────────────────────────────────────
+//
+// The floor knows who is running the extension. Rather than a rule applied
+// to everybody — which would eventually catch an honest person on a slow
+// hour — a name goes on a tab in the sheet, and for that person the browser
+// is simply not listened to: their idle time is measured from what they have
+// actually recorded.
+//
+// Fake mouse movement buys nothing, because nothing is listening to it.
+console.log('\n11  A name on the watchlist')
+{
+  const saved = process.env.CAUTIO_HEARTBEAT_TRUST_MINUTES
+  delete process.env.CAUTIO_HEARTBEAT_TRUST_MINUTES     // floor-wide rule OFF
+
+  const watched = new Set(['sunil'])
+  // The extension in full voice: heartbeat forced to "just now", every poll.
+  const spoof = (lastWorkMin) => ({
+    ...ctxWith({ inAgo: 240, seenAgo: 0, updates: [updRow(lastWorkMin)] }),
+    watchlist: watched,
+  })
+
+  // Eleven minutes since the last update. Past the threshold.
+  const row = evaluateAutoBreak(EMP, spoof(11), DATE)
+  ok(!!row, 'a watched employee with no update for 11m was not put on a break')
+  ok(minutesAgoOf(row?.[3]) === 11,
+     `the break should start when they stopped working (11m ago), got ${minutesAgoOf(row?.[3])}m`)
+  ok(row?.[7] === 'Auto', `break type ${row?.[7]}, expected Auto`)
+
+  // Nine minutes is still inside the allowance — the threshold does not move
+  // for the watchlist, only the question of who is believed.
+  ok(evaluateAutoBreak(EMP, spoof(9), DATE) === null,
+     'nine minutes since the last update opened a break; the threshold is still 10')
+
+  // The very same browser, same lie, for somebody NOT on the list: believed,
+  // exactly as before. This is the whole point of a list.
+  const others = { ...spoof(180), watchlist: new Set(['yunus', 'mahesh']) }
+  ok(evaluateAutoBreak(EMP, others, DATE) === null,
+     'an employee who is NOT on the watchlist was affected by it')
+
+  // A watched employee who is genuinely working is not touched either.
+  ok(evaluateAutoBreak(EMP, spoof(3), DATE) === null,
+     'a watched employee who filled a client three minutes ago was put on a break')
+
+  console.log(`   watched: 11m since last update → break backdated 11m · 9m → none`)
+  console.log(`   unwatched, same spoofed browser, 180m → believed, as before`)
+
+  if (saved != null) process.env.CAUTIO_HEARTBEAT_TRUST_MINUTES = saved
+}
+
+// ── 12 · Names on the tab that match nobody ────────────────────────────
+//
+// The list is typed by hand, so a typo watches nobody and says nothing. The
+// comparison is on a trimmed, lowercased name for that reason.
+console.log('\n12  Spelling')
+{
+  delete process.env.CAUTIO_HEARTBEAT_TRUST_MINUTES
+  const ctx = { ...ctxWith({ inAgo: 240, seenAgo: 0, updates: [updRow(60)] }),
+                watchlist: new Set(['  SUNIL  '.trim().toLowerCase()]) }
+  ok(!!evaluateAutoBreak(EMP, ctx, DATE),
+     'a name with different case or stray spaces did not match')
+  console.log(`   "  SUNIL  " matches Sunil`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
