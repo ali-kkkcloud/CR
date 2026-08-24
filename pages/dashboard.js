@@ -822,39 +822,18 @@ export default function Dashboard() {
   // hour ago: a single pending row, on whichever hour happens to be on
   // screen. Nothing added them up, so nothing said "start here".
   //
-  // Worked out from the day they have already been sent, so it costs nothing
-  // extra. A client counts only if NO hour of their day has it done and at
-  // least one hour that has already passed does. The hour in progress is left
-  // out — nothing in it is late yet.
-  const staleMine = useMemo(() => {
-    const byClient = new Map()
-    ;(myDay?.timeline || []).forEach(h => {
-      if (h.hour === currentHour) return
-      ;(h.clients || []).forEach(c => {
-        if (c.isCustom) return
-        const rec = byClient.get(c.client) || {
-          client: c.client, vehicleCount: c.vehicleCount || 0,
-          done: 0, pendingHours: [],
-        }
-        // Done if THIS employee recorded it, or if anybody else did — a
-        // client somebody filled at seven is not still waiting, whoever
-        // filled it. See updatedToday.
-        if (c.filled || updatedToday[c.client]) rec.done++
-        else rec.pendingHours.push(h.hour)
-        byClient.set(c.client, rec)
-      })
-    })
-    return [...byClient.values()]
-      .filter(r => r.done === 0 && r.pendingHours.length > 0)
-      .map(r => ({
-        ...r,
-        // The one to open: the most recent hour it was theirs, in the day's
-        // own order, so a night shift lands on the right side of midnight.
-        jumpHour: r.pendingHours.slice().sort(
-          (a, b) => businessOrder.indexOf(b) - businessOrder.indexOf(a))[0],
-      }))
-      .sort((a, b) => (b.vehicleCount || 0) - (a.vehicleCount || 0))
-  }, [myDay, currentHour, updatedToday])
+  // Worked out on the SERVER now, by the same function the admin's list uses,
+  // and simply read here. It used to be recomputed on this page, and the copy
+  // had drifted from the original in one word: it skipped the hour in
+  // progress but counted every hour still to COME. So an employee was told
+  // 102 clients had not been filled since 7am while the admin, counting only
+  // hours that had finished, showed 89 for the entire floor — a figure that
+  // cannot be smaller than one person's share of it.
+  //
+  // A client due at five in the afternoon is not overdue at eleven in the
+  // morning. Keeping one implementation is what stops the two screens
+  // answering the same question differently. See my-day's staleMine.
+  const staleMine = myDay?.staleMine || []
 
   // Fetched on demand — an earlier day is not part of the thirty-second poll,
   // because it cannot change.

@@ -11,38 +11,11 @@ import { loadScheduleData } from '../../../lib/roster'
 import { collapseSlotOwners, buildHourPool, buildLockedAssignments } from '../../../lib/distribution'
 import { computeDayPlan } from '../../../lib/dayplan'
 import { totalBreakMinutes } from '../../../lib/attendance'
+import { computeScore } from '../../../lib/score'
+import { COL, raisedOperatingDay } from '../../../lib/issues'
 
 const ISSUE_TAB = 'Issues- Realtime'
 // Same real column layout as pages/api/footage/list.js
-const COL = {
-  ISSUE_ID: 1, CLIENT: 2, VEHICLE: 3, RAISED_AT: 4, RAISED_BY: 7,
-  SUB_REQUEST: 9, DETAILS: 10, RESOLVED: 17, RESOLVED_AT: 18,
-}
-
-// ── Which OPERATING day a footage request belongs to ─────────────────
-//
-// The Issue Tracker stamps a request with the calendar moment it was raised:
-// "23/08/2026, 01:14:00 am". Every date this platform files work under is the
-// OPERATING day, 07:00 to 07:00 — so a request raised at one in the morning
-// carries tomorrow's calendar date while belonging to the shift that began
-// last evening.
-//
-// Comparing the two directly is the mistake that has caused nearly every
-// night-shift fault here, and it did it again: a request raised after
-// midnight counted for nobody in the day's footage total, so a night shift's
-// score was worked out from a share of a number that did not include their
-// own work.
-function raisedOperatingDay(raisedAt) {
-  const s = (raisedAt || '').toString().trim()
-  if (!s) return ''
-  const [datePart, ...rest] = s.split(',')
-  const timePart = rest.join(',').trim()
-  const d = parseISTDateTime((datePart || '').trim(), timePart || '12:00:00 pm')
-  // Unparseable — fall back to the bare date rather than dropping the row.
-  if (!d) return (datePart || '').trim().split(' ')[0]
-  return businessDate(d)
-}
-
 function ddmmyyyy(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
 }
@@ -369,21 +342,10 @@ export default async function handler(req, res) {
     const footageTotalToday = dayFootageRows.length
     const footageMineToday  = dayFootageRows.filter(r =>
       (r[COL.RAISED_BY] || '').toString().trim().toLowerCase() === user.name.toLowerCase()).length
-    // No footage at all today is nobody's failure. Scoring a share of zero as
-    // zero would put the whole floor on 60 for a quiet morning.
-    const footageSharePct = footageTotalToday > 0
-      ? (footageMineToday / footageTotalToday) * 100
-      : null
-    const footagePoints = footageSharePct === null ? 40 : (footageSharePct / 100) * 40
-
-    const VEHICLE_TARGET = 800
     const vehiclesSeenToday = myUpdatesAll
       .filter(r => r[0] === today)
       .reduce((s, r) => s + (parseInt(r[11], 10) || 0), 0)
-    const vehiclePoints = Math.min(vehiclesSeenToday / VEHICLE_TARGET, 1) * 60
 
-    const BREAK_ALLOWANCE_MIN = 60
-    const BREAK_PENALTY = 20
     // ONE day, not two. `today` above is already resolved to the employee's
     // own shift date, so this is the break taken during the shift being
     // scored. Passing [today, yesterday] added YESTERDAY's break to it — a
@@ -391,37 +353,16 @@ export default async function handler(req, res) {
     // past the hour's allowance, and took twenty points off a score for time
     // away on a day that had ended.
     const breakMinutesToday = totalBreakMinutes(breakRows, user.empId, [today])
-    const breakPenalty = breakMinutesToday > BREAK_ALLOWANCE_MIN ? BREAK_PENALTY : 0
 
-    const performanceScore = Math.max(0, Math.min(100,
-      Math.round(footagePoints + vehiclePoints - breakPenalty)))
-    const tier = performanceScore>=95?'Elite':performanceScore>=85?'Excellent':performanceScore>=70?'Good':performanceScore>=50?'Needs Improvement':'Critical'
-
-    // Everything the score was built from, so the screen can show the working.
-    const scoreBreakdown = {
-      footage: {
-        weight: 40,
-        mine: footageMineToday,
-        total: footageTotalToday,
-        sharePct: footageSharePct === null ? null : Math.round(footageSharePct * 10) / 10,
-        points: Math.round(footagePoints * 10) / 10,
-      },
-      vehicles: {
-        weight: 60,
-        seen: vehiclesSeenToday,
-        target: VEHICLE_TARGET,
-        pct: Math.round(Math.min(vehiclesSeenToday / VEHICLE_TARGET, 1) * 1000) / 10,
-        points: Math.round(vehiclePoints * 10) / 10,
-      },
-      breakPenalty: {
-        weight: -BREAK_PENALTY,
-        minutes: breakMinutesToday,
-        allowanceMinutes: BREAK_ALLOWANCE_MIN,
-        applied: breakPenalty > 0,
-        points: -breakPenalty,
-      },
-      total: performanceScore,
-    }
+    // The three sums themselves live in lib/score.js, because the admin needs
+    // the identical figure and a second copy of a rule is how two screens end
+    // up disagreeing about one employee.
+    const { score: performanceScore, tier, breakdown: scoreBreakdown } = computeScore({
+      footageMine:  footageMineToday,
+      footageTotal: footageTotalToday,
+      vehiclesSeen: vehiclesSeenToday,
+      breakMinutes: breakMinutesToday,
+    })
 
     // ── TODAY's real assigned-vs-completed, independent of `range` ──
     // (My Targets is meant to be a daily target, per the spec — it must not

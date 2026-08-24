@@ -7,7 +7,7 @@ import {
 import { employees, distributeClientsForHour, customTextFor, getScheduledEmployeesAtHour } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
-import { computeDayPlan, employeeDayHours } from '../../../lib/dayplan'
+import { computeDayPlan, employeeDayHours, staleClientsFrom } from '../../../lib/dayplan'
 
 function ddmmyyyyFromDate(d) {
   return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
@@ -287,11 +287,44 @@ export default async function handler(req, res) {
     const totalCompleted = timeline.reduce((s, t) => s + (t.completedClients || 0), 0)
     const totalMissed    = timeline.reduce((s, t) => s + (t.missedClients  || 0), 0)
 
+    // ── "Still not updated since morning", my share of it ───────────────
+    //
+    // Built from the SAME rule the admin's list uses, not a second copy of it
+    // on the page. The copy had drifted: it skipped only the hour in progress
+    // and counted every hour still to COME, so an employee was shown 102
+    // clients "nobody has filled since 7am" while the admin — who counts only
+    // hours that have finished — was shown 89 for the whole floor. A client
+    // due at five in the afternoon cannot be overdue at eleven in the morning,
+    // and the employee's figure could never exceed the floor's.
+    //
+    // Narrowed to the clients that were on MY board in an hour that has
+    // already finished — the same test the admin's per-employee summary uses,
+    // so the number I see against my name there is the number I see here.
+    // Whether a client counts as updated stays day-wide and floor-wide, which
+    // is what staleClientsFrom already answers.
+    const nowHourNow = nowIST().getHours()
+    const staleMine = (plan.isToday ? staleClientsFrom(plan, nowHourNow) : [])
+      .map(c => {
+        // The hour to open when it is tapped: the most recent one where it
+        // was mine. slots already arrive newest-first in the day's own order,
+        // so a night shift lands on the right side of midnight.
+        const mineSlots = c.slots.filter(s => s.owner === user.name)
+        if (!mineSlots.length) return null
+        return {
+          client: c.client,
+          vehicleCount: c.vehicleCount || 0,
+          pendingHours: mineSlots.map(s => s.hour),
+          jumpHour: mineSlots[0].hour,
+        }
+      })
+      .filter(Boolean)
+
     return res.status(200).json({
       date, timeline, totalClients, totalCompleted, totalMissed,
       // Still to do — hours in progress or yet to come. Kept separate from
       // totalMissed so the day reads as work remaining, not work failed.
       totalPending: timeline.reduce((s, t) => s + (t.pendingClients || 0), 0),
+      staleMine,
     })
 
   } catch (err) {

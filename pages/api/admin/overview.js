@@ -10,6 +10,8 @@ import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, 
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan, staleClientsFrom } from '../../../lib/dayplan'
+import { computeScore } from '../../../lib/score'
+import { COL, raisedOperatingDay, isFootageRequest } from '../../../lib/issues'
 import { sweepShiftAutoClose, totalBreakMinutes, isSupersededBreak } from '../../../lib/attendance'
 import { sweepDailySummary } from '../../../lib/rollup'
 import { getHistory } from '../../../lib/history'
@@ -414,6 +416,44 @@ export default async function handler(req, res) {
     }).length
 
     // ══════════════════════════════════════════════════════════════════
+    // Everybody's performance score, worked out the way theirs is
+    //
+    // The admin had no score at all: it was written inside the employee's own
+    // summary endpoint, so this screen had nowhere to read one from. The sums
+    // now live in lib/score.js and both callers use them, which is the only
+    // way the number beside a name here can be trusted to be the number that
+    // person is looking at.
+    //
+    // Footage share is measured against the whole day's requests, so the
+    // denominator is the same for everyone.
+    const dayFootage = footageRows.slice(1).filter(r =>
+      isFootageRequest(r) && raisedOperatingDay(r[COL.RAISED_AT]) === today)
+    const footageByName = {}
+    dayFootage.forEach(r => {
+      const who = (r[COL.RAISED_BY] || '').toString().trim().toLowerCase()
+      if (who) footageByName[who] = (footageByName[who] || 0) + 1
+    })
+
+    // VEHICLES SEEN, summed across everything they recorded today.
+    const vehiclesSeenByName = {}
+    updateRows.slice(1).forEach(r => {
+      if (r[0] !== today) return
+      const name = (r[2] || '').toString().trim()
+      if (!name) return
+      vehiclesSeenByName[name] = (vehiclesSeenByName[name] || 0) + (parseInt(r[11], 10) || 0)
+    })
+
+    const scores = employees().map(e => {
+      const { score, tier, breakdown } = computeScore({
+        footageMine:  footageByName[(e.name || '').toLowerCase()] || 0,
+        footageTotal: dayFootage.length,
+        vehiclesSeen: vehiclesSeenByName[e.name] || 0,
+        breakMinutes: breakTotals[e.name]?.minutes || 0,
+      })
+      return { name: e.name, score, tier, breakdown }
+    }).sort((a, b) => b.score - a.score)
+
+    // ══════════════════════════════════════════════════════════════════
     // The day, in numbers that grow as it happens
     //
     // Two questions the Command Center could not answer:
@@ -513,6 +553,7 @@ export default async function handler(req, res) {
       coverageGaps,
       // Clients with not one update against them since seven this morning.
       staleClients: staleOut,
+      scores,
       redistribution: todayRedistrib,
       history,
       footage: { pending: pendingFootage, done: doneFootage },

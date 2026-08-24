@@ -21,6 +21,7 @@ import AttendancePanel from '../components/tabs/AttendancePanel'
 import HistoryPanel from '../components/tabs/HistoryPanel'
 import ErrorBoundary from '../components/ErrorBoundary'
 import WorkloadPanel from '../components/tabs/WorkloadPanel'
+import ScoresPanel from '../components/tabs/ScoresPanel'
 
 // "7pm", for listing hours compactly inside a sentence.
 function fmtHourShort(h) {
@@ -721,6 +722,12 @@ export default function Admin() {
                   </>
                 }
               />
+
+              {/* ── How the floor is scoring today ──
+                  The score lived only on each employee's own screen, so the
+                  one person whose job is to compare them could not see it.
+                  Same function behind both, so the numbers agree. */}
+              <ScoresPanel scores={overview?.scores || []} />
 
               {/* ── Who turned up, when, and how long they were away ──
                   Top of the screen, before anything analytical: the register

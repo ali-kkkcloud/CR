@@ -27,7 +27,11 @@ export const SECTIONS = [
 // link and every render condition in the app still points at the same place.
 export const TAB_SECTION = {
   overview:'live',
-  fullday:'day', redistribution:'day',
+  // Every tab needs a section here. A missing one falls back to 'live', so
+  // opening it jumped the sidebar to Dashboard AND emptied the row of section
+  // tabs — the screen rendered correctly underneath, but every signpost said
+  // you were somewhere else. 'stale' was missing.
+  fullday:'day', redistribution:'day', stale:'day',
   footage:'requests', followups:'requests',
   progress:'people', breaks:'people', leaves:'people',
   reports:'more', analytics:'more', alerts:'more', settings:'more',

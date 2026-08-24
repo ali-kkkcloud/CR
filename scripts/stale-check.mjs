@@ -243,5 +243,56 @@ console.log('\n8  A client whose first hour is late in the day')
   console.log(`   not listed at ${HOUR_A}:00 · listed at ${NOW_HOUR}:00 · filled at ${HOUR_B}:00 → gone`)
 }
 
+
+// ── 9 · The admin's number and the employee's number ───────────────────
+//
+// Reported with two screenshots: the employee was shown 102 clients "nobody
+// has filled since 7am" while the admin, looking at the WHOLE FLOOR, was
+// shown 89. One person's share cannot exceed the floor's total.
+//
+// The page had its own copy of this rule and the copy had drifted by one
+// word: it skipped the hour in progress but counted every hour still to
+// COME, so clients due later in the day were being called overdue. The
+// employee's list is built on the server now, from this same function.
+console.log('\n9  One person\'s share cannot exceed the whole floor')
+{
+  // Due in a finished hour AND in an hour still ahead, so a rule that counts
+  // future hours reports more than a rule that does not.
+  const AHEAD = 15
+  const timings = {}
+  CLIENTS.forEach(c => { timings[c] = [HOUR_A, AHEAD] })
+  setScheduleData({ employees: PEOPLE, timings, employeeHours: {} })
+  const plan = computeDayPlan({
+    date: DATE, today: DATE, nowHour: NOW_HOUR,
+    shiftRows: [HEAD, ...PEOPLE.map(shiftRow)], updateRows: [HEAD],
+    breakRows: [HEAD], leaveMap: {}, overridesMap: {}, vehicleMap, weekOffNames: new Set(),
+  })
+  const floor = staleClientsFrom(plan, NOW_HOUR)
+
+  // The employee's list, built the way my-day builds it: the same rows,
+  // narrowed to the slots that were theirs.
+  const shareOf = (who) => floor
+    .map(c => ({ client: c.client, mine: c.slots.filter(s => s.owner === who) }))
+    .filter(c => c.mine.length > 0)
+
+  const shares = PEOPLE.map(p => shareOf(p.name))
+  shares.forEach((share, i) => {
+    ok(share.length <= floor.length,
+       `${PEOPLE[i].name} sees ${share.length} clients where the whole floor has ${floor.length}`)
+  })
+
+  // Every client on somebody's list is on the floor's list, and the reverse:
+  // nothing on the floor's list is on nobody's.
+  const named = new Set(shares.flat().map(c => c.client))
+  ok(named.size === floor.length,
+     `${floor.length} clients on the floor's list but only ${named.size} appear on anybody's`)
+
+  // And the hour still ahead is not being counted as late by either.
+  const aheadOnly = floor.filter(c => c.slots.every(s => s.hour === AHEAD))
+  ok(aheadOnly.length === 0,
+     `${aheadOnly.length} clients called overdue for an hour that has not happened yet`)
+  console.log(`   floor ${floor.length} · biggest share ${Math.max(...shares.map(s => s.length))} · nothing from ${AHEAD}:00 counted`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

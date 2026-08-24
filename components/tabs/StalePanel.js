@@ -44,6 +44,33 @@ export default function StalePanel({ clients = [] }) {
   const totalVehicles = clients.reduce((s, c) => s + (c.vehicleCount || 0), 0)
   const totalSlots    = clients.reduce((s, c) => s + (c.pending || 0), 0)
 
+  // ── Whose are they? ──────────────────────────────────────────────────
+  //
+  // The list answers "what is still waiting"; this answers "who do I go and
+  // ask". A client counts for everyone who held it in an hour that has
+  // finished — the same test the employee's own panel uses, so the number
+  // beside a name here is the number that person sees on their dashboard.
+  //
+  // Because a client handed from one person to the next is on both their
+  // boards, these counts can add up to more than the total above. That is the
+  // honest answer to "whose is it" and the header says so rather than picking
+  // one owner and hiding the rest.
+  const byEmployee = useMemo(() => {
+    const m = new Map()
+    clients.forEach(c => {
+      const owners = new Set((c.slots || []).map(s => s.owner).filter(Boolean))
+      owners.forEach(name => {
+        const rec = m.get(name) || { name, clients: 0, vehicles: 0 }
+        rec.clients++
+        rec.vehicles += c.vehicleCount || 0
+        m.set(name, rec)
+      })
+    })
+    return [...m.values()].sort((a, b) => b.clients - a.clients || b.vehicles - a.vehicles)
+  }, [clients])
+
+  const worst = byEmployee.length ? byEmployee[0].clients : 0
+
   if (clients.length === 0) {
     return (
       <Card pad={false} style={{ overflow:'hidden' }}>
@@ -76,6 +103,42 @@ export default function StalePanel({ clients = [] }) {
           <div style={{ color:C.muted, fontSize:T.xs, marginTop:'4px' }}>client-hours across the day</div>
         </Card>
       </div>
+
+      {/* Who to go and ask, before the list of what. */}
+      {byEmployee.length > 0 && (
+        <Card pad={false} style={{ overflow:'hidden', marginBottom:SP[4] }}>
+          <div style={{ padding:'12px 14px', borderBottom:`1px solid ${C.border}` }}>
+            <div className="eyebrow">By employee</div>
+            <div style={{ color:C.muted, fontSize:T.xs, marginTop:'3px' }}>
+              clients still waiting on each person&apos;s board · a client handed on
+              counts for everyone who held it, so these can total more than {clients.length}
+            </div>
+          </div>
+          <div style={{ padding:SP[3], display:'flex', flexDirection:'column', gap:'9px' }}>
+            {byEmployee.map(e => (
+              <div key={e.name} style={{ display:'flex', alignItems:'center', gap:SP[3] }}>
+                <span className="ellip" style={{ width:'132px', flexShrink:0, color:C.text, fontSize:T.base, fontWeight:600 }}>
+                  {e.name}
+                </span>
+                {/* Bar against the worst offender, so the shape of the floor
+                    reads at a glance rather than needing the numbers compared. */}
+                <span style={{ flex:1, minWidth:0, height:'8px', borderRadius:'99px', background:C.border, overflow:'hidden' }}>
+                  <span style={{
+                    display:'block', height:'100%', borderRadius:'99px', background:C.red,
+                    width: `${worst ? Math.max(4, (e.clients / worst) * 100) : 0}%`,
+                  }} />
+                </span>
+                <span style={{ color:C.text, fontSize:T.base, fontWeight:700, width:'34px', textAlign:'right', flexShrink:0 }}>
+                  {e.clients}
+                </span>
+                <span style={{ color:C.muted, fontSize:T.xs, width:'96px', textAlign:'right', flexShrink:0 }}>
+                  {e.vehicles.toLocaleString()} veh
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card pad={false} style={{ overflow:'hidden' }}>
         <div style={{ padding:SP[3], borderBottom:`1px solid ${C.border}` }}>
