@@ -22,6 +22,7 @@ import HistoryPanel from '../components/tabs/HistoryPanel'
 import ErrorBoundary from '../components/ErrorBoundary'
 import WorkloadPanel from '../components/tabs/WorkloadPanel'
 import ScoresPanel from '../components/tabs/ScoresPanel'
+import IntegrityPanel from '../components/tabs/IntegrityPanel'
 
 // "7pm", for listing hours compactly inside a sentence.
 function fmtHourShort(h) {
@@ -727,6 +728,10 @@ export default function Admin() {
                   The score lived only on each employee's own screen, so the
                   one person whose job is to compare them could not see it.
                   Same function behind both, so the numbers agree. */}
+              {/* ── Browsers whose story the sheet does not back up ──
+                  Reported, never acted on: see the panel's own note. */}
+              <IntegrityPanel flags={overview?.integrityFlags || []} />
+
               <ScoresPanel scores={overview?.scores || []} />
 
               {/* ── Who turned up, when, and how long they were away ──

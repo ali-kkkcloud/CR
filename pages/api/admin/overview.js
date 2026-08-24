@@ -3,7 +3,7 @@ import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr,
   getShiftOverridesForDate, getLeaveMapForDate, getOnShiftNamesFromLog, getClockedOutNamesFromLog, yesterdayStr,
   hourHasPassed, whoWasOnShiftAtHour, businessHourOrder, DAY_START_HOUR,
-  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, TTL, warmTogether, SHIFT_SCREEN_TABS,
+  getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, nowIST, TTL, warmTogether, SHIFT_SCREEN_TABS,
   vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
 import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
@@ -12,7 +12,8 @@ import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../..
 import { computeDayPlan, staleClientsFrom } from '../../../lib/dayplan'
 import { computeScore } from '../../../lib/score'
 import { COL, raisedOperatingDay, isFootageRequest } from '../../../lib/issues'
-import { sweepShiftAutoClose, totalBreakMinutes, isSupersededBreak } from '../../../lib/attendance'
+import { sweepShiftAutoClose, totalBreakMinutes, isSupersededBreak, activityClocks, resolveMoment } from '../../../lib/attendance'
+import { assessEmployee } from '../../../lib/integrity'
 import { sweepDailySummary } from '../../../lib/rollup'
 import { getHistory } from '../../../lib/history'
 
@@ -416,6 +417,58 @@ export default async function handler(req, res) {
     }).length
 
     // ══════════════════════════════════════════════════════════════════
+    // Browsers claiming attention that the sheet does not support
+    //
+    // An employee was found running an extension built to stop the automatic
+    // break firing: it forces the idle reading to zero on every poll, fakes
+    // mouse and key events, and clicks Resume if a break slips through.
+    //
+    // None of that can be blocked from inside the page — an extension has the
+    // page's own privileges. What the server can do is notice that one clock
+    // disagrees with the other: the browser reporting constant attention
+    // while nothing at all has been recorded for hours. That divergence is
+    // stated here and left to a person to judge. See lib/integrity.js.
+    const integrityNowMs = nowIST().getTime()
+    const integrityDates = [today, yesterdayStr()]
+    const integrityCtx = { shiftRows, updateRows, breakRows, dates: integrityDates, nowMs: integrityNowMs }
+
+    // Automatic breaks that ended within seconds of opening — nobody read
+    // that overlay, something clicked it.
+    const autoBreaksByName = {}
+    breakRows.slice(1).forEach(r => {
+      if ((r[7] || '') !== 'Auto') return
+      if (!integrityDates.includes(r[2])) return
+      if (isSupersededBreak(r)) return
+      const name = (r[1] || '').toString().trim()
+      if (!name || !r[4]) return
+      const s = resolveMoment(r[3], integrityDates, integrityNowMs)
+      const e = resolveMoment(r[4], integrityDates, integrityNowMs)
+      if (s == null || e == null) return
+      ;(autoBreaksByName[name] ||= []).push({ seconds: Math.round((e - s) / 1000) })
+    })
+
+    // Credentials is the authority on who an employee ID belongs to; the
+    // Breaks tab only knows the people who have taken one.
+    const idOf = {}
+    credRows.slice(1).forEach(r => {
+      const n = (r[1] || '').toString().trim()
+      if (n && !idOf[n]) idOf[n] = (r[0] || '').toString().trim()
+    })
+
+    const integrityFlags = employees().map(e => {
+      const clocks = activityClocks({ empId: idOf[e.name] || '', name: e.name }, integrityCtx)
+      return assessEmployee({
+        name: e.name,
+        onShift: onShiftNamesTop.has(e.name),
+        nowMs: integrityNowMs,
+        autoBreaks: autoBreaksByName[e.name] || [],
+        ...clocks,
+      })
+    }).filter(Boolean)
+      .sort((a, b) => (b.severity === 'high') - (a.severity === 'high') ||
+                      (b.minutesSinceWork || 0) - (a.minutesSinceWork || 0))
+
+    // ══════════════════════════════════════════════════════════════════
     // Everybody's performance score, worked out the way theirs is
     //
     // The admin had no score at all: it was written inside the employee's own
@@ -554,6 +607,7 @@ export default async function handler(req, res) {
       // Clients with not one update against them since seven this morning.
       staleClients: staleOut,
       scores,
+      integrityFlags,
       redistribution: todayRedistrib,
       history,
       footage: { pending: pendingFootage, done: doneFootage },
