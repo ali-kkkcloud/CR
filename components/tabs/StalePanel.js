@@ -49,8 +49,8 @@ export default function StalePanel({ clients = [] }) {
       <Card pad={false} style={{ overflow:'hidden' }}>
         <EmptyState
           icon="check-circle"
-          title="Every client has been updated at least once today."
-          detail="This lists clients with no update at all since seven this morning. The hour in progress is not counted — nothing in it is late yet."
+          title="Every client has been filled at least once since 7am."
+          detail="This lists clients nobody has filled since seven this morning — whoever they belonged to. One update by anyone, at any hour, takes a client off it. The hour in progress is not counted; nothing in it is late yet."
         />
       </Card>
     )
@@ -61,9 +61,9 @@ export default function StalePanel({ clients = [] }) {
       {/* The three numbers that decide whether this needs acting on now. */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))', gap:SP[3], marginBottom:SP[4] }}>
         <Card>
-          <div className="eyebrow">Clients waiting</div>
+          <div className="eyebrow">Still not updated</div>
           <div style={{ color:C.red, fontSize:'30px', fontWeight:800, marginTop:'6px' }}>{clients.length}</div>
-          <div style={{ color:C.muted, fontSize:T.xs, marginTop:'4px' }}>no update since 7am</div>
+          <div style={{ color:C.muted, fontSize:T.xs, marginTop:'4px' }}>nobody has filled these since 7am</div>
         </Card>
         <Card>
           <div className="eyebrow">Vehicles behind them</div>

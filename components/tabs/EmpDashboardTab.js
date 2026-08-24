@@ -113,7 +113,7 @@ function StillNotUpdated({ clients, onOpen }) {
         <div className="eyebrow" style={{ marginBottom:'8px' }}>Still not updated</div>
         <div style={{ display:'flex', alignItems:'center', gap:SP[2], color:C.accent, fontSize:T.base, fontWeight:600 }}>
           <Icon name="check-circle" size={16} color={C.accent} />
-          Every client on your day has been updated at least once.
+          Every client on your day has been filled at least once since 7am.
         </div>
       </Card>
     )
@@ -127,7 +127,7 @@ function StillNotUpdated({ clients, onOpen }) {
           <span style={{ color:C.red, fontSize:'22px', fontWeight:800 }}>{clients.length}</span>
         </div>
         <div style={{ color:C.muted, fontSize:T.xs, marginTop:'3px' }}>
-          {vehicles.toLocaleString()} vehicles · not opened once today · tap one to go straight to it
+          {vehicles.toLocaleString()} vehicles · nobody has filled these since 7am · tap one to go straight to it
         </div>
       </div>
       <div style={{ maxHeight:'270px', overflowY:'auto' }}>

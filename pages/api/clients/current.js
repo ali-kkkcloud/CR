@@ -259,8 +259,30 @@ export default async function handler(req, res) {
       ? { start: overridesMap[user.name].start, end: overridesMap[user.name].end }
       : (() => { const e = employees().find(x => x.name === user.name); return e ? { start: e.start, end: e.end } : null })()
 
+    // ── Which clients ANYBODY has updated today, and when ──────────────
+    //
+    // "Still not updated" is a question about the CLIENT, not about the
+    // person looking at it: if a colleague filled it at seven this morning,
+    // it is not still waiting, and nobody should be told it is.
+    //
+    // The board stays per hour, which is right — a client scheduled at eleven
+    // and again at five is two pieces of work. This is the separate, day-wide
+    // fact, and it is what the "Still not updated" list is built from.
+    //
+    // Latest wins, so a client updated twice reports the more recent time.
+    const updatedToday = {}
+    updateRows.slice(1).forEach(r => {
+      if (r[0] !== myShiftDate) return
+      if (!(r[5] || '').toString().trim()) return
+      const c = (r[3] || '').toString().trim()
+      if (!c) return
+      updatedToday[c] = { at: r[1] || '', by: (r[2] || '').toString().trim() }
+    })
+
     return res.status(200).json({
       hour, clients, filled,
+      // Every client with an update against it today, whoever recorded it.
+      updatedToday,
       // How many people this hour is actually being shared between, so the
       // UI can explain why a list is long (working solo) or short.
       scheduledCount: poolNames.length,

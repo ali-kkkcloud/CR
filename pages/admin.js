@@ -47,7 +47,7 @@ const TAB_META = {
   overview:       { title: 'Dashboard',           sub: 'The floor right now, and how much of today is done' },
   fullday:        { title: 'Hour by hour',        sub: 'Every hour of today, for every employee' },
   redistribution: { title: 'Hour by hour',        sub: "Where today's work moved, and why" },
-  stale:          { title: 'Hour by hour',        sub: 'Clients with no update against them since seven this morning' },
+  stale:          { title: 'Hour by hour',        sub: 'Clients no one has filled since 7am — whoever they belonged to' },
   footage:        { title: 'Requests',            sub: 'Footage requests raised by the floor' },
   followups:      { title: 'Requests',            sub: 'Requests handed on at the end of a shift' },
   progress:       { title: 'Team',                sub: 'Attendance and output across a date range' },
@@ -66,7 +66,7 @@ const SECTION_TABS = {
   day: [
     { value:'fullday',        label:'Hour by hour' },
     { value:'redistribution', label:'Work moved' },
-    { value:'stale',          label:'Not updated' },
+    { value:'stale',          label:'Still not updated' },
   ],
   requests: [
     { value:'footage',   label:'Footage' },

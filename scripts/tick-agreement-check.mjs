@@ -53,9 +53,30 @@ const TODAY = (() => { const x = new Date(d); if (x.getHours() < 7) x.setDate(x.
 const H = d.getHours()
 const clockOf = (x) => { let h = x.getHours(); const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12; return `${p2(h)}:${p2(x.getMinutes())}:${p2(x.getSeconds())} ${a}` }
 const minsAgo = (m) => new Date(d.getTime() - m * 60000)
-// The shift opened three hours ago, so nothing in these fixtures is sitting
-// in the grace period before a shift starts.
-const SHIFT_START = (H + 21) % 24
+
+// ── How old the operating day is, in minutes ─────────────────────────
+//
+// The day begins at 07:00, so at ten past seven it is TEN MINUTES old and
+// nobody can have clocked in three hours ago under it. Filing a 04:10 am
+// clock-in under the new operating day resolves it to 04:10 TOMORROW —
+// twenty hours in the future — and the idle rule then correctly refuses to
+// open a break for somebody whose shift has not begun.
+//
+// So every time below is clamped inside the day that is actually running.
+const DAY_AGE_MIN = (() => {
+  const start = new Date(d); start.setHours(7, 0, 0, 0)
+  if (d.getHours() < 7) start.setDate(start.getDate() - 1)
+  return Math.max(0, Math.round((d.getTime() - start.getTime()) / 60000))
+})()
+const within = (m) => Math.min(m, DAY_AGE_MIN)
+
+// The shift opened three hours ago — or when the day did, whichever is
+// later — so nothing here sits in the grace period before a shift starts.
+const CLOCK_IN_MIN = within(180)
+const SHIFT_START = (() => {
+  const x = new Date(d.getTime() - CLOCK_IN_MIN * 60000)
+  return x.getHours()
+})()
 
 const NAMES = ['Sunil','Mahesh','Nikita','BRINDA','Nesiya','Rakesh','HARI','KIRAN','MANTU','CHANDAN']
 const PEOPLE = NAMES.map((n, i) => [`E${i + 1}`, n])
@@ -81,7 +102,7 @@ function fixture({ breaks = [], lastSeenMins = 1 } = {}) {
     'Client_Timings!A:B': [['Client','Hours'], ...CLIENTS.map(c => [c, String(H)])],
     'Employee_Hours!A:D': [['Employee','Hour','Fixed','Custom']],
     'Shift_Log!A:H': [['EmpID','Name','Date','In','Out','','Status','Seen'],
-      ...PEOPLE.map(([id, n]) => [id, n, TODAY, clockOf(minsAgo(180)), '', '', 'Active', clockOf(minsAgo(lastSeenMins))])],
+      ...PEOPLE.map(([id, n]) => [id, n, TODAY, clockOf(minsAgo(CLOCK_IN_MIN)), '', '', 'Active', clockOf(minsAgo(lastSeenMins))])],
     'CRM_Updates!A:L': updateRows,
     'Breaks!A:H': [['EmpID','Name','Date','Start','End','Mins','Status','Type'], ...breaks],
     'Leaves!A:H': [['EmpID','Name','Date','From','To','Reason','By','At']],
@@ -203,17 +224,29 @@ console.log('\n4  Somebody on a break')
 // whether the poll goes through break/status or through the combined one.
 console.log('\n5  Twenty-five minutes of silence, through the combined poll')
 {
-  floor({ lastSeenMins: 25 })
+  const silent = within(25)
+  floor({ lastSeenMins: silent })
   await call(brkStat, EMP)                       // no activeAgoMs: the browser is gone
   const aloneOpened = calls.append.length
 
-  floor({ lastSeenMins: 25 })
+  floor({ lastSeenMins: silent })
   await call(tick, EMP)
   const tickOpened = calls.append.length
 
-  ok(aloneOpened === 1, `break/status on its own opened ${aloneOpened} breaks, expected 1`)
-  ok(tickOpened === aloneOpened, `the tick opened ${tickOpened} breaks where break/status opened ${aloneOpened}`)
-  console.log(`   silent 25 minutes → 1 break opened, either way`)
+  // The agreement is what this file is for, and it holds at any hour.
+  ok(tickOpened === aloneOpened,
+     `the tick opened ${tickOpened} breaks where break/status opened ${aloneOpened}`)
+  // Whether a break is DUE depends on the day being older than the threshold.
+  // Ten minutes after seven nobody can have been silent for twenty-five, and
+  // asserting it anyway is how this file used to fail every morning at the
+  // rollover. sweep-check is where the threshold itself is pinned.
+  if (silent >= 25) {
+    ok(aloneOpened === 1, `break/status on its own opened ${aloneOpened} breaks, expected 1`)
+    console.log(`   silent ${silent} minutes → ${aloneOpened} break opened, either way`)
+  } else {
+    console.log(`   the operating day is ${DAY_AGE_MIN}m old — too young for a 25m silence; ` +
+                `both routes agree at ${aloneOpened}`)
+  }
 }
 
 // ── 6 · Somebody at their screen is still left alone ───────────────────
