@@ -28,7 +28,7 @@ process.env.SOURCE_SHEET_ID = 'source-book'
 process.env.ISSUE_TRACKER_SHEET_ID = 'issue-book'
 process.env.JWT_SECRET = 'test-secret'
 
-const { behaviour, reset } = await import('./fake-googleapis.mjs')
+const { behaviour, reset, calls } = await import('./fake-googleapis.mjs')
 const sheets = await import('../lib/sheets.js')
 const { setScheduleData, distributeClientsForHour } = await import('../lib/schedule.js')
 
@@ -159,6 +159,70 @@ console.log('\n4  The same failure, with a good map already cached')
   ok(served[sheets.vehicleKey('Shatabdi')]?.vehicleCount === 1,
      'the client from the failed tab lost its count — the split would move')
   console.log(`   last good map served · Shatabdi still weighs 1 vehicle, not zero`)
+}
+
+
+// ── 5 · A read that succeeds but comes back short ──────────────────────
+//
+// The quiet version of case 3, and the one the floor described as "vehicles
+// went to 0 for a bit and then came back". The source book belongs to
+// another team; a tab mid-edit, mid-paste or mid-sort answers with fewer
+// rows than it holds. Nothing errors, so the thin map was cached as truth
+// for the next minute and every client it lost showed zero vehicles.
+console.log('\n5  A short read is not a smaller fleet')
+{
+  reset()
+  sheets.invalidateSheetCache('source-book', '')
+  globalThis.__cautioSheets.vehicle = { data: null, at: 0 }
+  globalThis.__cautioSheets.vehicleInflight = null
+  behaviour.data = {
+    'Infants!A:B': [['Client','Vehicle'], ['Zingbus','KA-1'], ['Zingbus','KA-2']],
+    'Others!A:B':  [['Client','Vehicle'], ['Shatabdi','KA-3'], ['Turbotork','KA-4'],
+                    ['Sarathi','KA-5'], ['Cityflo','KA-6'], ['Nuego','KA-7']],
+  }
+  const good = await sheets.fetchClientVehicleCounts()
+  ok(Object.keys(good).length === 6, `expected 6 clients, got ${Object.keys(good).length}`)
+
+  // The same tabs, read again, but Others answers with one row instead of five.
+  sheets.invalidateSheetCache('source-book', '')
+  globalThis.__cautioSheets.vehicle = { ...globalThis.__cautioSheets.vehicle, at: 0 }
+  globalThis.__cautioSheets.vehicleInflight = null
+  behaviour.data['Others!A:B'] = [['Client','Vehicle'], ['Shatabdi','KA-3']]
+
+  const served = await sheets.fetchClientVehicleCounts()
+  ok(Object.keys(served).length === 6,
+     `a short read was accepted: ${Object.keys(served).length} clients where 6 were known`)
+  ok(served[sheets.vehicleKey('Nuego')]?.vehicleCount === 1,
+     'Nuego dropped to zero vehicles — its board row would read 0 and its weight would change')
+  console.log(`   6 known · read returned 2 · last good map kept, nothing went to 0`)
+}
+
+// ── 6 · One read, however many callers ─────────────────────────────────
+//
+// When the minute-long cache expires every request in flight misses at once.
+// Each used to start its own read of both tabs — a burst of duplicates
+// against a shared quota, at exactly the moment every screen is polling, and
+// every extra read is another chance for one to come back short.
+console.log('\n6  Ten callers at the moment the cache expires')
+{
+  reset()
+  sheets.invalidateSheetCache('source-book', '')
+  globalThis.__cautioSheets.vehicle = { data: null, at: 0 }
+  globalThis.__cautioSheets.vehicleInflight = null
+  behaviour.data = {
+    'Infants!A:B': [['Client','Vehicle'], ['Zingbus','KA-1']],
+    'Others!A:B':  [['Client','Vehicle'], ['Shatabdi','KA-3']],
+  }
+  behaviour.latencyMs = 5        // enough for ten callers to overlap
+
+  const before = calls.get.length + calls.batchGet.length
+  const all = await Promise.all(Array.from({ length: 10 }, () => sheets.fetchClientVehicleCounts()))
+  const reads = (calls.get.length + calls.batchGet.length) - before
+  behaviour.latencyMs = 0
+
+  ok(all.every(m => Object.keys(m).length === 2), 'not every caller got the full map')
+  ok(reads <= 2, `${reads} reads for ten simultaneous callers — they are not sharing one`)
+  console.log(`   10 callers → ${reads} read${reads === 1 ? '' : 's'}`)
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)

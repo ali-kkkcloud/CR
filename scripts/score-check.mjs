@@ -261,5 +261,53 @@ console.log('\n8  Footage raised after midnight, on a night shift')
   console.log(`   raised ${tomorrowCal} 01:14 am → counted under operating day ${opDay}: ${f.mine} of ${f.total}`)
 }
 
+
+// ── The night shift that has gone home ─────────────────────────────────
+//
+// Reported: at eight in the morning the night shift's cards were still on
+// today's board, carrying a score. Two things were wrong at once.
+//
+// Their work belongs to the operating day their shift BEGAN — a shift that
+// ran 22:00 to 07:00 is filed under yesterday — so once seven passes they
+// have done nothing today. And the card was not empty: early in the morning
+// the floor has raised no footage yet, the share is undefined, and an
+// undefined share is scored IN FULL. Forty points, to somebody who had gone
+// home. A flattering number for a day somebody did not work is worse than no
+// number at all.
+console.log('\n9  The night shift, after seven in the morning')
+{
+  const { whoWorkedOn, computeScore } = await import('../lib/score.js')
+  const TODAY = '24/08/2026', YESTERDAY = '23/08/2026'
+  const H = ['h']
+
+  // CHANDAN worked 22:00 → 07:00; his row and his updates are dated
+  // yesterday. Sunil is on the day shift and clocked in this morning.
+  const shiftRows = [H,
+    ['E3','CHANDAN', YESTERDAY, '09:58:00 pm', '07:01:00 am', '9h 3m', 'Ended', ''],
+    ['E1','Sunil',   TODAY,     '07:04:00 am', '',            '',      'Active', ''],
+  ]
+  const updateRows = [H,
+    [YESTERDAY,'11:20:00 pm','CHANDAN','Zingbus','23','No Misalignment','','0','No','0','','120'],
+    [TODAY,    '07:40:00 am','Sunil',  'Zingbus','7', 'No Misalignment','','0','No','0','','30'],
+  ]
+
+  const todaysPeople = whoWorkedOn(TODAY, shiftRows, updateRows)
+  ok(!todaysPeople.has('CHANDAN'),
+     'the night shift that ended at 07:01 is still counted as working today')
+  ok(todaysPeople.has('Sunil'), 'the day shift that clocked in at 07:04 is missing from today')
+
+  // And they ARE on the day they actually worked.
+  const yesterdaysPeople = whoWorkedOn(YESTERDAY, shiftRows, updateRows)
+  ok(yesterdaysPeople.has('CHANDAN'), "the night shift is missing from the day it actually worked")
+
+  // The score they would have been given: no footage on the floor yet, so a
+  // share of nothing scored in full.
+  const free = computeScore({ footageMine: 0, footageTotal: 0, vehiclesSeen: 0, breakMinutes: 0 })
+  ok(free.breakdown.footage.points === 40,
+     `an undefined share should score in full (that is the trap), got ${free.breakdown.footage.points}`)
+  console.log(`   CHANDAN filed under ${YESTERDAY}, off today's board ` +
+              `· the free ${free.score} he would have shown is not awarded`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

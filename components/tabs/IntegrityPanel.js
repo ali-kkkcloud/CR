@@ -31,30 +31,27 @@ export default function IntegrityPanel({ flags = [], watchlist = null }) {
 
   return (
     <Card pad={false} style={{ overflow:'hidden', marginBottom:SP[5], borderColor: high.length ? C.amber + '55' : C.border }}>
-      <div style={{
-        display:'flex', alignItems:'center', gap:SP[3],
-        padding:'13px 15px', borderBottom:`1px solid ${C.border}`,
-        background: high.length ? C.amber + '0d' : 'transparent',
-      }}>
-        <Icon name="alerts" size={15} color={high.length ? C.amber : C.muted} />
-        <span style={{ flex:1, minWidth:0 }}>
-          <span style={{ display:'block', color: high.length ? C.amber : C.text, fontSize:T.base, fontWeight:700 }}>
-            {flags.length
-              ? `${flags.length} ${flags.length === 1 ? 'browser is' : 'browsers are'} reporting activity the sheet does not support`
-              : 'Activity checks'}
+      {/* Only said when there is something to say. A heading over a list of
+          two names was explaining what the two names already showed. */}
+      {flags.length > 0 && (
+        <div style={{
+          display:'flex', alignItems:'center', gap:SP[3],
+          padding:'11px 15px', borderBottom:`1px solid ${C.border}`,
+          background: high.length ? C.amber + '0d' : 'transparent',
+        }}>
+          <Icon name="alerts" size={15} color={high.length ? C.amber : C.muted} />
+          <span style={{ color: high.length ? C.amber : C.text, fontSize:T.base, fontWeight:700 }}>
+            {flags.length} {flags.length === 1 ? 'browser is' : 'browsers are'} reporting activity the sheet does not support
           </span>
-        </span>
-      </div>
+        </div>
+      )}
 
-      {/* ── Who the browser is not believed for ──
-          A name on the Break_Watchlist tab has their idle time measured from
-          what they have actually recorded, so a faked cursor buys nothing. */}
+      {/* The watched names, and nothing else. Whoever put them on the tab
+          knows why they are there. */}
       {watched.length > 0 && (
-        <div style={{ padding:'11px 15px', borderBottom:`1px solid ${C.border}` }}>
-          <div className="eyebrow">Idle measured from work, not cursor</div>
-          <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginTop:'7px' }}>
-            {watched.map(n => <Tag key={n} color={C.text2}>{n}</Tag>)}
-          </div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', padding:'11px 15px',
+                      borderBottom: (flags.length || unmatched.length) ? `1px solid ${C.border}` : 'none' }}>
+          {watched.map(n => <Tag key={n} color={C.text2}>{n}</Tag>)}
         </div>
       )}
 

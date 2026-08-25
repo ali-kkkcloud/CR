@@ -10,7 +10,7 @@ import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, 
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan, staleClientsFrom } from '../../../lib/dayplan'
-import { computeScore } from '../../../lib/score'
+import { computeScore, whoWorkedOn } from '../../../lib/score'
 import { COL, raisedOperatingDay, isFootageRequest } from '../../../lib/issues'
 import { sweepShiftAutoClose, totalBreakMinutes, isSupersededBreak, activityClocks, resolveMoment } from '../../../lib/attendance'
 import { assessEmployee } from '../../../lib/integrity'
@@ -508,7 +508,11 @@ export default async function handler(req, res) {
       vehiclesSeenByName[name] = (vehiclesSeenByName[name] || 0) + (parseInt(r[11], 10) || 0)
     })
 
-    const scores = employees().map(e => {
+    // Only the people this operating day belongs to — see whoWorkedOn. The
+    // night shift that finished at seven is filed under yesterday and has no
+    // business on today's board.
+    const workedToday = whoWorkedOn(today, shiftRows, updateRows)
+    const scores = employees().filter(e => workedToday.has(e.name)).map(e => {
       const { score, tier, breakdown } = computeScore({
         footageMine:  footageByName[(e.name || '').toLowerCase()] || 0,
         footageTotal: dayFootage.length,

@@ -22,7 +22,7 @@ import {
 import { employees } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { totalBreakMinutes } from '../../../lib/attendance'
-import { computeScore } from '../../../lib/score'
+import { computeScore, whoWorkedOn } from '../../../lib/score'
 import { COL, raisedOperatingDay, isFootageRequest } from '../../../lib/issues'
 
 const ISSUE_TAB = 'Issues- Realtime'
@@ -42,11 +42,12 @@ export default async function handler(req, res) {
 
     await loadScheduleData()
 
-    const [breakRows, updateRows, credRows, footageRows] = await Promise.all([
+    const [breakRows, updateRows, credRows, footageRows, shiftRows] = await Promise.all([
       readSheetCached(CRM_SHEET_ID,   `${TABS.BREAKS}!A:H`, TTL.LIVE),
       readSheetCached(CRM_SHEET_ID,   `${TABS.CRM_UPDATES}!A:L`, TTL.LIVE),
       readSheetCached(CRM_SHEET_ID,   `${TABS.CREDENTIALS}!A:H`, TTL.ROSTER),
       readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES).catch(() => null),
+      readSheetCached(CRM_SHEET_ID,   `${TABS.SHIFT_LOG}!A:H`, TTL.LIVE),
     ])
 
     const idOf = {}
@@ -74,7 +75,9 @@ export default async function handler(req, res) {
       vehiclesSeenByName[name] = (vehiclesSeenByName[name] || 0) + (parseInt(r[11], 10) || 0)
     })
 
-    const scores = employees().map(e => {
+    // Only the people this operating day belongs to — see whoWorkedOn.
+    const workedThen = whoWorkedOn(date, shiftRows, updateRows)
+    const scores = employees().filter(e => workedThen.has(e.name)).map(e => {
       const id = idOf[e.name] || ''
       const { score, tier, breakdown } = computeScore({
         footageMine:  footageByName[(e.name || '').toLowerCase()] || 0,
