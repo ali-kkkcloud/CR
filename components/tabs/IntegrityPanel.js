@@ -23,9 +23,15 @@ import { C } from '../Widgets'
 import { Card, Tag, T, R, SP } from '../ui'
 
 export default function IntegrityPanel({ flags = [], watchlist = null }) {
-  const watched   = watchlist?.watched || []
+  // The watchlist itself is deliberately NOT shown. Whoever put a name on the
+  // tab knows it is there, and printing it back on the floor's own screen
+  // tells them nothing they did not already decide.
+  //
+  // A name that matches NOBODY is the exception, and it is not the same kind
+  // of thing: it is a typo doing nothing, in silence, which is the one state
+  // of this feature that cannot be discovered by looking at the tab.
   const unmatched = watchlist?.unmatched || []
-  if (!flags.length && !watched.length && !unmatched.length) return null
+  if (!flags.length && !unmatched.length) return null
 
   const high = flags.filter(f => f.severity === 'high')
 
@@ -43,15 +49,6 @@ export default function IntegrityPanel({ flags = [], watchlist = null }) {
           <span style={{ color: high.length ? C.amber : C.text, fontSize:T.base, fontWeight:700 }}>
             {flags.length} {flags.length === 1 ? 'browser is' : 'browsers are'} reporting activity the sheet does not support
           </span>
-        </div>
-      )}
-
-      {/* The watched names, and nothing else. Whoever put them on the tab
-          knows why they are there. */}
-      {watched.length > 0 && (
-        <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', padding:'11px 15px',
-                      borderBottom: (flags.length || unmatched.length) ? `1px solid ${C.border}` : 'none' }}>
-          {watched.map(n => <Tag key={n} color={C.text2}>{n}</Tag>)}
         </div>
       )}
 
