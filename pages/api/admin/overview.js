@@ -618,6 +618,9 @@ export default async function handler(req, res) {
       coverageGaps,
       // Clients with not one update against them since seven this morning.
       staleClients: staleOut,
+      // The operating day these figures belong to — 07:00 to 07:00, which is
+      // why they start again at seven without anything resetting them.
+      operatingDate: today,
       scores,
       integrityFlags,
       watchlist,

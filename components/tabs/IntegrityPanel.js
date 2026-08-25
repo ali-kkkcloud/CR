@@ -43,9 +43,6 @@ export default function IntegrityPanel({ flags = [], watchlist = null }) {
               ? `${flags.length} ${flags.length === 1 ? 'browser is' : 'browsers are'} reporting activity the sheet does not support`
               : 'Activity checks'}
           </span>
-          <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'3px' }}>
-            worth a look, not a conclusion — a genuinely quiet stretch reads the same way for a while
-          </span>
         </span>
       </div>
 
@@ -57,10 +54,6 @@ export default function IntegrityPanel({ flags = [], watchlist = null }) {
           <div className="eyebrow">Idle measured from work, not cursor</div>
           <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginTop:'7px' }}>
             {watched.map(n => <Tag key={n} color={C.text2}>{n}</Tag>)}
-          </div>
-          <div style={{ color:C.muted, fontSize:T.xs, marginTop:'7px' }}>
-            10 minutes with no update opens a break, backdated to when they stopped.
-            Edit the <span style={{ color:C.text2 }}>Break_Watchlist</span> tab to change who.
           </div>
         </div>
       )}
@@ -98,12 +91,6 @@ export default function IntegrityPanel({ flags = [], watchlist = null }) {
           </Tag>
         </div>
       ))}
-
-      <div style={{ padding:'10px 15px', color:C.muted, fontSize:T.xs, lineHeight:1.6 }}>
-        The break itself is unchanged: a browser can still vouch for somebody
-        indefinitely. Setting <span style={{ color:C.text2 }}>CAUTIO_HEARTBEAT_TRUST_MINUTES</span> puts
-        a ceiling on how far past the last recorded work that claim is believed.
-      </div>
     </Card>
   )
 }

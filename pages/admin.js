@@ -732,7 +732,7 @@ export default function Admin() {
                   Reported, never acted on: see the panel's own note. */}
               <IntegrityPanel flags={overview?.integrityFlags || []} watchlist={overview?.watchlist} />
 
-              <ScoresPanel scores={overview?.scores || []} />
+              <ScoresPanel scores={overview?.scores || []} today={overview?.operatingDate || ''} />
 
               {/* ── Who turned up, when, and how long they were away ──
                   Top of the screen, before anything analytical: the register
