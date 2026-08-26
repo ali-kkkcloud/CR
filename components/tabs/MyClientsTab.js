@@ -5,7 +5,7 @@ import {
   Card, Button, Tag, Segmented, Field, SearchInput, EmptyState, Banner,
   Meter, T, R, SP, SURF, fmtHour, fmtHourSlot, useToast,
 } from '../ui'
-import { updateLine, updateRank } from '../../lib/updateline'
+import { updateLine, updateChip, updateRank } from '../../lib/updateline'
 
 const STATUS_OPTIONS  = ['', 'Updated', 'No New Misalignment', 'All Vehicles are Offline', 'No Misalignment']
 const FATIGUE_OPTIONS = ['No', 'Yes']
@@ -460,25 +460,28 @@ export default function MyClientsTab({
                       display:'block', color: on ? C.text : C.text2,
                       fontSize:T.base, fontWeight: on ? 700 : 600,
                     }}>{c.client}</span>
-                    <span style={{ display:'block', color:C.muted, fontSize:T.xs, marginTop:'2px' }}>
+                    {/* One meta line, not two. The row used to carry the
+                        client's name, then its vehicle count, then a full
+                        sentence about when it was last filled — three lines
+                        deep, thirty-six times over, and the board read as
+                        noise. The count and the status belong to the same
+                        thought, so they sit on the same line, and the only
+                        colour in it is the one that means something. */}
+                    <span className="ellip" style={{
+                      display:'block', color:C.muted, fontSize:T.xs, marginTop:'2px',
+                    }}>
                       {c.vehicleCount || 0} vehicles
                       {c.isSpecific && <span style={{ color:C.blue }}> · yours</span>}
                       {c.isRedistributed && c.fromEmployee && (
                         <span style={{ color:C.purple }}> · ↩ {c.fromEmployee}</span>
                       )}
+                      {(() => {
+                        const chip = updateChip({ mine: done, at, elsewhere, upcoming })
+                        return <> · <span style={{
+                          color: TONE_COLOUR[chip.tone], fontWeight: TONE_WEIGHT[chip.tone],
+                        }}>{chip.text}</span></>
+                      })()}
                     </span>
-                    {(() => {
-                      const line = updateLine({ mine: done, at, elsewhere, upcoming })
-                      return (
-                        <span className="ellip" style={{
-                          display:'block', marginTop:'2px',
-                          color: TONE_COLOUR[line.tone],
-                          fontSize:T.xs, fontWeight: TONE_WEIGHT[line.tone],
-                        }}>
-                          {line.text}
-                        </span>
-                      )
-                    })()}
                   </span>
                   {edited
                     ? <Tag color={C.amber}>UNSAVED</Tag>

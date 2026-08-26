@@ -19,7 +19,10 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { updateLine, updateRank, clockRank, RANK_NOT_UPDATED, RANK_NO_TIME } from '../lib/updateline.js'
+import {
+  updateLine, updateChip, shortClock, updateRank, clockRank,
+  RANK_NOT_UPDATED, RANK_NO_TIME,
+} from '../lib/updateline.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TAB  = join(HERE, '..', 'components', 'tabs', 'MyClientsTab.js')
@@ -83,12 +86,22 @@ console.log('\n4  The board keeps no second copy of the rule')
   ok(!/not started yet/i.test(code),
      'MyClientsTab.js writes "not started yet" itself instead of asking updateLine')
 
-  // And both halves must actually call it: the list row and the detail pane.
-  const calls = src.match(/updateLine\(/g) || []
-  ok(calls.length >= 2,
-     `only ${calls.length} call site(s) to updateLine — the pane and the list should both use it`)
-  ok(/import \{ updateLine, updateRank \} from '\.\.\/\.\.\/lib\/updateline'/.test(src),
-     'MyClientsTab.js no longer imports updateLine/updateRank from lib')
+  // And both halves must actually ask: the list row (short) and the detail
+  // pane (long). Different wording, same decision, neither made here.
+  const calls = (src.match(/updateLine\(/g) || []).length
+              + (src.match(/updateChip\(/g) || []).length
+  ok(calls >= 2, `only ${calls} call site(s) — the pane and the list should both ask lib/updateline`)
+  ok(/import \{ updateLine, updateChip, updateRank \} from '\.\.\/\.\.\/lib\/updateline'/.test(src),
+     'MyClientsTab.js no longer imports the status helpers from lib')
+
+  // The list row is two lines deep, not three: the vehicle count and the
+  // status share ONE meta line. Split them again and the noise comes back.
+  // Proved by position — the chip has to sit inside the same block as the
+  // count, not in a block of its own further down.
+  const chipAt  = code.indexOf('updateChip(')
+  const countAt = code.lastIndexOf('vehicles', chipAt)
+  ok(chipAt > 0 && countAt > 0 && chipAt - countAt < 400,
+     'the status has moved out of the vehicle-count line into a row of its own')
 
   // Colour is part of the same rule. Hard-coded colours beside a status line
   // are how the list and the pane painted the same tone two different ways.
@@ -101,7 +114,41 @@ console.log('\n4  The board keeps no second copy of the rule')
   // through to the red words no matter how good the helper is.
   ok(/selElsewhere/.test(src),
      'the detail pane never works out whether somebody else filled this client')
-  console.log(`   one file owns the words · ${calls.length} call sites · pane derives selElsewhere`)
+  console.log(`   one file owns the words · ${calls} call sites · one meta line · pane derives selElsewhere`)
+}
+
+console.log('\n4b The list says the same thing in fewer characters')
+{
+  const elsewhere = { at: '03:30:52 pm', by: 'Nesiya' }
+  const long  = updateLine({ mine:false, at:'', elsewhere, upcoming:false })
+  const short = updateChip({ mine:false, at:'', elsewhere, upcoming:false })
+
+  ok(short.text === '03:30 pm · Nesiya', `got "${short.text}"`)
+  ok(short.tone === long.tone, `the two formatters disagree on tone: ${short.tone} vs ${long.tone}`)
+  ok(short.text.length < long.text.length, 'the short form is not shorter')
+
+  // My own work, in the list: just the time.
+  ok(updateChip({ mine:true, at:'11:20:00 am', elsewhere:null, upcoming:false }).text === '11:20 am',
+     'my own update is not being shortened')
+
+  // The one line that must NOT be shortened — it is the point of the board.
+  const late = updateChip({ mine:false, at:'', elsewhere:null, upcoming:false })
+  ok(late.text === 'Still not updated' && late.tone === 'late', `got "${late.text}"`)
+  ok(updateChip({ mine:false, at:'', elsewhere:null, upcoming:true }).text === 'Not started yet',
+     'the not-started line was shortened')
+
+  // Filled, but the sheet gave no name or no time. Still says "updated".
+  ok(updateChip({ mine:false, at:'', elsewhere:{ at:'09:05:00 am', by:'' }, upcoming:false }).text === '09:05 am',
+     'a nameless update lost its time')
+  ok(updateChip({ mine:false, at:'', elsewhere:{ at:'', by:'Hari' }, upcoming:false }).text === 'Hari',
+     'an update with no time lost its name')
+  ok(updateChip({ mine:false, at:'', elsewhere:{ at:'', by:'' }, upcoming:false }).text === 'Updated',
+     'an update with neither time nor name is being called untouched')
+
+  // shortClock hands back anything that isn't a clock, rather than mangling it.
+  ok(shortClock('7:04:09 am') === '7:04 am', `got "${shortClock('7:04:09 am')}"`)
+  ok(shortClock('later') === 'later' && shortClock('') === '', 'shortClock mangled a non-time')
+  console.log(`   "${long.text}" → "${short.text}" · late line left alone`)
 }
 
 // ── the order the list is read in ───────────────────────────────────────
