@@ -90,6 +90,11 @@ function emptyMessage({ scheduledThisHour, clockedOut, myWindow, currentHour }) 
 
 export default function MyClientsTab({
   clients, filled, saveClient, currentHour, canEdit = true,
+  // Every client anybody has filled today, at any hour: client -> { at, by }.
+  // `filled` above is only THIS employee's own work in THIS slot, which is why
+  // a client somebody else had already done at seven in the morning read as
+  // "Still not updated" when it reached the next person at eleven.
+  updatedToday = {},
   scheduledThisHour, clockedOut, myWindow,
   // The board is no longer locked to the hour in progress. The rail above it
   // can select any hour of the shift, and saving an earlier one is the same
@@ -386,6 +391,11 @@ export default function MyClientsTab({
               // client, and it is the one thing an operator scans the list for:
               // not just what is left, but how long something has been sitting.
               const at = (filled[c.client]?.updatedAt || '').toString().trim()
+              // Filled today by ANYBODY, at any hour. "Still not updated" means
+              // exactly one thing on every screen here: nobody has filled this
+              // client since seven this morning. Once somebody has, everyone
+              // who sees it afterwards sees when, and who.
+              const elsewhere = !done ? updatedToday[c.client] : null
               return (
                 <button
                   key={c.client}
@@ -419,12 +429,14 @@ export default function MyClientsTab({
                     </span>
                     <span className="ellip" style={{
                       display:'block', marginTop:'2px',
-                      color: done ? C.accent : C.red,
+                      color: done ? C.accent : elsewhere ? C.text2 : C.red,
                       fontSize:T.xs, fontWeight: done ? 500 : 600,
                     }}>
                       {done
                         ? (at ? `Updated at ${at}` : 'Updated')
-                        : upcoming ? 'Not started yet' : 'Still not updated'}
+                        : elsewhere
+                          ? `Updated at ${elsewhere.at}${elsewhere.by ? ` by ${elsewhere.by}` : ''}`
+                          : upcoming ? 'Not started yet' : 'Still not updated'}
                     </span>
                   </span>
                   {edited

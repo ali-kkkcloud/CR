@@ -1347,6 +1347,7 @@ export default function Dashboard() {
                 <div className="board-split">
                   <div style={{ minWidth:0 }}>
                     <MyClientsTab
+                      updatedToday={updatedToday}
                       clients={boardClients}
                       filled={mergedFilled}
                       saveClient={saveClient}

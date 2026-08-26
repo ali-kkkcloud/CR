@@ -225,5 +225,52 @@ console.log('\n6  Ten callers at the moment the cache expires')
   console.log(`   10 callers → ${reads} read${reads === 1 ? '' : 's'}`)
 }
 
+
+// ── 7 · A break does not move anybody's clients ────────────────────────
+//
+// Told to the floor as fact, and it was wrong: "a break longer than twenty
+// minutes redistributes that person's work". It does not. buildHourPool
+// takes awayNames and deliberately never applies it — somebody stepping away
+// keeps their hour, because emptying their board was how whole hours came to
+// read "0 clients" for people sitting at their desks.
+//
+// Worth pinning precisely BECAUSE it was misremembered: if this ever starts
+// being applied, the floor sees clients move for no visible reason, which is
+// the complaint that started all of this.
+console.log('\n7  Somebody on a long break keeps their clients')
+{
+  const { nowIST, todayStr } = sheets
+  const NOW = nowIST(), H = NOW.getHours(), DATE = todayStr()
+  const p2 = (n) => String(n).padStart(2, '0')
+  const clk = (ms) => { const d = new Date(ms); let h = d.getHours()
+    const a = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12
+    return `${p2(h)}:${p2(d.getMinutes())}:${p2(d.getSeconds())} ${a}` }
+  const ago = (m) => NOW.getTime() - m * 60000
+
+  const { computeDayPlan } = await import('../lib/dayplan.js')
+  const tim = {}; CLIENTS.forEach(c => { tim[c] = [H] })
+  setScheduleData({
+    employees: PEOPLE.map((n, i) => ({ empId:`E${i+1}`, name:n, start:7, end:23, isNight:false })),
+    timings: tim, employeeHours: {},
+  })
+  const shiftRows = [['h'], ...PEOPLE.map((n, i) =>
+    [`E${i+1}`, n, DATE, clk(ago(240)), '', '', 'Active', clk(ago(1))])]
+  const planWith = (breaks) => computeDayPlan({
+    date: DATE, today: DATE, nowHour: H, shiftRows,
+    updateRows: [['h']], breakRows: [['h'], ...breaks],
+    leaveMap: {}, overridesMap: {}, vehicleMap: mapFrom(CLIENTS), weekOffNames: new Set(),
+  })
+  const at = (p) => { const h = p.hours.find(x => x.hour === H)
+    return Object.entries(h.owners).map(([w, cs]) =>
+      `${w}: ${cs.map(c => c.client).sort().join(',')}`).sort().join(' | ') }
+
+  const before = at(planWith([]))
+  // Half an hour away — well past the twenty-minute mark.
+  const during = at(planWith([['E4', PEOPLE[3], DATE, clk(ago(30)), '', '', 'Active', 'Manual']]))
+  ok(before === during,
+     `a break moved clients between people:\n     before ${before}\n     during ${during}`)
+  console.log(`   30 minutes away → the split is byte-for-byte identical`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)

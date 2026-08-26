@@ -294,5 +294,45 @@ console.log('\n9  One person\'s share cannot exceed the whole floor')
   console.log(`   floor ${floor.length} · biggest share ${Math.max(...shares.map(s => s.length))} · nothing from ${AHEAD}:00 counted`)
 }
 
+
+// ── 10 · What the NEXT employee sees on a client somebody already did ──
+//
+// The rule, as the floor states it: "Still not updated" means exactly one
+// thing — nobody has filled this client since seven this morning. The moment
+// anybody fills it, everyone who sees it afterwards sees WHEN, and by whom.
+//
+// The board was not doing the second half. Its status line read `done`, which
+// is this employee's own work in this slot, so a client filled at seven by
+// Nesiya still said "Still not updated" when it reached Afzal at eleven —
+// the same words used for a client nobody had touched all day. Two very
+// different facts, one sentence.
+//
+// The list and the board now answer from the same record: staleClientsFrom
+// uses plan.filledToday, and the board is handed updatedToday, both of which
+// are "filled by anybody, at any hour today".
+console.log('\n10  Filled at seven, handed on at eleven')
+{
+  const timings = { 'Zingbus': [HOUR_A, NOW_HOUR] }
+  setScheduleData({ employees: PEOPLE, timings, employeeHours: {} })
+  const plan = computeDayPlan({
+    date: DATE, today: DATE, nowHour: NOW_HOUR,
+    shiftRows: [HEAD, ...PEOPLE.map(shiftRow)],
+    updateRows: [HEAD, upd('Nesiya', 'Zingbus', HOUR_A, '08:12:00 am')],
+    breakRows: [HEAD], leaveMap: {}, overridesMap: {}, vehicleMap, weekOffNames: new Set(),
+  })
+
+  // Off the list, for everybody — not just for Nesiya.
+  const listed = staleClientsFrom(plan, NOW_HOUR).map(c => c.client)
+  ok(!listed.includes('Zingbus'),
+     'a client filled at 8am is still on the "nobody has filled this" list')
+
+  // And the record the board reads carries the time, so whoever holds it next
+  // is told when it was done rather than being told nobody has done it.
+  const when = plan.filledToday?.get('Zingbus')
+  ok(when === '08:12:00 am',
+     `the board would show "${when}" as the last update, expected 08:12:00 am`)
+  console.log(`   filled 08:12 by Nesiya → off the list · next holder sees "Updated at 08:12:00 am"`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
 process.exit(fail === 0 ? 0 : 1)
