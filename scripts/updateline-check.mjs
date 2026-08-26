@@ -123,12 +123,16 @@ console.log('\n4b The list says the same thing in fewer characters')
   const long  = updateLine({ mine:false, at:'', elsewhere, upcoming:false })
   const short = updateChip({ mine:false, at:'', elsewhere, upcoming:false })
 
-  ok(short.text === '03:30 pm · Nesiya', `got "${short.text}"`)
+  ok(short.text === 'Updated 03:30 pm · Nesiya', `got "${short.text}"`)
   ok(short.tone === long.tone, `the two formatters disagree on tone: ${short.tone} vs ${long.tone}`)
   ok(short.text.length < long.text.length, 'the short form is not shorter')
 
-  // My own work, in the list: just the time.
-  ok(updateChip({ mine:true, at:'11:20:00 am', elsewhere:null, upcoming:false }).text === '11:20 am',
+  // Shorter, but it still has to SAY what happened at that time. A bare
+  // "03:30 pm · Nesiya" beside a client is just a number on the screen.
+  ok(/^Updated /.test(short.text), `the line no longer says it is an update: "${short.text}"`)
+
+  // My own work, in the list.
+  ok(updateChip({ mine:true, at:'11:20:00 am', elsewhere:null, upcoming:false }).text === 'Updated 11:20 am',
      'my own update is not being shortened')
 
   // The one line that must NOT be shortened — it is the point of the board.
@@ -138,9 +142,9 @@ console.log('\n4b The list says the same thing in fewer characters')
      'the not-started line was shortened')
 
   // Filled, but the sheet gave no name or no time. Still says "updated".
-  ok(updateChip({ mine:false, at:'', elsewhere:{ at:'09:05:00 am', by:'' }, upcoming:false }).text === '09:05 am',
+  ok(updateChip({ mine:false, at:'', elsewhere:{ at:'09:05:00 am', by:'' }, upcoming:false }).text === 'Updated 09:05 am',
      'a nameless update lost its time')
-  ok(updateChip({ mine:false, at:'', elsewhere:{ at:'', by:'Hari' }, upcoming:false }).text === 'Hari',
+  ok(updateChip({ mine:false, at:'', elsewhere:{ at:'', by:'Hari' }, upcoming:false }).text === 'Updated · Hari',
      'an update with no time lost its name')
   ok(updateChip({ mine:false, at:'', elsewhere:{ at:'', by:'' }, upcoming:false }).text === 'Updated',
      'an update with neither time nor name is being called untouched')
@@ -215,6 +219,35 @@ console.log('\n8  Order does not change what an employee has')
   ok(order(rows).join() === order(rows.slice().reverse()).join(),
      'the order depends on what the sheet handed over, not on the rule')
   console.log('   nothing added, nothing lost, same order every time')
+}
+
+console.log('\n9  A follow-up keeps asking, from every tab')
+{
+  // A follow-up is somebody else's unfinished work, handed over at the end of
+  // their shift. It has to be visible from wherever the person is working —
+  // not only on the tab it lives on — and it has to still be visible an hour
+  // later, which a badge that never moves is not.
+  const dash  = readFileSync(join(HERE, '..', 'pages', 'dashboard.js'), 'utf8')
+  const shell = readFileSync(join(HERE, '..', 'components', 'Shell.js'), 'utf8')
+  const css   = readFileSync(join(HERE, '..', 'styles', 'globals.css'), 'utf8')
+
+  // The header the bell sits in must stay pinned, or "every tab" is a lie the
+  // moment somebody scrolls.
+  ok(/position:'sticky'/.test(dash), 'the header is no longer sticky — the bell scrolls away')
+
+  ok(/ring=\{footage\.followups\.length > 0\}/.test(dash),
+     'the bell no longer rings when follow-ups are waiting')
+  ok(/followups\.length > 0 \? 'followup'/.test(dash),
+     'the bell no longer opens Follow-ups when follow-ups are waiting')
+  // Nothing was taken away to make room: the count still covers both queues.
+  ok(/count=\{footage\.pending\.length \+ footage\.followups\.length\}/.test(dash),
+     'the bell stopped counting one of the two queues')
+
+  ok(/className=\{ring \? 'bell-ring' : undefined\}/.test(shell), 'NotifyButton lost its ring')
+  ok(/@keyframes bellRing/.test(css) && /\.bell-ring\b/.test(css), 'the bellRing animation is missing')
+  ok(/prefers-reduced-motion[\s\S]{0,120}bell-ring[\s\S]{0,60}animation:\s*none/.test(css),
+     'the bell shakes even for people who asked their system for less motion')
+  console.log('   sticky header · rings on follow-ups · opens Follow-ups · both queues counted')
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)

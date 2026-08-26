@@ -179,18 +179,26 @@ export function AccountButton({ name, sub, onClick }) {
 // ══════════════════════════════════════════════════════════════════════
 // NotifyButton — bell with an unread count.
 // ══════════════════════════════════════════════════════════════════════
-export function NotifyButton({ count = 0, onClick, title = 'Notifications' }) {
+// `ring` makes the bell knock itself every few seconds instead of sitting
+// still. A badge that never moves stops being read after the first hour of a
+// shift; something that has been waiting for someone deserves to ask again.
+// It is a short shake on a long cycle, not a constant wobble, and it stops
+// entirely for anyone who has asked their system for less motion.
+export function NotifyButton({ count = 0, onClick, title = 'Notifications', ring = false }) {
   return (
     <button
       onClick={onClick} title={title}
       className="pressable"
       style={{
-        position:'relative', background:SURF.raised, border:`1px solid ${C.border2}`,
+        position:'relative', background:SURF.raised,
+        border:`1px solid ${ring ? C.amber + '66' : C.border2}`,
         borderRadius:R.md, width:'36px', height:'36px',
         display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
       }}
     >
-      <Icon name="bell" size={16} color={C.text2} />
+      <span className={ring ? 'bell-ring' : undefined} style={{ display:'flex' }}>
+        <Icon name="bell" size={16} color={ring ? C.amber : C.text2} />
+      </span>
       {count > 0 && (
         <span style={{
           position:'absolute', top:'-5px', right:'-5px',

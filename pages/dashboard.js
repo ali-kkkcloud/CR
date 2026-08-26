@@ -1193,9 +1193,24 @@ export default function Dashboard() {
                 <Pill icon="calendar">{istDateLabel()}</Pill>
               </span>
               <Pill icon="clock">{clock}</Pill>
+              {/* The bell is the one thing on this screen that follows you
+                  across every tab — the header is sticky, so a follow-up
+                  handed over at the end of somebody's shift keeps asking
+                  from wherever you are working. It counts both queues, as it
+                  always did; what is new is that follow-ups make it ring and
+                  send you straight to them, because a follow-up is somebody
+                  else's unfinished work now sitting with you. */}
               <NotifyButton
                 count={footage.pending.length + footage.followups.length}
-                onClick={()=>setActiveTab('footage')}
+                ring={footage.followups.length > 0}
+                title={
+                  footage.followups.length > 0
+                    ? `${footage.followups.length} footage request${footage.followups.length===1?'':'s'} need${footage.followups.length===1?'s':''} follow-up — opens Follow-ups`
+                    : footage.pending.length > 0
+                      ? `${footage.pending.length} footage request${footage.pending.length===1?'':'s'} open — opens Footage`
+                      : 'Nothing waiting'
+                }
+                onClick={()=>setActiveTab(footage.followups.length > 0 ? 'followup' : 'footage')}
               />
 
               {isActive ? (

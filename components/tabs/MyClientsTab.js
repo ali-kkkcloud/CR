@@ -95,13 +95,18 @@ function emptyMessage({ scheduledThisHour, clockedOut, myWindow, currentHour }) 
 
 // And one tone, one colour, for the same reason.
 //
-// Somebody else's finished work used to be painted at full brightness, the
-// same weight as the client's own name, so a screen of updated clients was a
-// wall of light with the red of what was actually outstanding lost inside it.
-// It is context, not a call to action: it goes quiet, and only "Still not
-// updated" is allowed to shout. Every colour here is already in the palette —
-// nothing new was introduced.
-const TONE_COLOUR = { done: C.accent, elsewhere: C.muted, idle: C.muted, late: C.red }
+// Three colours, three meanings, and none of them shared with the grey the
+// rest of the row is written in:
+//
+//   done       green  — you filled this one
+//   elsewhere  amber  — somebody else did, at this time. Deliberately warm
+//                       rather than dim: the last-updated time is the thing
+//                       an operator scans a list for, and painting it grey
+//                       had made it invisible next to the vehicle count.
+//   late       red    — nobody has, all day. The only line meant to shout.
+//
+// Every colour is already in the palette. Nothing new was introduced.
+const TONE_COLOUR = { done: C.accent, elsewhere: C.amber, idle: C.muted, late: C.red }
 const TONE_WEIGHT = { done: 500, elsewhere: 500, idle: 500, late: 600 }
 
 export default function MyClientsTab({
