@@ -19,7 +19,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { updateLine } from '../lib/updateline.js'
+import { updateLine, updateRank, clockRank, RANK_NOT_UPDATED, RANK_NO_TIME } from '../lib/updateline.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TAB  = join(HERE, '..', 'components', 'tabs', 'MyClientsTab.js')
@@ -87,14 +87,87 @@ console.log('\n4  The board keeps no second copy of the rule')
   const calls = src.match(/updateLine\(/g) || []
   ok(calls.length >= 2,
      `only ${calls.length} call site(s) to updateLine — the pane and the list should both use it`)
-  ok(/import \{ updateLine \} from '\.\.\/\.\.\/lib\/updateline'/.test(src),
-     'MyClientsTab.js no longer imports updateLine from lib')
+  ok(/import \{ updateLine, updateRank \} from '\.\.\/\.\.\/lib\/updateline'/.test(src),
+     'MyClientsTab.js no longer imports updateLine/updateRank from lib')
+
+  // Colour is part of the same rule. Hard-coded colours beside a status line
+  // are how the list and the pane painted the same tone two different ways.
+  ok(!/color:\s*done\s*\?/.test(code) && !/tone\s*===\s*'elsewhere'\s*\?/.test(code),
+     'a status line is picking its own colour instead of using TONE_COLOUR')
+  const tones = src.match(/TONE_COLOUR\[/g) || []
+  ok(tones.length >= 2, `only ${tones.length} use(s) of TONE_COLOUR — both halves should use it`)
 
   // The pane's "somebody else" fact has to be derived, or it will fall
   // through to the red words no matter how good the helper is.
   ok(/selElsewhere/.test(src),
      'the detail pane never works out whether somebody else filled this client')
   console.log(`   one file owns the words · ${calls.length} call sites · pane derives selElsewhere`)
+}
+
+// ── the order the list is read in ───────────────────────────────────────
+const order = (rows) => rows
+  .map(r => ({ r, k: updateRank(r) }))
+  .sort((a, b) => (a.k - b.k) || a.r.client.localeCompare(b.r.client))
+  .map(x => x.r.client)
+
+console.log('\n5  The case as it was asked for: five clients, two untouched')
+{
+  const rows = [
+    { client:'C-noon',  mine:false, at:'', elsewhere:{ at:'12:04:00 pm', by:'Nikita' } },
+    { client:'C-ten',   mine:false, at:'', elsewhere:{ at:'10:15:00 am', by:'Afzal'  } },
+    { client:'C-open2', mine:false, at:'', elsewhere:null },
+    { client:'C-eight', mine:false, at:'', elsewhere:{ at:'08:02:00 am', by:'Sunil'  } },
+    { client:'C-open1', mine:false, at:'', elsewhere:null },
+  ]
+  const got = order(rows)
+  ok(JSON.stringify(got) === JSON.stringify(
+       ['C-open1','C-open2','C-eight','C-ten','C-noon']),
+     `wrong order: ${got.join(' → ')}`)
+  console.log(`   ${got.join(' → ')}`)
+}
+
+console.log('\n6  Untouched always outranks any update')
+{
+  ok(updateRank({ mine:false, at:'', elsewhere:null }) === RANK_NOT_UPDATED, 'untouched is not the top rank')
+  // Earliest possible update of the operating day still sorts below it.
+  ok(RANK_NOT_UPDATED < clockRank('07:00:00 am'), 'a 7 am update outranks an untouched client')
+  // My own work is ranked by MY time, not by whoever touched it earlier.
+  const mine = updateRank({ mine:true, at:'11:20:00 am', elsewhere:{ at:'08:30:52 am', by:'Nesiya' } })
+  ok(mine === clockRank('11:20:00 am'), 'my own update is being ranked by somebody else’s time')
+  console.log('   untouched → 7 am → … · mine ranked by my time')
+}
+
+console.log('\n7  The operating day, not the clock face')
+{
+  // 07:00 is the start of the day; everything before it belongs to the tail.
+  ok(clockRank('07:00:00 am') < clockRank('11:00:00 pm'), '7 am should come before 11 pm')
+  ok(clockRank('11:00:00 pm') < clockRank('02:00:00 am'),
+     'a night shift 2 am is sorting to the top of the morning instead of the end of the day')
+  ok(clockRank('12:00:00 am') > clockRank('11:59:00 pm'), 'midnight is sorting before the minute before it')
+  ok(clockRank('12:30:00 pm') > clockRank('11:30:00 am'), 'half past noon is sorting before half past eleven')
+
+  // Junk must not be read as a time and quietly ranked as 00:00.
+  ok(clockRank('') === null && clockRank('later') === null && clockRank('25:00:00 am') === null,
+     'a non-time is being parsed as a clock')
+  ok(updateRank({ mine:true, at:'', elsewhere:null }) === RANK_NO_TIME,
+     'an update with no time recorded is not sorting to the bottom')
+  console.log('   7 am ‹ 11 pm ‹ 2 am · midnight and noon right way round · junk rejected')
+}
+
+console.log('\n8  Order does not change what an employee has')
+{
+  const rows = [
+    { client:'B', mine:true,  at:'09:00:00 am', elsewhere:null },
+    { client:'A', mine:false, at:'', elsewhere:null },
+    { client:'C', mine:false, at:'', elsewhere:{ at:'09:00:00 am', by:'Hari' } },
+  ]
+  const got = order(rows)
+  ok(got.length === rows.length, `${rows.length} clients went in, ${got.length} came out`)
+  ok(new Set(got).size === rows.length, 'a client was duplicated or lost by the sort')
+  // Same rank, so the name decides — and decides the same way every time.
+  ok(order(rows).join() === order(rows.slice().reverse()).join(),
+     'the order depends on what the sheet handed over, not on the rule')
+  console.log('   nothing added, nothing lost, same order every time')
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)

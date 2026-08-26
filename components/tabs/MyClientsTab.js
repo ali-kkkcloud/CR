@@ -5,7 +5,7 @@ import {
   Card, Button, Tag, Segmented, Field, SearchInput, EmptyState, Banner,
   Meter, T, R, SP, SURF, fmtHour, fmtHourSlot, useToast,
 } from '../ui'
-import { updateLine } from '../../lib/updateline'
+import { updateLine, updateRank } from '../../lib/updateline'
 
 const STATUS_OPTIONS  = ['', 'Updated', 'No New Misalignment', 'All Vehicles are Offline', 'No Misalignment']
 const FATIGUE_OPTIONS = ['No', 'Yes']
@@ -93,6 +93,17 @@ function emptyMessage({ scheduledThisHour, clockedOut, myWindow, currentHour }) 
 // lib/updateline.js, imported above. Both the list row and the detail pane
 // call it, so the two halves of the board can never disagree again.
 
+// And one tone, one colour, for the same reason.
+//
+// Somebody else's finished work used to be painted at full brightness, the
+// same weight as the client's own name, so a screen of updated clients was a
+// wall of light with the red of what was actually outstanding lost inside it.
+// It is context, not a call to action: it goes quiet, and only "Still not
+// updated" is allowed to shout. Every colour here is already in the palette —
+// nothing new was introduced.
+const TONE_COLOUR = { done: C.accent, elsewhere: C.muted, idle: C.muted, late: C.red }
+const TONE_WEIGHT = { done: 500, elsewhere: 500, idle: 500, late: 600 }
+
 export default function MyClientsTab({
   clients, filled, saveClient, currentHour, canEdit = true,
   // Every client anybody has filled today, at any hour: client -> { at, by }.
@@ -140,16 +151,38 @@ export default function MyClientsTab({
   const pct = realClients.length ? Math.round((doneCount / realClients.length) * 100) : 0
 
   // ── The list on the left, after search and filter ──
+  //
+  // Ordered the way it is read: whatever nobody has touched at the top, then
+  // the day in the order it happened — the eight o'clock update above the ten
+  // o'clock one, ten above noon. updateRank works this out against the
+  // OPERATING day, so a night shift's 2 am sits at the bottom where it belongs
+  // and not at the top of a morning it isn't part of.
+  //
+  // Clients with the same rank fall back to their name, so the order is fixed
+  // rather than left to whatever the sheet happened to hand over. Nothing here
+  // changes WHICH clients an employee has — only the order they are listed in.
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return realClients.filter(c => {
+    const rows = realClients.filter(c => {
       if (q && !c.client.toLowerCase().includes(q)) return false
       const done = isDone(filled, c.client)
       if (filter === 'pending') return !done
       if (filter === 'done')    return done
       return true
     })
-  }, [realClients, filled, query, filter])
+    const rankOf = (c) => {
+      const done = isDone(filled, c.client)
+      return updateRank({
+        mine: done,
+        at: (filled[c.client]?.updatedAt || '').toString().trim(),
+        elsewhere: done ? null : updatedToday[c.client],
+      })
+    }
+    return rows
+      .map(c => ({ c, r: rankOf(c) }))
+      .sort((a, b) => (a.r - b.r) || a.c.client.localeCompare(b.c.client))
+      .map(x => x.c)
+  }, [realClients, filled, updatedToday, query, filter])
 
   // Keep a selection alive at all times. When the filter or the hour empties
   // the current one out, fall to the first thing still on screen rather than
@@ -434,13 +467,18 @@ export default function MyClientsTab({
                         <span style={{ color:C.purple }}> · ↩ {c.fromEmployee}</span>
                       )}
                     </span>
-                    <span className="ellip" style={{
-                      display:'block', marginTop:'2px',
-                      color: done ? C.accent : elsewhere ? C.text2 : C.red,
-                      fontSize:T.xs, fontWeight: done ? 500 : 600,
-                    }}>
-                      {updateLine({ mine: done, at, elsewhere, upcoming }).text}
-                    </span>
+                    {(() => {
+                      const line = updateLine({ mine: done, at, elsewhere, upcoming })
+                      return (
+                        <span className="ellip" style={{
+                          display:'block', marginTop:'2px',
+                          color: TONE_COLOUR[line.tone],
+                          fontSize:T.xs, fontWeight: TONE_WEIGHT[line.tone],
+                        }}>
+                          {line.text}
+                        </span>
+                      )
+                    })()}
                   </span>
                   {edited
                     ? <Tag color={C.amber}>UNSAVED</Tag>
@@ -485,10 +523,9 @@ export default function MyClientsTab({
                         mine: selDone, at: savedAt, elsewhere: selElsewhere, upcoming,
                       })
                       if (line.tone === 'done' && !savedAt) return null
-                      const colour = line.tone === 'done' ? C.accent
-                                   : line.tone === 'elsewhere' ? C.text2
-                                   : line.tone === 'idle' ? C.muted : C.red
-                      return <> · <span style={{ color: colour, fontWeight: line.tone === 'late' ? 600 : 500 }}>
+                      return <> · <span style={{
+                        color: TONE_COLOUR[line.tone], fontWeight: TONE_WEIGHT[line.tone],
+                      }}>
                         {line.text.charAt(0).toLowerCase() + line.text.slice(1)}
                       </span></>
                     })()}
