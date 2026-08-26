@@ -332,6 +332,28 @@ console.log('\n10  Filled at seven, handed on at eleven')
   ok(when === '08:12:00 am',
      `the board would show "${when}" as the last update, expected 08:12:00 am`)
   console.log(`   filled 08:12 by Nesiya → off the list · next holder sees "Updated at 08:12:00 am"`)
+
+  // And when a client is filled MORE than once in a day, the time shown is
+  // the most recent one — not the first, which would tell somebody a client
+  // had been sitting untouched since morning when it was done minutes ago.
+  //
+  // It is the last row that wins, and that is correct because CRM_Updates is
+  // append-only: rows arrive in the order they were written. Nothing should
+  // ever re-sort that tab.
+  const many = computeDayPlan({
+    date: DATE, today: DATE, nowHour: NOW_HOUR,
+    shiftRows: [HEAD, ...PEOPLE.map(shiftRow)],
+    updateRows: [HEAD,
+      upd('Nesiya',  'Zingbus', HOUR_A, '08:12:00 am'),
+      upd('Afzal',   'Zingbus', HOUR_B, '09:40:00 am'),
+      upd('CHANDAN', 'Zingbus', HOUR_B, '10:55:00 am'),
+    ],
+    breakRows: [HEAD], leaveMap: {}, overridesMap: {}, vehicleMap, weekOffNames: new Set(),
+  })
+  const latest = many.filledToday?.get('Zingbus')
+  ok(latest === '10:55:00 am',
+     `three updates in a day should report the newest (10:55:00 am), got ${latest}`)
+  console.log(`   filled 08:12, 09:40, 10:55 → reports 10:55, the most recent`)
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)
