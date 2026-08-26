@@ -5,6 +5,7 @@ import {
   Card, Button, Tag, Segmented, Field, SearchInput, EmptyState, Banner,
   Meter, T, R, SP, SURF, fmtHour, fmtHourSlot, useToast,
 } from '../ui'
+import { updateLine } from '../../lib/updateline'
 
 const STATUS_OPTIONS  = ['', 'Updated', 'No New Misalignment', 'All Vehicles are Offline', 'No Misalignment']
 const FATIGUE_OPTIONS = ['No', 'Yes']
@@ -87,6 +88,10 @@ function emptyMessage({ scheduledThisHour, clockedOut, myWindow, currentHour }) 
     detail: 'Nothing is due for you this hour. The board fills itself at the top of the next one.',
   }
 }
+
+// The status line — "Updated at …", "Still not updated" — lives in
+// lib/updateline.js, imported above. Both the list row and the detail pane
+// call it, so the two halves of the board can never disagree again.
 
 export default function MyClientsTab({
   clients, filled, saveClient, currentHour, canEdit = true,
@@ -312,6 +317,8 @@ export default function MyClientsTab({
   const selMeta = realClients.find(c => c.client === sel)
   const selDone = sel ? isDone(filled, sel) : false
   const savedAt = sel ? (filled[sel]?.updatedAt || '') : ''
+  // Filled today by somebody else — the fact the pane was missing entirely.
+  const selElsewhere = sel && !selDone ? updatedToday[sel] : null
   const fatigueYes = rec.fatigue === 'Yes'
 
   return (
@@ -432,11 +439,7 @@ export default function MyClientsTab({
                       color: done ? C.accent : elsewhere ? C.text2 : C.red,
                       fontSize:T.xs, fontWeight: done ? 500 : 600,
                     }}>
-                      {done
-                        ? (at ? `Updated at ${at}` : 'Updated')
-                        : elsewhere
-                          ? `Updated at ${elsewhere.at}${elsewhere.by ? ` by ${elsewhere.by}` : ''}`
-                          : upcoming ? 'Not started yet' : 'Still not updated'}
+                      {updateLine({ mine: done, at, elsewhere, upcoming }).text}
                     </span>
                   </span>
                   {edited
@@ -477,11 +480,18 @@ export default function MyClientsTab({
                     {/* Said either way round. "Last saved 3:14 pm" only appears
                         when there is something to say, so its absence used to
                         be the only sign that a client had never been touched. */}
-                    {selDone
-                      ? (savedAt ? <> · <span style={{ color:C.accent }}>updated at {savedAt}</span></> : null)
-                      : <> · <span style={{ color: upcoming ? C.muted : C.red, fontWeight:600 }}>
-                          {upcoming ? 'not started yet' : 'still not updated'}
-                        </span></>}
+                    {(() => {
+                      const line = updateLine({
+                        mine: selDone, at: savedAt, elsewhere: selElsewhere, upcoming,
+                      })
+                      if (line.tone === 'done' && !savedAt) return null
+                      const colour = line.tone === 'done' ? C.accent
+                                   : line.tone === 'elsewhere' ? C.text2
+                                   : line.tone === 'idle' ? C.muted : C.red
+                      return <> · <span style={{ color: colour, fontWeight: line.tone === 'late' ? 600 : 500 }}>
+                        {line.text.charAt(0).toLowerCase() + line.text.slice(1)}
+                      </span></>
+                    })()}
                   </div>
                 </div>
                 <div style={{ display:'flex', gap:SP[2] }}>
