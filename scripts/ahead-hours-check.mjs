@@ -9,8 +9,13 @@
 // What was on screen: Mahesh and Sunil saw their 7 o'clock hour and then a row
 // of dashes — nothing for the rest of the day. Nikita, who was not there,
 // held all 333 clients of hours 8 through 16.
-import { setScheduleData } from '/home/user/CR/lib/schedule.js'
-import { computeDayPlan } from '/home/user/CR/lib/dayplan.js'
+// Relative, like every other file here. These two were absolute paths to
+// /home/user/CR — which worked only because that happened to be where the
+// repo was checked out. Cloned anywhere else, this one file of twenty-four
+// died with ERR_MODULE_NOT_FOUND and took ten checks down with it, and the
+// suite still reported the remaining files as a clean pass.
+import { setScheduleData } from '../lib/schedule.js'
+import { computeDayPlan } from '../lib/dayplan.js'
 
 let pass = 0, fail = 0
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL  ' + m) } }
