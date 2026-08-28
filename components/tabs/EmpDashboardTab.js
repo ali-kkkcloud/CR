@@ -2,7 +2,7 @@ import { useState } from 'react'
 import Icon from '../Icons'
 import HistoryPanel from './HistoryPanel'
 import { C, Donut, LineChart, ScoreBadge } from '../Widgets'
-import { Card, CardHead, Segmented, Meter, EmptyState, SkeletonCard, T, R, SP, SURF } from '../ui'
+import { Card, CardHead, Button, Segmented, Meter, EmptyState, SkeletonCard, T, R, SP, SURF } from '../ui'
 
 function fmtMinutes(mins) {
   const h = Math.floor(mins/60), m = mins%60
@@ -181,6 +181,28 @@ export default function EmpDashboardTab({ summary, range, setRange, loading, onG
     <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(230px, 1fr))', gap:SP[3] }}>
       {[0,1,2,3].map(i => <SkeletonCard key={i} lines={3} />)}
     </div>
+  )
+
+  // The read did not come back, and nothing is cached to fall back on.
+  //
+  // loadSummary already writes exactly this case into state as
+  // { error: '...' }, but nothing here ever read it: an error payload is
+  // truthy, so the skeleton branch above let it through, and the destructure
+  // below then rendered a screen of blanks with no explanation. To the person
+  // on shift the tab simply went empty and stayed empty until the server
+  // recovered on its own — with no way to tell a broken platform from a busy
+  // one, and nothing to do but wait.
+  //
+  // The poll behind this keeps running, so the screen refills by itself the
+  // moment a read succeeds; this only says so out loud.
+  if (summary.error) return (
+    <EmptyState
+      icon="offline"
+      tone="warn"
+      title="Today's figures have not loaded"
+      detail={`${summary.error} Your work is safe and nothing has been lost — this screen is only the summary. The Board still works, and this fills in on its own as soon as the server answers.`}
+      action={onGoToTab ? <Button variant="primary" onClick={() => onGoToTab('board')}>Go to my board</Button> : null}
+    />
   )
 
   const {
