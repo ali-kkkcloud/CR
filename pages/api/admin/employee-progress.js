@@ -3,7 +3,7 @@ import {
   readSheetCached, ISSUE_SHEET_ID, CRM_SHEET_ID, TABS, todayStr, yesterdayStr,
   getShiftOverridesForDate, getLeaveMapForDate, fetchClientVehicleCounts, TTL, warmTogether, SHIFT_SCREEN_TABS,
 } from '../../../lib/sheets'
-import { employees } from '../../../lib/schedule'
+import { employees, weekOffNamesFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan } from '../../../lib/dayplan'
@@ -123,9 +123,7 @@ export default async function handler(req, res) {
           yesterday: yesterdayStr(),
           shiftRows, updateRows, breakRows,
           leaveMap: lvMap, overridesMap: ovMap, vehicleMap: vehMap,
-          weekOffNames: new Set(
-            credRows.slice(1).filter(r => (r[7] || '').toString().toLowerCase() === 'yes').map(r => r[1])
-          ),
+          weekOffNames: weekOffNamesFor(lvMap),
         })
       } catch (e) {
         console.error('progress: live day plan failed', e.message)

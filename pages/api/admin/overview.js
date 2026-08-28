@@ -6,7 +6,7 @@ import {
   getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, nowIST, getWatchlistNames, TTL, warmTogether, SHIFT_SCREEN_TABS,
   vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
-import { employees, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
+import { employees, weekOffNamesFor, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan, staleClientsFrom } from '../../../lib/dayplan'
@@ -86,17 +86,9 @@ export default async function handler(req, res) {
     // only the first meant the same person showed as "Week off" on The day and
     // "Not started" on this screen — two answers to one question, which is
     // exactly what the admin opens the platform to avoid.
-    const weekOffEmps = new Set(
-      credRows.slice(1)
-        .filter(r => (r[7] || '').toString().toLowerCase() === 'yes')
-        .map(r => r[1])
-    )
-    Object.entries(leaveMap).forEach(([name, entries]) => {
-      // Exactly "Week Off" — a row shortened to "Week Off (returned)" means the
-      // employee did turn up, and the remaining leave hours already keep them
-      // out of the hours they missed.
-      if (entries.some(l => (l.reason || '').toString().trim() === 'Week Off')) weekOffEmps.add(name)
-    })
+    // The union of the two, worked out in one place so Hour by hour and
+    // Employee Progress cannot answer differently. See weekOffNamesFor.
+    const weekOffEmps = weekOffNamesFor(leaveMap)
 
     // ── People the roster cannot see ──────────────────────────────────────
     // Credentials is what lets somebody log in; the roster is built from the
@@ -194,10 +186,22 @@ export default async function handler(req, res) {
     // date + start time), so a break opened twice is never counted twice.
     const breakTotals = {}
     {
+      // The roster is where an employee's ID lives, so that is where this
+      // takes it from. It used to be scraped out of the Breaks tab instead —
+      // first row wins, across the sheet's whole history — so a name whose
+      // oldest break carried a blank or a since-changed ID was looked up under
+      // the wrong ID from then on, and their break total quietly read zero
+      // while the floor beside it showed them away. A number nobody can
+      // explain is worse than no number at all.
       const empIdByName = {}
+      employees().forEach(e => { if (e.name) empIdByName[e.name] = (e.empId || '').toString().trim() })
+      // Anyone with break rows but no roster entry — a leaver, or a name typed
+      // differently — still needs an ID, or their history disappears from this
+      // screen the day they come off the roster.
       breakRows.slice(1).forEach(r => {
-        const n = (r[1] || '').toString().trim()
-        if (n && !empIdByName[n]) empIdByName[n] = (r[0] || '').toString().trim()
+        const nm = (r[1] || '').toString().trim()
+        const id = (r[0] || '').toString().trim()
+        if (nm && id && !empIdByName[nm]) empIdByName[nm] = id
       })
       const seen = new Set()
       breakRows.slice(1).forEach(r => {

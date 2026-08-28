@@ -524,7 +524,7 @@ export default function Admin() {
   const gapsAreLive  = coverageGaps.some(g => g.past)
   // Away long enough that the split has stopped giving them work.
   const longBreakEmployees  = (breaks?.employees || [])
-    .filter(e => e.currentlyOnBreak && liveBreakMinutes(e) >= 20)
+    .filter(e => e.currentlyOnBreak && liveBreakMinutes(e, breaks?.asOf) >= 20)
 
   const statusCounts = employees.reduce((acc,e)=>{ acc[e.statusLabel]=(acc[e.statusLabel]||0)+1; return acc }, {})
   const statusDonutSegs = [
@@ -591,7 +591,7 @@ export default function Admin() {
     desc:`${overdueEmployees.map(e=>e.name).join(', ')} ${overdueEmployees.length===1?'is':'are'} past the end of the shift and still clocked in`,
     act:()=>setRosterModal({ title:'Past the end of their shift', empty:'Nobody is overdue.', rows:overdueEmployees }),
   })
-  if (longBreakEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Away a long time', desc:`${longBreakEmployees.map(e=>`${e.name} (${Math.floor(liveBreakMinutes(e)/60)>0?`${Math.floor(liveBreakMinutes(e)/60)}h `:''}${liveBreakMinutes(e)%60}m)`).join(', ')} — their clients are still on their board, waiting`, tab:'breaks' })
+  if (longBreakEmployees.length>0) aiAlerts.push({ sev:'high', icon:'clock', title:'Away a long time', desc:`${longBreakEmployees.map(e=>{const m=liveBreakMinutes(e, breaks?.asOf);return `${e.name} (${Math.floor(m/60)>0?`${Math.floor(m/60)}h `:''}${m%60}m)`}).join(', ')} — their clients are still on their board, waiting`, tab:'breaks' })
   if (breaks?.onBreakNow>0) aiAlerts.push({ sev:'warn', icon:'clock', title:'On break', desc:`${breaks.onBreakNow} employee${breaks.onBreakNow===1?' is':'s are'} away right now`, tab:'breaks' })
   if (footage.followups.length>0) aiAlerts.push({ sev:'warn', icon:'followups', title:'Follow-ups open', desc:`${footage.followups.length} follow-up${footage.followups.length===1?'':'s'} waiting to be closed`, tab:'followups' })
   if (footage.pending.length>0) aiAlerts.push({ sev:'info', icon:'footage', title:'Footage queue', desc:`${footage.pending.length} request${footage.pending.length===1?'':'s'} still open`, tab:'footage' })

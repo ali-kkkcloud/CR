@@ -1,23 +1,13 @@
 import { useState } from 'react'
 import Icon from '../Icons'
 import { C } from '../Widgets'
-import { Card, CardHead, Button, Segmented, Tag, EmptyState, Stat, Meter, T, R, SP, SURF, elapsedSecondsIST } from '../ui'
+import { Card, CardHead, Button, Segmented, Tag, EmptyState, Stat, Meter, T, R, SP, SURF } from '../ui'
+import { liveBreakMinutes } from '../../lib/breakclock'
 
-// An employee's break time as of this second. The server's figure is a
-// snapshot; if they are still on a break it has to keep climbing on screen,
-// otherwise a break that started three minutes ago sits reading one minute
-// until the next refresh lands.
-export function liveBreakMinutes(e) {
-  if (!e.currentlyOnBreak || !e.activeSince) return e.totalMinutes || 0
-  // In the IST frame, like every other time in the sheets. Building the start
-  // with the browser's own setHours made this wrong by the machine's offset
-  // from IST — and this figure is the one an admin reads to decide whether
-  // somebody has been away too long.
-  const running = Math.floor(elapsedSecondsIST(e.activeDate, e.activeSince) / 60)
-  // Closed sessions plus the one still running. The server counts the open
-  // one too, so take whichever is larger rather than adding them twice.
-  return Math.max(e.totalMinutes || 0, running)
-}
+// Lives in lib/breakclock.js so it can be tested without a browser, and so
+// every screen showing this figure reads the same one. Re-exported here
+// because that is where the rest of the platform already imports it from.
+export { liveBreakMinutes }
 
 function hm(mins) {
   const m = Math.max(0, mins || 0)
@@ -31,15 +21,15 @@ export default function BreaksTab({
 
   const employees = breaks?.employees || []
   const onNow     = employees.filter(e => e.currentlyOnBreak)
-  const totalMins = employees.reduce((s, e) => s + liveBreakMinutes(e), 0)
+  const totalMins = employees.reduce((s, e) => s + liveBreakMinutes(e, breaks?.asOf), 0)
   const sessions  = employees.reduce((s, e) => s + (e.sessions || 0), 0)
-  const longest   = employees.reduce((m, e) => Math.max(m, liveBreakMinutes(e)), 0)
+  const longest   = employees.reduce((m, e) => Math.max(m, liveBreakMinutes(e, breaks?.asOf)), 0)
 
   // Sorted by time taken, so whoever needs looking at is at the top rather
   // than wherever the sheet happened to list them.
   const sorted = [...employees].sort((a, b) => {
     if (a.currentlyOnBreak !== b.currentlyOnBreak) return a.currentlyOnBreak ? -1 : 1
-    return liveBreakMinutes(b) - liveBreakMinutes(a)
+    return liveBreakMinutes(b, breaks?.asOf) - liveBreakMinutes(a, breaks?.asOf)
   })
 
   return (
@@ -94,7 +84,7 @@ export default function BreaksTab({
             {sorted.map(e => {
               const open  = expanded === e.name
               const mine  = (breaks.sessions || []).filter(s => s.name === e.name)
-              const mins  = liveBreakMinutes(e)
+              const mins  = liveBreakMinutes(e, breaks?.asOf)
               const share = longest > 0 ? Math.round((mins / longest) * 100) : 0
               return (
                 <Card

@@ -5,7 +5,7 @@ import {
   getOnShiftNamesFromLog, getClockedOutNamesFromLog, getAwayOnBreakNames, TTL, warmTogether, SHIFT_SCREEN_TABS,
 } from '../../../lib/sheets'
 import {
-  employees, distributeClientsForHour, customTextFor, getScheduledEmployeesAtHour
+  employees, distributeClientsForHour, customTextFor, getScheduledEmployeesAtHour, weekOffNamesFor,
 } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
@@ -130,7 +130,7 @@ export default async function handler(req, res) {
     const plan = computeDayPlan({
       date, today, nowHour, yesterday,
       shiftRows, updateRows, breakRows, leaveMap, overridesMap, vehicleMap,
-      weekOffNames: new Set(employees().filter(e => e.isWeekOff).map(e => e.name)),
+      weekOffNames: weekOffNamesFor(leaveMap),
     })
 
     // Login map

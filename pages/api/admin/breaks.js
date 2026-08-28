@@ -139,6 +139,18 @@ export default async function handler(req, res) {
       sessions,
       totalMinutes: employees.reduce((s,e)=>s+e.totalMinutes,0),
       onBreakNow: employees.filter(e=>e.currentlyOnBreak).length,
+      // The moment totalMinutes was true. A screen showing a running break has
+      // to keep the figure climbing between polls, and it used to do that by
+      // working the whole thing out again in the browser from the open row's
+      // start time — a second answer to a question the server had already
+      // answered. The two then disagreed on the same screen: the attendance
+      // table read one number and the floor read another for the same person,
+      // in the same minute.
+      //
+      // Handing back the moment instead means the browser only advances the
+      // clock. There is one calculation, it happens here, and nothing can
+      // drift from it. See liveBreakMinutes in components/tabs/BreaksTab.
+      asOf: { date: today, time: nowStr() },
     })
   } catch (err) {
     console.error('Admin breaks error:', err)

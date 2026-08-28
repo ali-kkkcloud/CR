@@ -67,7 +67,7 @@ export default function FloorPanel({ employees, breaks, workload, onPick }) {
   // it showed as a duration nothing on this screen said so.
   const breakMinutes = useMemo(() => {
     const m = {}
-    ;(breaks?.employees || []).filter(e => e.currentlyOnBreak).forEach(e => { m[e.name] = liveBreakMinutes(e) })
+    ;(breaks?.employees || []).filter(e => e.currentlyOnBreak).forEach(e => { m[e.name] = liveBreakMinutes(e, breaks?.asOf) })
     return m
   }, [breaks])
 
