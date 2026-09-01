@@ -33,7 +33,7 @@
 import { getUserFromReq } from '../../../lib/auth'
 import { guardSession } from '../../../lib/session'
 import {
-  warmTogether, readSheetCached, fetchClientVehicleCounts,
+  warmTogether, readSheetCached, fetchClientVehicleCounts, getWatchlistNames,
   CRM_SHEET_ID, ISSUE_SHEET_ID, SHIFT_SCREEN_TABS, TABS, TTL,
 } from '../../../lib/sheets'
 import { getHistory } from '../../../lib/history'
@@ -130,6 +130,16 @@ export default async function handler(req, res) {
     fetchClientVehicleCounts().catch(() => null),
     // Finished months, behind a half-hour cache. Same reasoning.
     getHistory().catch(() => null),
+    // The break watchlist. It is not in EVERY_TAB above because that list is
+    // read on a fifteen-second window and this tab changes about once a week —
+    // but leaving it out entirely was worse. The idle sweep asks for it deep
+    // inside the board, by which point every other tab is already in memory,
+    // so it went out ALONE: a whole round trip, in series, for a dozen names,
+    // on the busiest endpoint the platform has. Named here it joins the CRM
+    // batch that is leaving anyway and keeps its own ten-minute life, so it
+    // costs a round trip roughly once every ten minutes instead of on every
+    // poll of every dashboard.
+    getWatchlistNames().catch(() => null),
   ])
 
   // Checked once here rather than six times over. Signing in somewhere else

@@ -44,6 +44,12 @@ export default async function handler(req, res) {
       readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES).catch(() => null),
       fetchClientVehicleCounts().catch(() => null),
       getHistory().catch(() => null),
+      // A dozen names, changed about once a week, and it was being fetched
+      // four hundred lines below in a request of its own — a whole round trip
+      // for a tab that fits on a postcard. Asked for here it rides the CRM
+      // batch that is leaving anyway and costs nothing. It keeps its own ten
+      // minute life; this only decides which request carries it.
+      getWatchlistNames().catch(() => null),
     ])
 
     // Roster and client hours come from the sheet; this makes sure this

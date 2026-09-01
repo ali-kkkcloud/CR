@@ -1,5 +1,5 @@
 import { getUserFromReq } from '../../../lib/auth'
-import { getHistoryFor } from '../../../lib/history'
+import { getHistoryFor, readMonthlyHistory } from '../../../lib/history'
 import {
   readSheet, readSheetCached, CRM_SHEET_ID, ISSUE_SHEET_ID, TABS, todayStr, nowStr,
   fetchClientVehicleCounts, parseISTDateTime, parseOperatingDateTime, getShiftOverridesForDate,
@@ -53,7 +53,33 @@ export default async function handler(req, res) {
     // Every tab this screen needs, asked for in one go before anything else
     // runs — so they cost one request between them instead of one per stage.
     // See warmTogether in lib/sheets.
-    await warmTogether(CRM_SHEET_ID, [...SHIFT_SCREEN_TABS, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, `${TABS.DAILY_SUMMARY}!A:N`])
+    //
+    // Three DIFFERENT books are read here, and batching only ever collapses
+    // reads of the same one: the CRM book, the Issue Tracker and the vehicle
+    // source are three requests however they are arranged. What is in our gift
+    // is whether they leave together or take it in turns. They used to take it
+    // in turns — the CRM warm was awaited on its own, and only then, forty
+    // lines down, did the Issue Tracker and the vehicle counts get asked for.
+    // Two round trips one after the other, and the second one waiting on a
+    // book it shares nothing with.
+    //
+    // Started on the same tick they overlap, so the request costs ONE round
+    // trip's latency rather than two. The reads further down are untouched and
+    // simply find their rows already in the cache.
+    //
+    // The monthly history rides along for the same reason. It is read right at
+    // the end of this handler and changes about once a month, so it is nearly
+    // always a cache hit and adds nothing — but on a cold function it was a
+    // third trip, taken alone, after everything else had finished. Asked for
+    // here it joins the CRM batch that was leaving anyway, and keeps its own
+    // half-hour life rather than being dragged down to the shift tabs' fifteen
+    // seconds.
+    await Promise.all([
+      warmTogether(CRM_SHEET_ID, [...SHIFT_SCREEN_TABS, `${TABS.FOOTAGE_FOLLOWUP}!A:J`, `${TABS.DAILY_SUMMARY}!A:N`]),
+      readSheetCached(ISSUE_SHEET_ID, `${ISSUE_TAB}!A:T`, TTL.ISSUES).catch(() => null),
+      fetchClientVehicleCounts().catch(() => null),
+      readMonthlyHistory().catch(() => null),
+    ])
 
     // Roster and client hours come from the sheet; this makes sure this
     // request is working from the current ones.
