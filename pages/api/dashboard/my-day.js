@@ -319,8 +319,37 @@ export default async function handler(req, res) {
       })
       .filter(Boolean)
 
+    // ── Who touched each client on THIS day, and when ─────────────────
+    //
+    // The board asks "has anybody updated this client today?" so that a
+    // client a colleague filled at seven reads as done rather than as still
+    // waiting. That map came from /api/clients/current, which only ever
+    // answers for TODAY — so an employee looking back at an earlier day was
+    // handed today's map against that day's clients, matched nothing, and
+    // saw every single client marked "Still not updated".
+    //
+    // It was wrong in the worst direction: the admin's Hour by hour showed
+    // Apple Bus updated twice on 29 August, and the person who had actually
+    // done the work was being told, on their own screen, that nobody had.
+    //
+    // Same shape and same rule as clients/current, for whichever date this
+    // request is about. Latest write wins, so a client filled twice reports
+    // the more recent time.
+    const updatedOn = {}
+    updateRows.slice(1).forEach(r => {
+      if (r[0] !== date) return
+      if (!(r[5] || '').toString().trim()) return
+      const c = (r[3] || '').toString().trim()
+      if (!c) return
+      updatedOn[c] = { at: r[1] || '', by: (r[2] || '').toString().trim() }
+    })
+
     return res.status(200).json({
       date, timeline, totalClients, totalCompleted, totalMissed,
+      // Every client with an update against it on this date, whoever recorded
+      // it. The board reads this the same way it reads updatedToday for the
+      // current day — see the note above.
+      updatedOn,
       // Still to do — hours in progress or yet to come. Kept separate from
       // totalMissed so the day reads as work remaining, not work failed.
       totalPending: timeline.reduce((s, t) => s + (t.pendingClients || 0), 0),

@@ -1362,7 +1362,14 @@ export default function Dashboard() {
                 <div className="board-split">
                   <div style={{ minWidth:0 }}>
                     <MyClientsTab
-                      updatedToday={updatedToday}
+                      // Looking back at an earlier day asks the same question of
+                      // a different day. Handing today's map to an earlier day's
+                      // clients matched nothing, so every client on it read
+                      // "Still not updated" while the admin's Hour by hour
+                      // showed the work plainly done — the person who had done
+                      // it was being told on their own screen that nobody had.
+                      // See updatedOn in pages/api/dashboard/my-day.
+                      updatedToday={viewingPast ? (pastDay?.updatedOn || {}) : updatedToday}
                       clients={boardClients}
                       filled={mergedFilled}
                       saveClient={saveClient}

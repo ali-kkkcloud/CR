@@ -166,15 +166,15 @@ export default function MyClientsTab({
   // Clients with the same rank fall back to their name, so the order is fixed
   // rather than left to whatever the sheet happened to hand over. Nothing here
   // changes WHICH clients an employee has — only the order they are listed in.
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const rows = realClients.filter(c => {
-      if (q && !c.client.toLowerCase().includes(q)) return false
-      const done = isDone(filled, c.client)
-      if (filter === 'pending') return !done
-      if (filter === 'done')    return done
-      return true
-    })
+  // The order, in one place.
+  //
+  // The list had it and the Submit button did not: saving walked on through
+  // `realClients`, which is the sheet's own order, so the client that opened
+  // next was whichever one happened to sit below in the spreadsheet. To the
+  // person working the hour it looked random, and it undid the whole point of
+  // ordering the list — they were being handed the work in an order nobody
+  // chose. Both now ask the same function.
+  const inUpdateOrder = useCallback((rows) => {
     const rankOf = (c) => {
       const done = isDone(filled, c.client)
       return updateRank({
@@ -187,7 +187,19 @@ export default function MyClientsTab({
       .map(c => ({ c, r: rankOf(c) }))
       .sort((a, b) => (a.r - b.r) || a.c.client.localeCompare(b.c.client))
       .map(x => x.c)
-  }, [realClients, filled, updatedToday, query, filter])
+  }, [filled, updatedToday])
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const rows = realClients.filter(c => {
+      if (q && !c.client.toLowerCase().includes(q)) return false
+      const done = isDone(filled, c.client)
+      if (filter === 'pending') return !done
+      if (filter === 'done')    return done
+      return true
+    })
+    return inUpdateOrder(rows)
+  }, [realClients, filled, updatedToday, query, filter, inUpdateOrder])
 
   // Keep a selection alive at all times. When the filter or the hour empties
   // the current one out, fall to the first thing still on screen rather than
@@ -265,7 +277,11 @@ export default function MyClientsTab({
           // The next client still needing work, wrapping past the end. On a
           // pending-filtered list the row just saved disappears, so "next"
           // has to be worked out from the full list, not the visible one.
-          const pool = realClients.filter(c => c.client === client || !isDone(filled, c.client))
+          // Ordered exactly like the list beside it: everything nobody has
+          // updated first, then oldest update to newest. The row just saved
+          // stays in the pool so "the one after this" has something to count
+          // from, even on a pending-filtered view where it has disappeared.
+          const pool = inUpdateOrder(realClients.filter(c => c.client === client || !isDone(filled, c.client)))
           const idx  = pool.findIndex(c => c.client === client)
           const nxt  = pool.slice(idx + 1).find(c => c.client !== client) || pool.find(c => c.client !== client)
           if (nxt) setSelected(nxt.client)
@@ -276,7 +292,7 @@ export default function MyClientsTab({
     } finally {
       setSavingNow(false)
     }
-  }, [drafts, editable, savingNow, saveClient, realClients, filled, toast, slot])
+  }, [drafts, editable, savingNow, saveClient, realClients, filled, toast, slot, inUpdateOrder])
 
   function step(delta) {
     if (!visible.length) return
