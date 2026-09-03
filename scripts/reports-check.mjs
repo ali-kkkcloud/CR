@@ -278,5 +278,63 @@ console.log('\n9  The period average, directly')
   console.log('   totals are summed, points are averaged, and an empty period is null')
 }
 
+// ══ 10 · The browser must unwrap what fetchJSON hands back ═════════════
+//
+// This is the fault that made the finished screen say "nothing has been
+// summarised" over a Daily_Summary tab holding two hundred rows.
+//
+// fetchJSON does not return the payload. It returns a WRAPPER —
+// { ok, status, data, failed } — and it never throws, on purpose: a body that
+// will not parse is a server answering with something else, not an exception,
+// and treating it as one used to log people out mid-shift. So a caller that
+// stores the wrapper as though it were the answer gets `data.hasData ===
+// undefined`, shows the empty state, and its try/catch never fires because
+// there is no exception to catch. Silent, and it looks exactly like a day
+// nobody worked.
+//
+// Every check above passed while this was broken, because they all call the
+// handler directly. Nothing in the suite crossed the browser boundary. This
+// does, by reading the call sites.
+console.log('\n10 Every fetchJSON caller reads .data, not the wrapper')
+{
+  const fs = await import('fs')
+  const path = await import('path')
+
+  const files = []
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p) }
+      else if (e.name.endsWith('.js')) files.push(p)
+    }
+  }
+  walk('pages'); walk('components')
+
+  let sites = 0
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8')
+    if (!/fetchJSON\(/.test(src)) continue
+
+    // `const { data } = await fetchJSON(…)` and `.then(r => … r.data …)` are
+    // already unwrapping; only a bare assignment can get this wrong.
+    const assigned = [...src.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+fetchJSON\(/g)]
+    for (const m of assigned) {
+      sites++
+      const v = m[1]
+      const rest = src.slice(m.index)
+      const unwraps = new RegExp(`\\b${v}\\.(data|ok|failed|status)\\b`).test(rest)
+      ok(unwraps, `${f}: \`${v}\` holds the fetchJSON wrapper and is never unwrapped — ` +
+                  `the payload is at ${v}.data`)
+    }
+  }
+  ok(sites > 0, 'no fetchJSON call sites were found at all — this check is scanning nothing')
+
+  // And the one that got it wrong, named, so the fix cannot be quietly undone.
+  const rp = fs.readFileSync('components/tabs/ReportsPanel.js', 'utf8')
+  ok(/setData\(r\.data\)/.test(rp), 'ReportsPanel must store r.data, not the wrapper')
+  ok(!/setData\(j\)/.test(rp), 'ReportsPanel is storing the raw fetchJSON result again')
+  console.log(`   ${sites} call sites scanned, every one reads through the wrapper`)
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)
 process.exit(fail === 0 ? 0 : 1)

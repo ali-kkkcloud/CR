@@ -84,7 +84,11 @@ export default function ReportsPanel() {
   const [customFrom, setCustomFrom] = useState(() => isoOf(operatingToday()))
   const [customTo, setCustomTo]     = useState(() => isoOf(operatingToday()))
   const [data, setData]   = useState(null)
-  const [loading, setLoading] = useState(false)
+  // Starts true. The first paint happens before the first fetch resolves, and
+  // with this false the screen fell straight through to "nothing has been
+  // summarised" for a moment — an empty answer shown before anything had been
+  // asked.
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [open, setOpen]   = useState(null)      // which employee's days are showing
 
@@ -96,20 +100,32 @@ export default function ReportsPanel() {
   // nothing to group, a week reads best day by day, and a month by week.
   const granularity = preset === 'month' ? 'week' : preset === 'custom' ? 'week' : 'day'
 
+  // fetchJSON hands back a WRAPPER — { ok, status, data, failed } — and never
+  // throws. The report itself is at `r.data`.
+  //
+  // Getting that wrong is what made this screen say "nothing has been
+  // summarised" over a Daily_Summary tab with two hundred rows in it: the
+  // wrapper was stored as though it were the report, so `data.hasData` read
+  // undefined, and the try/catch never fired because there was no exception to
+  // catch. The server was answering correctly the whole time. See
+  // scripts/reports-check.mjs, which now pins this shape.
   const load = useCallback(async () => {
     const from = fromISO(fromISOd), to = fromISO(toISOd)
     if (!from || !to) return
     setLoading(true); setError('')
-    try {
-      const j = await fetchJSON(`/api/admin/reports?from=${from}&to=${to}&granularity=${granularity}`)
-      setData(j)
-    } catch (e) {
-      // The report is a record of the past — a failure here must say so
-      // plainly rather than showing an empty table that reads as "nobody did
-      // anything".
-      setError(e?.message || 'Could not load the report.')
+    const q = new URLSearchParams({ from, to, granularity })
+    const r = await fetchJSON(`/api/admin/reports?${q}`)
+    if (r.ok && r.data) {
+      setData(r.data)
+    } else {
+      // A record of the past that cannot be read must say so plainly, rather
+      // than showing an empty table that reads as "nobody did anything".
       setData(null)
-    } finally { setLoading(false) }
+      setError(r.failed ? `The server did not answer (${r.error}).`
+             : r.data?.error ? r.data.error
+             : `The server answered ${r.status}.`)
+    }
+    setLoading(false)
   }, [fromISOd, toISOd, granularity])
 
   useEffect(() => { load() }, [load])
