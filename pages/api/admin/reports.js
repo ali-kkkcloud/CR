@@ -246,6 +246,10 @@ export default async function handler(req, res) {
         people: people.length,
         clientsAssigned:  sumOf(people, p => p.clientsAssigned),
         clientsCompleted: sumOf(people, p => p.clientsCompleted),
+        // Both halves. "9,720 vehicles checked" on its own is a number with
+        // nothing to lean on — against the fleet size that was actually on
+        // the boards it becomes a proportion somebody can act on.
+        vehiclesAssigned: sumOf(people, p => p.vehiclesAssigned),
         vehiclesChecked:  sumOf(people, p => p.vehiclesChecked),
         footage:          sumOf(people, p => p.footage),
         alerts:           sumOf(people, p => p.alerts),

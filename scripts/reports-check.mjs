@@ -336,5 +336,114 @@ console.log('\n10 Every fetchJSON caller reads .data, not the wrapper')
   console.log(`   ${sites} call sites scanned, every one reads through the wrapper`)
 }
 
+// ══ 11 · A figure with nothing to lean on ══════════════════════════════
+//
+// "9,720 vehicles checked" is a number nobody can act on. Against the fleet
+// that was actually on the boards it becomes a proportion. Clients already
+// read "73 / 210"; vehicles read as a bare count beside it, which invites the
+// reader to supply their own denominator.
+console.log('\n11 Vehicles carry the figure they are measured against')
+{
+  floor({ daily: [
+    day(D4, 'Afzal',  'E1', { vehAssigned: 3357, vehChecked: 1066 }),
+    day(D4, 'Nesiya', 'E2', { vehAssigned: 1200, vehChecked:  552 }),
+  ] })
+  const r = await ask({ from: D4, to: D4 })
+
+  const afzal = r.people.find(p => p.name === 'Afzal')
+  ok(afzal.vehiclesAssigned === 3357, `${afzal.vehiclesAssigned} assigned, expected 3357`)
+  ok(afzal.days[0].vehiclesAssigned === 3357, 'the day row must carry it too, for the table inside')
+
+  ok(r.floor.vehiclesAssigned === 4557, `floor total ${r.floor.vehiclesAssigned}, expected 4557`)
+  ok(r.floor.vehiclesChecked === 1618, `floor checked ${r.floor.vehiclesChecked}, expected 1618`)
+
+  const fs = await import('fs')
+  const rp = fs.readFileSync('components/tabs/ReportsPanel.js', 'utf8')
+  ok(/floor\?\.vehiclesAssigned/.test(rp), 'the summary card must show what was assigned')
+  ok(/num\(p\.vehiclesAssigned\)/.test(rp), 'the per-employee row must show it')
+  ok(/num\(d\.vehiclesAssigned\)/.test(rp), 'the per-day row must show it')
+  console.log(`   1,066 / 3,357 per person · 1,618 of 4,557 across the floor`)
+}
+
+// ══ 12 · The sum is written out, not left to the reader ════════════════
+//
+// This one has already cost a conversation. The working shows three cards, and
+// the vehicles card carries TWO numbers — the points earned and the percentage
+// of the daily target. With no line adding them up, the percentage was read as
+// the points: 59.3 + 5 − 20 = 44.3, when 59.3% of the seventy on offer is 41.5
+// and the score is 26.
+//
+// The arithmetic was never wrong. The screen simply did not show it, on the
+// two admin screens; the employee's own has shown it all along.
+console.log('\n12 Every screen shows the score being added up')
+{
+  const { computeScore } = await import('../lib/score.js')
+
+  // The exact figures from the report that raised it.
+  const naveen = computeScore({ footageCount: 1, vehiclesSeen: 474, breakMinutes: 103 })
+  ok(naveen.breakdown.vehicles.points === 41.5,
+     `474 of 800 should earn 41.5 of the 70, got ${naveen.breakdown.vehicles.points}`)
+  ok(naveen.breakdown.vehicles.pct === 59.3,
+     `and report 59.3% of the target, got ${naveen.breakdown.vehicles.pct}`)
+  ok(naveen.score === 26, `41.5 + 5 − 20 should be 26, got ${naveen.score}`)
+  // The reading that caused the confusion, named so it stays named: the
+  // percentage is NOT the points.
+  ok(naveen.breakdown.vehicles.pct !== naveen.breakdown.vehicles.points,
+     'the percentage of the target and the points earned must stay distinct figures')
+
+  const fs = await import('fs')
+  for (const f of ['components/tabs/ReportsPanel.js',
+                   'components/tabs/ScoresPanel.js',
+                   'components/tabs/EmpDashboardTab.js']) {
+    const src = fs.readFileSync(f, 'utf8')
+    // The three parts named close together in one expression — that is a sum
+    // line, not three separate cards. The windows are wide because these are
+    // deeply indented JSX with labels between the figures.
+    const adds = /vehicles\?\.points[\s\S]{0,400}footage\?\.points[\s\S]{0,400}breakPenalty[\s\S]{0,200}points/.test(src)
+              || /\{f\.points\} \+ \{v\.points\}/.test(src)     // the employee's, which always had one
+    ok(adds, `${f} shows the three parts being added up, not just the three parts`)
+  }
+  console.log(`   41.5 + 5 − 20 = 26, spelled out on all three screens`)
+}
+
+// ══ 13 · The bell asks again every half hour ═══════════════════════════
+//
+// A follow-up is somebody else's unfinished work now sitting with you, and the
+// six-second knock is deliberately quiet — which is exactly what stops being
+// seen four hours into a shift. On the hour and the half hour the bell grows
+// and swings hard for three seconds.
+//
+// Keyed to the WALL CLOCK rather than to when the component mounted. Mount is
+// the wrong clock: the header re-renders through the shift, and an interval
+// started at mount restarts with it, so a bell could go an hour without ever
+// reaching thirty minutes.
+console.log('\n13 The follow-up bell, every half hour')
+{
+  const fs = await import('fs')
+  const shell = fs.readFileSync('components/Shell.js', 'utf8')
+  const css   = fs.readFileSync('styles/globals.css', 'utf8')
+
+  ok(/useHalfHourlyAlarm/.test(shell), 'the alarm is a named hook rather than an inline timer')
+  ok(/now\.getMinutes\(\) % 30/.test(shell), 'it counts to the next half hour on the wall clock')
+  ok(!/setInterval\(/.test(shell), 'a mount-anchored interval would restart with every re-render')
+  ok(/if \(!active\) \{ setAlarm\(false\); return \}/.test(shell),
+     'nothing waiting must mean nothing moves')
+  ok(/clearTimeout\(toNext\); clearTimeout\(toEnd\)/.test(shell),
+     'both timers are cleared on unmount, or they fire into a dead component')
+  ok(/bell-alarm/.test(shell) && /\.bell-alarm/.test(css), 'the class is set and styled')
+
+  // Bigger AND shaking — the request was that it be noticed, and a swing on
+  // its own is what it already did quietly.
+  ok(/scale\(1\.3[0-9]?\)/.test(css), 'the bell grows; a harder swing alone reads as more of the same')
+  ok(/bellAlarmSwing/.test(css), 'and swings')
+  ok(/rotate\(-24deg\)/.test(css), 'harder than the idle knock, which reaches 13deg')
+
+  // Motion sensitivity: the growing stays, the swinging goes.
+  const reduced = (css.match(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\n\}/) || [''])[0]
+  ok(/bell-alarm \.bell-ring \{ animation: none/.test(reduced),
+     'the hard swing must stop for anyone who asked their system for less motion')
+  console.log('   :00 and :30, three seconds, only while a follow-up is waiting')
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)
 process.exit(fail === 0 ? 0 : 1)

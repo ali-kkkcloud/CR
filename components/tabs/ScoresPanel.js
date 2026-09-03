@@ -157,6 +157,20 @@ export default function ScoresPanel({ scores = [], today = '' }) {
             <Line label="Break"
                   detail={`${b.breakPenalty?.minutes || 0}m away · allowance ${b.breakPenalty?.allowanceMinutes || 60}m`}
                   points={b.breakPenalty?.points} out={null} />
+            {/* The three lines added up. Without it the reader does the sum
+                themselves, and the vehicles line carries two numbers — the
+                points and the percentage of the target — so the wrong one gets
+                added. 59.3% of seventy is 41.5, not 59.3. */}
+            <div style={{
+              display:'flex', alignItems:'center', justifyContent:'space-between',
+              gap:SP[3], marginTop:'6px', paddingTop:'7px', borderTop:`1px solid ${C.border}`,
+            }}>
+              <span style={{ color:C.text2, fontSize:T.xs, fontWeight:700 }}>
+                {b.vehicles?.points ?? 0} + {b.footage?.points ?? 0}
+                {(b.breakPenalty?.points ?? 0) < 0 ? ` − ${Math.abs(b.breakPenalty.points)}` : ' − 0'} =
+              </span>
+              <span style={{ color:toneOf(e.score), fontSize:T.md, fontWeight:800 }}>{e.score}</span>
+            </div>
           </div>
         )
       })()}

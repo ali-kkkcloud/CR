@@ -244,7 +244,7 @@ export default function ReportsPanel() {
                   value={num(floor?.clientsCompleted)}
                   sub={`of ${num(floor?.clientsAssigned)} assigned`} />
             <Stat icon="camera" label="Vehicles checked" value={num(floor?.vehiclesChecked)}
-                  sub="typed into VEHICLES SEEN" />
+                  sub={`of ${num(floor?.vehiclesAssigned)} on the boards`} />
             <Stat icon="footage" label="Footage raised" value={num(floor?.footage)}
                   sub={`worth ${num((floor?.footage || 0) * 5)} points across the floor`} />
           </div>
@@ -295,7 +295,9 @@ export default function ReportsPanel() {
                 { key:'clients', label:'Clients', align:'right', render: p => (
                   <span>{num(p.clientsCompleted)}<span style={{ color:C.dim }}> / {num(p.clientsAssigned)}</span></span>
                 )},
-                { key:'vehiclesChecked', label:'Vehicles seen', align:'right', render: p => num(p.vehiclesChecked) },
+                { key:'vehiclesChecked', label:'Vehicles seen', align:'right', render: p => (
+                  <span>{num(p.vehiclesChecked)}<span style={{ color:C.dim }}> / {num(p.vehiclesAssigned)}</span></span>
+                )},
                 { key:'footage', label:'Footage', align:'right', render: p => num(p.footage) },
                 { key:'alerts', label:'Alerts', align:'right', render: p => num(p.alerts) },
                 { key:'breakMinutes', label:'Break', align:'right', render: p => hm(p.breakMinutes) },
@@ -339,6 +341,39 @@ export default function ReportsPanel() {
                              tone={b.breakPenalty?.daysApplied ? C.red : C.muted} />
                   </div>
 
+                  {/* ── The sum, written out ──────────────────────────────
+                      Three cards each showing a figure, and no line adding
+                      them up, left the reader to do it — and the vehicles card
+                      carries TWO numbers, the points and the percentage of the
+                      target. Reading the percentage as the points is the
+                      obvious mistake and it was made: 59.3 + 5 − 20 = 44.3,
+                      when 59.3% of the seventy points on offer is 41.5 and the
+                      answer is 26. The employee's own screen has always shown
+                      this line; this one did not. */}
+                  {p.score != null && (
+                    <div style={{
+                      display:'flex', alignItems:'center', justifyContent:'space-between',
+                      gap:SP[3], flexWrap:'wrap',
+                      background:C.bg, border:`1px solid ${C.border}`, borderRadius:R.md,
+                      padding:`${SP[3]} ${SP[4]}`, marginBottom:SP[4],
+                    }}>
+                      <span style={{ color:C.text2, fontSize:T.md, fontWeight:700 }}>
+                        {b.vehicles?.points ?? 0}
+                        <span style={{ color:C.dim, fontWeight:600 }}> vehicles </span>
+                        + {b.footage?.points ?? 0}
+                        <span style={{ color:C.dim, fontWeight:600 }}> footage </span>
+                        {(b.breakPenalty?.points ?? 0) < 0
+                          ? <>− {Math.abs(b.breakPenalty.points)}<span style={{ color:C.dim, fontWeight:600 }}> break </span></>
+                          : <><span style={{ color:C.dim, fontWeight:600 }}>− 0 break </span></>}
+                        =
+                      </span>
+                      <span style={{ display:'flex', alignItems:'baseline', gap:SP[2] }}>
+                        <span style={{ color:toneOf(p.score), fontSize:T.xl, fontWeight:800 }}>{p.score}</span>
+                        <span style={{ color:C.dim, fontSize:T.xs }}>out of 100</span>
+                      </span>
+                    </div>
+                  )}
+
                   <Table
                     dense
                     cols={[
@@ -347,7 +382,9 @@ export default function ReportsPanel() {
                       { key:'clients', label:'Clients', align:'right', render: d => (
                         <span>{num(d.clientsCompleted)}<span style={{ color:C.dim }}> / {num(d.clientsAssigned)}</span></span>
                       )},
-                      { key:'vehiclesChecked', label:'Vehicles', align:'right', render: d => num(d.vehiclesChecked) },
+                      { key:'vehiclesChecked', label:'Vehicles', align:'right', render: d => (
+                        <span>{num(d.vehiclesChecked)}<span style={{ color:C.dim }}> / {num(d.vehiclesAssigned)}</span></span>
+                      )},
                       { key:'footage', label:'Footage', align:'right', render: d => num(d.footage) },
                       { key:'alerts', label:'Alerts', align:'right', render: d => num(d.alerts) },
                       { key:'misaligns', label:'Misaligns', align:'right', render: d => num(d.misaligns) },

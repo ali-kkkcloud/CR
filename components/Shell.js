@@ -6,7 +6,7 @@
 // list of eleven nav items with no grouping, and no hover feedback at all.
 // One frame now, with the nav supplied per side.
 // ══════════════════════════════════════════════════════════════════════
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Icon from './Icons'
 import CautioWordmark from './Wordmark'
 import { C } from './Widgets'
@@ -184,11 +184,47 @@ export function AccountButton({ name, sub, onClick }) {
 // shift; something that has been waiting for someone deserves to ask again.
 // It is a short shake on a long cycle, not a constant wobble, and it stops
 // entirely for anyone who has asked their system for less motion.
+//
+// ── And every half hour, it asks properly ──────────────────────────────
+//
+// The quiet knock is the right thing for most of the cycle and the wrong
+// thing for a follow-up that has been sitting for forty minutes: quiet is
+// what people stop seeing. So on the hour and the half hour the bell GROWS
+// and swings hard for three seconds — see .bell-alarm in globals.css.
+//
+// Keyed to the WALL CLOCK, not to when this component mounted. Mounting is
+// the wrong clock: the header re-renders through the shift, and an interval
+// started at mount would restart with it, so a bell could go a whole hour
+// without ever reaching thirty minutes. On the half hour it fires whatever
+// the page has been doing, and everybody on the floor gets it together.
+const ALARM_MS = 3000
+
+function useHalfHourlyAlarm(active) {
+  const [alarm, setAlarm] = useState(false)
+  useEffect(() => {
+    if (!active) { setAlarm(false); return }
+    let toNext, toEnd
+    const schedule = () => {
+      const now = new Date()
+      const ms = ((30 - (now.getMinutes() % 30)) * 60 - now.getSeconds()) * 1000 - now.getMilliseconds()
+      toNext = setTimeout(() => {
+        setAlarm(true)
+        toEnd = setTimeout(() => setAlarm(false), ALARM_MS)
+        schedule()
+      }, ms)
+    }
+    schedule()
+    return () => { clearTimeout(toNext); clearTimeout(toEnd) }
+  }, [active])
+  return alarm
+}
+
 export function NotifyButton({ count = 0, onClick, title = 'Notifications', ring = false }) {
+  const alarm = useHalfHourlyAlarm(ring)
   return (
     <button
       onClick={onClick} title={title}
-      className="pressable"
+      className={`pressable${alarm ? ' bell-alarm' : ''}`}
       style={{
         position:'relative', background:SURF.raised,
         border:`1px solid ${ring ? C.amber + '66' : C.border2}`,
