@@ -22,6 +22,7 @@ import HistoryPanel from '../components/tabs/HistoryPanel'
 import ErrorBoundary from '../components/ErrorBoundary'
 import WorkloadPanel from '../components/tabs/WorkloadPanel'
 import ScoresPanel from '../components/tabs/ScoresPanel'
+import ReportsPanel from '../components/tabs/ReportsPanel'
 import IntegrityPanel from '../components/tabs/IntegrityPanel'
 
 // "7pm", for listing hours compactly inside a sentence.
@@ -55,7 +56,7 @@ const TAB_META = {
   progress:       { title: 'Team',                sub: 'Attendance and output across a date range' },
   breaks:         { title: 'Team',                sub: 'Who is away, for how long, and how often' },
   leaves:         { title: 'Team',                sub: 'Leave calendar — coming soon' },
-  reports:        { title: 'More',                sub: 'Scheduled and downloadable reports — coming soon' },
+  reports:        { title: 'More',                sub: 'The Daily_Summary record, per day, week or month' },
   analytics:      { title: 'More',                sub: 'Deeper trends across your fleet — coming soon' },
   alerts:         { title: 'More',                sub: 'All system and AI alerts in one place — coming soon' },
   settings:       { title: 'More',                sub: 'Workspace and account preferences — coming soon' },
@@ -1011,8 +1012,11 @@ export default function Admin() {
             </div>
           )}
 
+          {/* ══════════ REPORTS ══════════ */}
+          {activeTab === 'reports' && <ReportsPanel />}
+
           {/* ══════════ NOT YET LIVE ══════════ */}
-          {['leaves','reports','analytics','alerts','settings'].includes(activeTab) && (
+          {['leaves','analytics','alerts','settings'].includes(activeTab) && (
             <Card pad={false} style={{ maxWidth:'560px', margin:'40px auto' }}>
               <EmptyState
                 icon={activeTab}

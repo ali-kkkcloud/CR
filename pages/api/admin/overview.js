@@ -499,8 +499,9 @@ export default async function handler(req, res) {
     // way the number beside a name here can be trusted to be the number that
     // person is looking at.
     //
-    // Footage share is measured against the whole day's requests, so the
-    // denominator is the same for everyone.
+    // Counted per person, at 5 points each. There is no denominator any
+    // more — the old rule divided by the whole floor's requests, which made
+    // one person's score depend on how busy everybody else had been.
     const dayFootage = footageRows.slice(1).filter(r =>
       isFootageRequest(r) && raisedOperatingDay(r[COL.RAISED_AT]) === today)
     const footageByName = {}
@@ -524,8 +525,7 @@ export default async function handler(req, res) {
     const workedToday = whoWorkedOn(today, shiftRows, updateRows)
     const scores = employees().filter(e => workedToday.has(e.name)).map(e => {
       const { score, tier, breakdown } = computeScore({
-        footageMine:  footageByName[(e.name || '').toLowerCase()] || 0,
-        footageTotal: dayFootage.length,
+        footageCount: footageByName[(e.name || '').toLowerCase()] || 0,
         vehiclesSeen: vehiclesSeenByName[e.name] || 0,
         breakMinutes: breakTotals[e.name]?.minutes || 0,
       })

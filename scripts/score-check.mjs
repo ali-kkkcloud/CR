@@ -3,9 +3,16 @@
 // ── The score ──────────────────────────────────────────────────────────
 // Three parts, given as a requirement:
 //
-//   FOOTAGE   40 points — (my footage ÷ everybody's footage today) × 40
-//   VEHICLES  60 points — min(vehicles seen ÷ 800, 1) × 60
+//   FOOTAGE    5 points a request — uncapped, and nothing lost for raising none
+//   VEHICLES  70 points — min(vehicles seen ÷ 800, 1) × 70
 //   BREAK    −20 points — if the day's total break runs past an hour
+//
+// Footage used to be 40 points of SHARE — mine divided by the whole floor's.
+// Share is zero-sum, so two people doing identical work scored differently
+// depending on how busy everybody else was, a busy day for the floor pushed
+// every individual score down, and a morning with no requests at all was
+// undefined and therefore scored in FULL. Counting the requests themselves
+// removes all three faults, and the checks below pin each of them.
 //
 // ── The trend ──────────────────────────────────────────────────────────
 // Reported from the floor as "mostly 0". It was built from CRM_Updates
@@ -100,30 +107,33 @@ async function ask(query = { range: 'today' }) {
   return body
 }
 
-// ── 1 · Vehicles: the 800 floor ────────────────────────────────────────
+// ── 1 · Vehicles: the 800 floor, now worth 70 ──────────────────────────
 console.log('\n1  Vehicles seen, against a floor of 800')
 {
-  // 400 vehicles = half the target = 30 of the 60 points.
+  // 400 vehicles = half the target = 35 of the 70 points.
   floor({ updates: [upd(TODAY, 'Client A', H, 'Completed', 400)] })
   const half = await ask()
   ok(half.scoreBreakdown.vehicles.seen === 400, `${half.scoreBreakdown.vehicles.seen} vehicles counted, expected 400`)
-  ok(half.scoreBreakdown.vehicles.points === 30, `${half.scoreBreakdown.vehicles.points} points for half the target, expected 30`)
+  ok(half.scoreBreakdown.vehicles.points === 35, `${half.scoreBreakdown.vehicles.points} points for half the target, expected 35`)
+  ok(half.scoreBreakdown.vehicles.weight === 70, `vehicles weight reported as ${half.scoreBreakdown.vehicles.weight}, expected 70`)
 
   floor({ updates: [upd(TODAY, 'Client A', H, 'Completed', 800)] })
   const full = await ask()
-  ok(full.scoreBreakdown.vehicles.points === 60, `${full.scoreBreakdown.vehicles.points} points at the target, expected 60`)
+  ok(full.scoreBreakdown.vehicles.points === 70, `${full.scoreBreakdown.vehicles.points} points at the target, expected 70`)
 
-  // Past the target earns no more — the sixty points are full.
+  // Past the target earns no more — the seventy points are full.
   floor({ updates: [upd(TODAY, 'Client A', H, 'Completed', 3000)] })
   const over = await ask()
-  ok(over.scoreBreakdown.vehicles.points === 60, `${over.scoreBreakdown.vehicles.points} points past the target, expected 60`)
-  console.log(`   400 → 30 pts · 800 → 60 pts · 3000 → 60 pts (no extra credit)`)
+  ok(over.scoreBreakdown.vehicles.points === 70, `${over.scoreBreakdown.vehicles.points} points past the target, expected 70`)
+  console.log(`   400 → 35 pts · 800 → 70 pts · 3000 → 70 pts (no extra credit)`)
 }
 
-// ── 2 · Footage: share of the day's requests ───────────────────────────
-console.log('\n2  Footage, as a share of the whole day')
+// ── 2 · Footage: five a request, and only mine ─────────────────────────
+console.log('\n2  Footage, counted one request at a time')
 {
-  // Ten requests today, four of them mine → 40% → 16 of the 40 points.
+  // Four mine and six somebody else's. Under the old rule that was a 40%
+  // share worth 16; now the other six are none of my business and my four
+  // are worth 20.
   const issues = [
     ...Array.from({ length: 4 }, () => issue('Afzal', TODAY)),
     ...Array.from({ length: 6 }, () => issue('Nesiya', TODAY)),
@@ -131,23 +141,53 @@ console.log('\n2  Footage, as a share of the whole day')
   floor({ updates: [upd(TODAY, 'Client A', H, 'Completed', 0)], issues })
   const s = await ask()
   const f = s.scoreBreakdown.footage
-  ok(f.total === 10, `${f.total} footage requests counted for the day, expected 10`)
-  ok(f.mine === 4, `${f.mine} of them mine, expected 4`)
-  ok(f.sharePct === 40, `share read as ${f.sharePct}%, expected 40%`)
-  ok(f.points === 16, `${f.points} points, expected 16`)
-  console.log(`   4 of 10 requests → 40% → ${f.points} of 40 points`)
+  ok(f.count === 4, `${f.count} of my requests counted, expected 4`)
+  ok(f.perRequest === 5, `${f.perRequest} points a request, expected 5`)
+  ok(f.points === 20, `${f.points} points, expected 20`)
+  ok(f.total === undefined && f.sharePct === undefined,
+     'the floor total and the share are still being reported — they no longer mean anything')
+  console.log(`   4 raised × 5 = ${f.points}, and the floor's other 6 change nothing`)
+
+  // The zero-sum fault, pinned: the SAME four requests must score the same
+  // whether the rest of the floor was busy or idle.
+  floor({ updates: [upd(TODAY, 'Client A', H, 'Completed', 0)],
+          issues: Array.from({ length: 4 }, () => issue('Afzal', TODAY)) })
+  const alone = await ask()
+  ok(alone.scoreBreakdown.footage.points === 20,
+     `same four requests scored ${alone.scoreBreakdown.footage.points} on a quiet floor and 20 on a busy one`)
+  console.log('   a busy floor no longer pushes everybody else down')
 }
 
-// ── 3 · A day with no footage at all is nobody's failure ───────────────
+// ── 3 · Raising none costs nothing, and earns nothing ──────────────────
+//
+// The old rule scored an undefined share IN FULL, so a quiet morning handed
+// forty points to people who had raised nothing. The requirement is the plain
+// reading: do one and you are five better off, do none and nothing happens.
 console.log('\n3  A day when no footage came in')
 {
   floor({ updates: [upd(TODAY, 'Client A', H, 'Completed', 800)] })
   const s = await ask()
-  ok(s.scoreBreakdown.footage.total === 0, 'there should be no footage today')
-  ok(s.scoreBreakdown.footage.points === 40,
-     `${s.scoreBreakdown.footage.points} points on a day with no footage — the whole floor would drop to 60 for a quiet morning`)
-  ok(s.performanceScore === 100, `score ${s.performanceScore}, expected 100`)
-  console.log(`   no footage anywhere → full 40 points, score ${s.performanceScore}`)
+  ok(s.scoreBreakdown.footage.count === 0, 'there should be no footage today')
+  ok(s.scoreBreakdown.footage.points === 0,
+     `${s.scoreBreakdown.footage.points} points for raising nothing — that is the old free-marks bug`)
+  ok(s.performanceScore === 70, `score ${s.performanceScore}, expected 70 — the vehicles alone`)
+  console.log(`   no footage → 0 points, nothing taken off, score ${s.performanceScore}`)
+}
+
+// ── 3b · Uncapped, as asked for ────────────────────────────────────────
+console.log('\n3b Every further request is another five')
+{
+  const { computeScore } = await import('../lib/score.js')
+  ok(computeScore({ footageCount: 1 }).breakdown.footage.points === 5,  'one request should be 5')
+  ok(computeScore({ footageCount: 6 }).breakdown.footage.points === 30, 'six requests should be 30')
+  ok(computeScore({ footageCount: 14 }).breakdown.footage.points === 70,
+     'fourteen requests should be 70 — footage itself has no ceiling')
+  // The only ceiling is the score's own.
+  ok(computeScore({ footageCount: 40, vehiclesSeen: 800 }).score === 100,
+     'the score itself must still stop at 100')
+  ok(computeScore({ footageCount: 0, vehiclesSeen: 0, breakMinutes: 200 }).score === 0,
+     'and must never go below 0')
+  console.log('   1 → 5 · 6 → 30 · 14 → 70 · score still clamped to 0…100')
 }
 
 // ── 4 · Break past an hour costs twenty ────────────────────────────────
@@ -157,31 +197,31 @@ console.log('\n4  The break penalty')
   floor({ updates: done, breaks: [brk(90, 45, 45)] })          // 45 minutes
   const under = await ask()
   ok(under.scoreBreakdown.breakPenalty.applied === false, `45 minutes should not be penalised`)
-  ok(under.performanceScore === 100, `score ${under.performanceScore} with a 45m break, expected 100`)
+  ok(under.performanceScore === 70, `score ${under.performanceScore} with a 45m break, expected 70`)
 
   floor({ updates: done, breaks: [brk(150, 60, 90)] })         // 90 minutes
   const over = await ask()
   ok(over.scoreBreakdown.breakPenalty.applied === true, `90 minutes should be penalised`)
   ok(over.scoreBreakdown.breakPenalty.minutes === 90, `${over.scoreBreakdown.breakPenalty.minutes} minutes counted, expected 90`)
-  ok(over.performanceScore === 80, `score ${over.performanceScore} with a 90m break, expected 80`)
+  ok(over.performanceScore === 50, `score ${over.performanceScore} with a 90m break, expected 50`)
   console.log(`   45m → no penalty, score ${under.performanceScore} · 90m → −20, score ${over.performanceScore}`)
 }
 
 // ── 5 · The three parts add up, and the working is shown ───────────────
 console.log('\n5  The whole score, and its working')
 {
-  const issues = [issue('Afzal', TODAY), issue('Nesiya', TODAY)]   // half of two
+  const issues = [issue('Afzal', TODAY), issue('Nesiya', TODAY)]   // one mine, one not
   floor({ updates: [upd(TODAY, 'Client A', H, 'Completed', 600)], issues, breaks: [brk(200, 100, 100)] })
   const s = await ask()
   const b = s.scoreBreakdown
-  // footage 50% → 20 · vehicles 600/800 → 45 · break 100m → −20 · = 45
-  ok(b.footage.points === 20,  `footage ${b.footage.points}, expected 20`)
-  ok(b.vehicles.points === 45, `vehicles ${b.vehicles.points}, expected 45`)
+  // footage 1 × 5 → 5 · vehicles 600/800 → 52.5 · break 100m → −20 · = 38
+  ok(b.footage.points === 5,     `footage ${b.footage.points}, expected 5`)
+  ok(b.vehicles.points === 52.5, `vehicles ${b.vehicles.points}, expected 52.5`)
   ok(b.breakPenalty.points === -20, `break ${b.breakPenalty.points}, expected -20`)
-  ok(s.performanceScore === 45, `score ${s.performanceScore}, expected 45`)
+  ok(s.performanceScore === 38, `score ${s.performanceScore}, expected 38`)
   ok(b.total === s.performanceScore, 'the breakdown disagrees with the score it explains')
   ok(b.vehicles.target === 800, 'the target is not reported to the screen')
-  console.log(`   20 + 45 − 20 = ${s.performanceScore} · every number returned for the screen to show`)
+  console.log(`   5 + 52.5 − 20 = ${s.performanceScore} · every number returned for the screen to show`)
 }
 
 // ── 6 · The trend that read zero ───────────────────────────────────────
@@ -255,10 +295,9 @@ console.log('\n8  Footage raised after midnight, on a night shift')
   })
   const s = await ask()
   const f = s.scoreBreakdown.footage
-  ok(f.total === 2, `${f.total} requests counted for the operating day, expected 2 — a request raised after midnight was dropped`)
-  ok(f.mine === 1, `${f.mine} of them mine, expected 1`)
-  ok(f.sharePct === 50, `share read as ${f.sharePct}%, expected 50%`)
-  console.log(`   raised ${tomorrowCal} 01:14 am → counted under operating day ${opDay}: ${f.mine} of ${f.total}`)
+  ok(f.count === 1, `${f.count} of my requests counted for the operating day, expected 1 — one raised after midnight was dropped`)
+  ok(f.points === 5, `${f.points} points, expected 5`)
+  console.log(`   raised ${tomorrowCal} 01:14 am → counted under operating day ${opDay}: ${f.count} × 5 = ${f.points}`)
 }
 
 
@@ -269,11 +308,12 @@ console.log('\n8  Footage raised after midnight, on a night shift')
 //
 // Their work belongs to the operating day their shift BEGAN — a shift that
 // ran 22:00 to 07:00 is filed under yesterday — so once seven passes they
-// have done nothing today. And the card was not empty: early in the morning
-// the floor has raised no footage yet, the share is undefined, and an
-// undefined share is scored IN FULL. Forty points, to somebody who had gone
-// home. A flattering number for a day somebody did not work is worse than no
-// number at all.
+// have done nothing today. Under the old share rule the card was not even
+// empty: an undefined share scored IN FULL, so somebody who had gone home
+// showed forty free points. Counting requests has retired that particular
+// flattery — the free points are now zero — but a card for a day somebody
+// did not work is still a number about nothing, so the filter stays and is
+// checked here.
 console.log('\n9  The night shift, after seven in the morning')
 {
   const { whoWorkedOn, computeScore } = await import('../lib/score.js')
@@ -300,13 +340,14 @@ console.log('\n9  The night shift, after seven in the morning')
   const yesterdaysPeople = whoWorkedOn(YESTERDAY, shiftRows, updateRows)
   ok(yesterdaysPeople.has('CHANDAN'), "the night shift is missing from the day it actually worked")
 
-  // The score they would have been given: no footage on the floor yet, so a
-  // share of nothing scored in full.
-  const free = computeScore({ footageMine: 0, footageTotal: 0, vehiclesSeen: 0, breakMinutes: 0 })
-  ok(free.breakdown.footage.points === 40,
-     `an undefined share should score in full (that is the trap), got ${free.breakdown.footage.points}`)
+  // Nothing done at all now scores nothing at all — the free forty is gone
+  // with the share it came from.
+  const free = computeScore({ footageCount: 0, vehiclesSeen: 0, breakMinutes: 0 })
+  ok(free.breakdown.footage.points === 0,
+     `a day with nothing raised should score 0 for footage, got ${free.breakdown.footage.points}`)
+  ok(free.score === 0, `a day with nothing done should score 0, got ${free.score}`)
   console.log(`   CHANDAN filed under ${YESTERDAY}, off today's board ` +
-              `· the free ${free.score} he would have shown is not awarded`)
+              `· and an empty day is now worth ${free.score}, not a free 40`)
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed`)

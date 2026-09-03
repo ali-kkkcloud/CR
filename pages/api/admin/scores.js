@@ -56,9 +56,9 @@ export default async function handler(req, res) {
       if (n && !idOf[n]) idOf[n] = (r[0] || '').toString().trim()
     })
 
-    // The whole day's footage requests, so everybody's share is measured
-    // against the same denominator. A request raised after midnight belongs
-    // to the shift that began the previous evening — see raisedOperatingDay.
+    // The day's footage requests, tallied per person at 5 points each. A
+    // request raised after midnight belongs to the shift that began the
+    // previous evening — see raisedOperatingDay.
     const dayFootage = (footageRows || []).slice(1).filter(r =>
       isFootageRequest(r) && raisedOperatingDay(r[COL.RAISED_AT]) === date)
     const footageByName = {}
@@ -80,8 +80,7 @@ export default async function handler(req, res) {
     const scores = employees().filter(e => workedThen.has(e.name)).map(e => {
       const id = idOf[e.name] || ''
       const { score, tier, breakdown } = computeScore({
-        footageMine:  footageByName[(e.name || '').toLowerCase()] || 0,
-        footageTotal: dayFootage.length,
+        footageCount: footageByName[(e.name || '').toLowerCase()] || 0,
         vehiclesSeen: vehiclesSeenByName[e.name] || 0,
         breakMinutes: id ? totalBreakMinutes(breakRows, id, [date]) : 0,
       })

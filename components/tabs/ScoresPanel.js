@@ -144,13 +144,16 @@ export default function ScoresPanel({ scores = [], today = '' }) {
             <div style={{ color:C.text, fontSize:T.base, fontWeight:700, marginBottom:'6px' }}>
               {e.name} · {e.tier}
             </div>
+            {/* Footage has no ceiling, so no "/ 40" — out={null} prints the
+                points alone. */}
             <Line label="Footage"
-                  detail={b.footage?.total ? `${b.footage.mine} of ${b.footage.total} raised · ${b.footage.sharePct}%`
-                                           : 'no requests that day — scored in full'}
-                  points={b.footage?.points} out={40} />
+                  detail={b.footage?.count
+                    ? `${b.footage.count} raised · ${b.footage.perRequest ?? 5} each`
+                    : 'none raised that day — nothing added, nothing taken off'}
+                  points={b.footage?.points} out={null} />
             <Line label="Vehicles seen"
                   detail={`${(b.vehicles?.seen || 0).toLocaleString()} of ${(b.vehicles?.target || 800).toLocaleString()} · ${b.vehicles?.pct}%`}
-                  points={b.vehicles?.points} out={60} />
+                  points={b.vehicles?.points} out={b.vehicles?.weight ?? 70} />
             <Line label="Break"
                   detail={`${b.breakPenalty?.minutes || 0}m away · allowance ${b.breakPenalty?.allowanceMinutes || 60}m`}
                   points={b.breakPenalty?.points} out={null} />

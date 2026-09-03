@@ -335,37 +335,21 @@ export default async function handler(req, res) {
 
     // ══ Performance score ══════════════════════════════════════════════
     //
-    // Three parts, and every number behind them is returned alongside the
-    // score so the employee can see how it was arrived at rather than being
-    // handed a figure to argue with.
+    // Three parts — 5 a footage request, 70 for vehicles seen, −20 for going
+    // past the hour's break. The sums live in lib/score.js, because the admin
+    // needs the identical figure and a second copy of a rule is how two
+    // screens end up disagreeing about one employee. Every number behind the
+    // score is returned alongside it so the employee can see how it was
+    // arrived at rather than being handed a figure to argue with.
     //
-    //   FOOTAGE   40 points. Share of the day's footage requests that came in
-    //             under this employee's name:
-    //                 (my footage ÷ everybody's footage) × 100 × 40%
-    //             The heaviest single weight, because a footage request is a
-    //             customer waiting.
-    //
-    //   VEHICLES  60 points. Against a floor of 800 vehicles seen — the count
-    //             typed into VEHICLES SEEN on each client, which is what the
-    //             employee actually watched:
-    //                 min(vehicles seen ÷ 800, 1) × 60
-    //             At 800 the sixty points are full; there is no extra credit
-    //             for going past it, and no cliff for being just short.
-    //
-    //   BREAK     −20 points if the day's total break runs past an hour.
-    //             Counted the way every other screen counts it: the union of
-    //             the stretches, so overlapping rows are one absence.
-    //
-    // The old score mixed a completion percentage with penalties for pending
-    // footage and follow-ups and a bonus for turning up on time. It is
-    // replaced, not extended — two scoring systems for one number is how
-    // nobody trusts either.
+    // Only the count of THIS employee's requests is needed now. The floor's
+    // total was part of the old share rule and is deliberately not computed:
+    // nothing about one person's score depends on anybody else's work.
     const dayFootageRows = footageRows.slice(1).filter(r => {
       const sub = (r[COL.SUB_REQUEST] || '').toString().toLowerCase()
       if (!sub.includes('customer request for video')) return false
       return raisedOperatingDay(r[COL.RAISED_AT]) === today
     })
-    const footageTotalToday = dayFootageRows.length
     const footageMineToday  = dayFootageRows.filter(r =>
       (r[COL.RAISED_BY] || '').toString().trim().toLowerCase() === user.name.toLowerCase()).length
     const vehiclesSeenToday = myUpdatesAll
@@ -384,8 +368,7 @@ export default async function handler(req, res) {
     // the identical figure and a second copy of a rule is how two screens end
     // up disagreeing about one employee.
     const { score: performanceScore, tier, breakdown: scoreBreakdown } = computeScore({
-      footageMine:  footageMineToday,
-      footageTotal: footageTotalToday,
+      footageCount: footageMineToday,
       vehiclesSeen: vehiclesSeenToday,
       breakMinutes: breakMinutesToday,
     })

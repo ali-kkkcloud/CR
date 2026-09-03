@@ -35,37 +35,43 @@ function ScoreWorkings({ b, total, tier }) {
         <span style={{ display:'block', color, fontSize:'17px', fontWeight:800 }}>
           {points > 0 ? '+' : ''}{points}
         </span>
-        <span style={{ display:'block', color:C.dim, fontSize:T.xs, marginTop:'2px' }}>of {weight}</span>
+        {/* Footage has no denominator any more — it is 5 a request, however
+            many there are — so that row passes no weight and prints nothing
+            here rather than an "of 40" that would be a lie. */}
+        {weight != null && (
+          <span style={{ display:'block', color:C.dim, fontSize:T.xs, marginTop:'2px' }}>of {weight}</span>
+        )}
       </span>
     </div>
   )
 
   const f = b.footage, v = b.vehicles, k = b.breakPenalty
+  const per = f.perRequest ?? 5
   return (
     <Card>
       <div className="eyebrow" style={{ marginBottom:'4px' }}>How your score is worked out</div>
       <div style={{ color:C.muted, fontSize:T.xs, marginBottom:SP[3] }}>
-        Counted for today. Footage is worth the most because a request is a customer waiting.
+        Counted for today. Every footage request you raise adds {per}, on top of what you see.
       </div>
 
       <Row
         label="Footage requests"
         color={C.accent}
-        weight={40}
+        weight={null}
         points={f.points}
-        detail={f.total === 0
-          ? 'No footage came in today, so this is not counted against anybody — full marks.'
-          : `${f.mine} of the ${f.total} that came in today were yours — ${f.sharePct}% of them. ${f.sharePct}% of 40 = ${f.points}.`}
+        detail={f.count === 0
+          ? `You have not raised any today. Nothing is taken off for that — each one you do raise adds ${per}.`
+          : `${f.count} raised today — ${f.count} × ${per} = ${f.points}. There is no limit: every further request adds another ${per}.`}
       />
 
       <Row
         label="Vehicles seen"
         color={C.accent}
-        weight={60}
+        weight={v.weight}
         points={v.points}
         detail={`${v.seen} of the ${v.target} a day — ${v.pct}%. ${v.seen >= v.target
-          ? 'Target met, so all 60.'
-          : `${v.pct}% of 60 = ${v.points}. Reaching ${v.target} earns the full 60.`} This is the VEHICLES SEEN box on each client, added up.`}
+          ? `Target met, so all ${v.weight}.`
+          : `${v.pct}% of ${v.weight} = ${v.points}. Reaching ${v.target} earns the full ${v.weight}.`} This is the VEHICLES SEEN box on each client, added up.`}
       />
 
       <Row
