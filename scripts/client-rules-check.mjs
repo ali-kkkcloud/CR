@@ -1,0 +1,377 @@
+// Client_Timings is the master list, and two things an admin can say about it.
+//
+// ── The bug this starts from ───────────────────────────────────────────
+//
+// Reported from the floor: Cityflo_Mumbai appeared on Nesiya's four o'clock
+// board, and Client_Timings has NO hours against it at all. Traced live, the
+// chain was four links long and only the first one was doing its job:
+//
+//   Client_Timings   hours cell blank → parsed as []  → not in 4pm's rotation
+//   Employee_Hours   "Ritanjali | 16 | Cityflo_Mumbai" — a pin, and this route
+//                    never consulted Client_Timings at all
+//   Credentials      Ritanjali is on a week off, so she is not in the pool
+//   the orphan rule  a pinned client whose owner is away joins the rotation so
+//                    it is not lost — and it was handed to Nesiya
+//
+// Seven of the eight pinned clients on the live book had a blank or missing
+// Client_Timings row. A pin now says WHO does a client at an hour; it does not
+// say WHETHER the client runs. That is Client_Timings' answer alone.
+//
+// ── And two things built on top of it ─────────────────────────────────
+//
+//   HIDDEN  a client taken off particular DATES, future ones included. Off
+//           every board, and out of the denominator — it was never due, so it
+//           cannot have been missed.
+//
+//   NOTE    a note pinned to one client at one hour, with no date. Whoever
+//           holds that client that hour sees it, and finds the client at the
+//           top of their list.
+//
+//   CAUTIO_FAKE_SHEETS=1 node --import ./scripts/test-hooks.mjs scripts/client-rules-check.mjs
+import fs from 'fs'
+
+process.env.CRM_SHEET_ID = 'crm-book'
+process.env.ISSUE_TRACKER_SHEET_ID = 'issue-book'
+process.env.SOURCE_SHEET_ID = 'source-book'
+process.env.JWT_SECRET = 'test-secret'
+
+const { behaviour, calls, reset } = await import('./fake-googleapis.mjs')
+const sheets = await import('../lib/sheets.js')
+const { signToken } = await import('../lib/auth.js')
+const { loadScheduleData, parseHidden, parseClientNotes } = await import('../lib/roster.js')
+const schedule = await import('../lib/schedule.js')
+const rules = (await import('../pages/api/admin/client-rules.js')).default
+
+let pass = 0, fail = 0
+const ok = (c, m) => { if (c) pass++; else { fail++; console.log('  FAIL  ' + m) } }
+const code = f => fs.readFileSync(f, 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
+
+const D4 = '04/08/2026', D5 = '05/08/2026'
+
+// Client_Timings: Client | Hours   ·   Employee_Hours: Employee | Hour | Fixed | Custom
+// Client_Hidden: Date|Client|Reason|By|At|Status  ·  Client_Notes: Client|Hour|Note|By|At|Status
+function floor({ timings = [], empHours = [], hidden = [], notes = [] } = {}) {
+  reset()
+  ;['crm-book', 'source-book', 'issue-book'].forEach(b => sheets.invalidateSheetCache(b, ''))
+  globalThis.__cautioRoster = { lastGood: null }
+  globalThis.__cautioPlanMemo = []
+  behaviour.data = {
+    'Credentials!A:H': [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
+      ['E1','Nesiya',   'x','employee','8','17','No','No'],
+      ['E2','Sunil',    'x','employee','8','17','No','No'],
+      // On a week off — the exact state that orphaned the live pin.
+      ['E3','Ritanjali','x','employee','8','17','No','Yes']],
+    'Client_Timings!A:B': [['Client','Hours'], ...timings],
+    'Employee_Hours!A:D': [['Employee','Hour','Fixed Clients','Custom Text'], ...empHours],
+    'Client_Hidden!A:F': [['Date','Client','Reason','MarkedBy','MarkedAt','Status'], ...hidden],
+    'Client_Notes!A:F':  [['Client','Hour','Note','MarkedBy','MarkedAt','Status'], ...notes],
+  }
+}
+
+const ADMIN = { name: 'Boss', role: 'admin', empId: 'A1' }
+async function api(method, body, query = {}) {
+  const req = { method, query, body, cookies: { cautio_token: signToken(ADMIN) }, headers: {} }
+  let status = 200, out = null
+  const res = { status(c) { status = c; return res }, json(p) { out = p; return res }, end() { return res } }
+  await rules(req, res)
+  return { status, body: out }
+}
+
+// ══ 1 · A pin cannot conjure a client Client_Timings does not run ══════
+console.log('\n1  Client_Timings is the master list')
+{
+  floor({
+    timings: [['Zingbus', '9, 16'], ['Cityflo_Mumbai', ''], ['Bharat Cabs', '16']],
+    empHours: [
+      ['Ritanjali', '16', 'Cityflo_Mumbai', ''],   // blank hours  → must be ignored
+      ['Ritanjali', '9',  'CF-Chennai', ''],       // not in the tab at all → ignored
+      ['Sunil',     '9',  'Zingbus', ''],          // 9 IS in Zingbus's hours → kept
+      ['Sunil',     '11', 'Zingbus', ''],          // 11 is NOT → ignored
+    ],
+  })
+  await loadScheduleData()
+
+  ok(schedule.specificClientsFor('Ritanjali', 16) === null,
+     'a pin on a client with a blank hours cell must not be delivered — this is the live bug')
+  ok(schedule.specificClientsFor('Ritanjali', 9) === null,
+     'a pin on a client that is not in Client_Timings at all must not be delivered')
+  ok(JSON.stringify(schedule.specificClientsFor('Sunil', 9)) === '["Zingbus"]',
+     'a pin whose hour the timings sheet agrees with is still delivered')
+  ok(schedule.specificClientsFor('Sunil', 11) === null,
+     'a pin at an hour the client does not run in must not be delivered')
+
+  // And the whole reason it mattered: the orphan rule handed it to somebody else.
+  const dist = schedule.distributeClientsForHour(16, ['Nesiya'], {}, {}, true)
+  const got = (dist['Nesiya'] || []).map(c => c.client)
+  ok(!got.includes('Cityflo_Mumbai'),
+     `Cityflo_Mumbai reached a board anyway: ${JSON.stringify(got)}`)
+  ok(got.includes('Zingbus') && got.includes('Bharat Cabs'),
+     `the hour's real clients went missing: ${JSON.stringify(got)}`)
+  console.log(`   4pm board is ${JSON.stringify(got)} — Cityflo_Mumbai is not on it`)
+}
+
+// ══ 2 · The pins the sheet refuses are named, not silently dropped ═════
+console.log('\n2  A pin that does nothing says so')
+{
+  const orphans = schedule.orphanedPins()
+  const find = (c) => orphans.find(o => o.client === c)
+  ok(find('Cityflo_Mumbai')?.reason === 'no hours set in Client_Timings', 'the blank-hours pin is reported')
+  ok(find('CF-Chennai')?.reason === 'not in Client_Timings at all', 'the missing-client pin is reported')
+  ok(/Client_Timings has it at/.test(find('Zingbus')?.reason || ''), 'the wrong-hour pin is reported')
+  ok(!orphans.some(o => o.client === 'Zingbus' && o.hour === 9),
+     'a pin that WORKS must not be reported as an orphan')
+  console.log(`   ${orphans.length} pins the timings sheet refuses, each with a reason`)
+}
+
+// ══ 3 · Hidden: off the day, on every screen ═══════════════════════════
+console.log('\n3  A client taken off a day')
+{
+  floor({
+    timings: [['Zingbus', '16'], ['Bharat Cabs', '16'], ['Coral Tours', '16']],
+    hidden: [[D4, 'Bharat Cabs', 'fleet off road', 'Boss', '', 'Hidden']],
+  })
+  await loadScheduleData()
+
+  const off4 = schedule.hiddenClientsOn(D4)
+  ok(off4.has('Bharat Cabs'), 'the hidden client is not in the day\'s hidden set')
+  ok(schedule.hiddenClientsOn(D5).size === 0, 'hiding is per DATE — the next day must be untouched')
+
+  const on4  = schedule.distributeClientsForHour(16, ['Nesiya'], {}, {}, true, off4).Nesiya.map(c => c.client)
+  const on5  = schedule.distributeClientsForHour(16, ['Nesiya'], {}, {}, true, schedule.hiddenClientsOn(D5)).Nesiya.map(c => c.client)
+  ok(!on4.includes('Bharat Cabs'), `hidden on the 4th but still on the board: ${JSON.stringify(on4)}`)
+  ok(on5.includes('Bharat Cabs'), `not hidden on the 5th but missing anyway: ${JSON.stringify(on5)}`)
+  ok(on4.length === 2 && on5.length === 3, 'the other clients must be untouched either day')
+
+  // ── And it is not counted as work anybody missed ──────────────────
+  //
+  // This is the half that would have been easy to leave out. A client taken
+  // off the day that stayed in the denominator would mark the floor down for
+  // not doing something nobody asked them to do.
+  const audit = schedule.auditHourAssignment(16, [], {}, {}, true, off4)
+  ok(audit.due === 2, `${audit.due} clients counted as due, expected 2 — the hidden one is still in the total`)
+  ok(!audit.unassigned.includes('Bharat Cabs'),
+     'a hidden client is being reported as unassigned — it was never due')
+  console.log(`   off on ${D4}, on again on ${D5}, and out of the day's total either way`)
+}
+
+// ══ 4 · Hiding beats a pin ═════════════════════════════════════════════
+//
+// Otherwise "not today" would be true for everybody except the one person
+// whose name the client is written against — which is the worst possible
+// half-measure, because that person is the one who would work it.
+console.log('\n4  A hidden client is off the pinned board too')
+{
+  floor({
+    timings: [['Zingbus', '9'], ['Bharat Cabs', '9']],
+    empHours: [['Sunil', '9', 'Zingbus', '']],
+    hidden: [[D4, 'Zingbus', '', 'Boss', '', 'Hidden']],
+  })
+  await loadScheduleData()
+  const off = schedule.hiddenClientsOn(D4)
+  const dist = schedule.distributeClientsForHour(9, ['Sunil', 'Nesiya'], {}, {}, true, off)
+  const all = Object.values(dist).flat().map(c => c.client)
+  ok(!all.includes('Zingbus'), `the pinned client is hidden but still delivered: ${JSON.stringify(all)}`)
+  ok(all.includes('Bharat Cabs'), 'the rest of the hour must still be handed out')
+  console.log('   a pin does not exempt a client from being off for the day')
+}
+
+// ══ 5 · Notes travel with the client ═══════════════════════════════════
+console.log('\n5  A note pinned to one hour')
+{
+  floor({
+    timings: [['Zingbus', '9, 13'], ['Bharat Cabs', '9']],
+    notes: [['Zingbus', '13', 'Driver camera blurred — check carefully', 'Boss', '', 'Active']],
+  })
+  await loadScheduleData()
+
+  ok(schedule.noteFor('Zingbus', 13) === 'Driver camera blurred — check carefully', 'the note is not being read back')
+  ok(schedule.noteFor('Zingbus', 9) === null, 'the note belongs to ONE hour, not to the client')
+  ok(schedule.noteFor('Bharat Cabs', 13) === null, 'the note belongs to ONE client')
+
+  const at13 = schedule.distributeClientsForHour(13, ['Nesiya'], {}, {}, true).Nesiya
+  ok(at13.find(c => c.client === 'Zingbus')?.note === 'Driver camera blurred — check carefully',
+     'the note must travel with the client, so every screen shows the same one')
+  const at9 = schedule.distributeClientsForHour(9, ['Nesiya'], {}, {}, true).Nesiya
+  ok(at9.every(c => !c.note), 'no note at an hour that has none')
+  console.log('   one client, one hour, and the note rides along with it')
+}
+
+// ══ 6 · A noted client is first, until it is done ══════════════════════
+//
+// The board's own ordering, exactly as MyClientsTab applies it.
+console.log('\n6  The noted client sorts to the top')
+{
+  const { updateRank } = await import('../lib/updateline.js')
+  const isDone = (filled, c) => !!(filled[c]?.status || '').toString().trim()
+  const inUpdateOrder = (rows, { filled = {}, updatedToday = {} } = {}) => {
+    const rankOf = (c) => updateRank({
+      mine: isDone(filled, c.client),
+      at: (filled[c.client]?.updatedAt || '').toString().trim(),
+      elsewhere: isDone(filled, c.client) ? null : updatedToday[c.client],
+    })
+    const noted = (c) => (c.note && !isDone(filled, c.client) ? 0 : 1)
+    return rows.map(c => ({ c, n: noted(c), r: rankOf(c) }))
+      .sort((a, b) => (a.n - b.n) || (a.r - b.r) || a.c.client.localeCompare(b.c.client))
+      .map(x => x.c)
+  }
+
+  const rows = [
+    { client: 'Apple Bus' },                                  // untouched
+    { client: 'Zingbus', note: 'Driver camera blurred' },      // noted
+    { client: 'Delta Fleet' },                                 // untouched
+  ]
+  const first = inUpdateOrder(rows).map(c => c.client)
+  ok(first[0] === 'Zingbus', `the noted client is not first: ${JSON.stringify(first)}`)
+  ok(JSON.stringify(first) === '["Zingbus","Apple Bus","Delta Fleet"]',
+     `order came out as ${JSON.stringify(first)}`)
+
+  // Once it is done it stops holding the top slot — the place where the next
+  // thing to do belongs.
+  const after = inUpdateOrder(rows, { filled: { Zingbus: { status: 'Updated', updatedAt: '01:31:00 pm' } } })
+    .map(c => c.client)
+  ok(after[0] !== 'Zingbus', `a finished noted client is still pinned to the top: ${JSON.stringify(after)}`)
+  ok(after[after.length - 1] === 'Zingbus', 'once done it takes its place in the ordinary order')
+
+  const src = code('components/tabs/MyClientsTab.js')
+  ok(/const noted = \(c\) => \(c\.note && !isDone\(filled, c\.client\) \? 0 : 1\)/.test(src),
+     'the board applies the same rule this check does')
+  ok(/\{c\.note && \(/.test(src), 'and shows the note on the row, before the client is opened')
+  console.log(`   ${JSON.stringify(first)} → after saving it: ${JSON.stringify(after)}`)
+}
+
+// ══ 7 · Reading the two tabs back ══════════════════════════════════════
+//
+// Nothing is ever deleted from either — a removal is an appended row marked
+// Removed, because deleting by row index on a live book is a race. So the LAST
+// row for a key is the one that counts.
+console.log('\n7  Removed rows, and last-row-wins')
+{
+  const h = parseHidden([['Date','Client','Reason','By','At','Status'],
+    [D4, 'Zingbus', '', 'Boss', '', 'Hidden'],
+    [D4, 'Coral Tours', '', 'Boss', '', 'Hidden'],
+    [D4, 'Zingbus', '', 'Boss', '', 'Removed'],     // put back
+    [D4, 'Zingbus', '', 'Boss', '', 'Hidden'],      // and taken off again
+    [D5, 'Coral Tours', '', 'Boss', '', 'Removed'], // never hidden on the 5th
+  ])
+  ok(h[D4].has('Zingbus'), 'hidden → removed → hidden again must read as hidden')
+  ok(h[D4].has('Coral Tours'), 'the other client on the same day must be untouched')
+  ok(!h[D5] || !h[D5].has('Coral Tours'), 'a Removed row must never hide anything')
+
+  const n = parseClientNotes([['Client','Hour','Note','By','At','Status'],
+    ['Zingbus', '13', 'first note', 'Boss', '', 'Active'],
+    ['Zingbus', '13', 'second note', 'Boss', '', 'Active'],   // edited
+    ['Coral Tours', '9', 'gone', 'Boss', '', 'Removed'],
+    ['Bad', 'xx', 'no hour', 'Boss', '', 'Active'],           // unparseable hour
+    ['Blank', '9', '', 'Boss', '', 'Active'],                 // no text left
+  ])
+  ok(n['Zingbus'][13] === 'second note', 'the latest note wins')
+  ok(!n['Coral Tours'], 'a Removed note is gone')
+  ok(!n['Bad'], 'a row with no usable hour is skipped')
+  ok(!n['Blank'], 'a note with no text is nothing to show')
+  console.log('   append-only, last row wins, Removed means gone')
+}
+
+// ══ 8 · The admin endpoint refuses what cannot work ════════════════════
+console.log('\n8  What the Command Center will not save')
+{
+  floor({ timings: [['Zingbus', '9, 13'], ['Cityflo_Mumbai', '']] })
+  await loadScheduleData()
+
+  const read = await api('GET', null)
+  ok(read.status === 200, `GET returned ${read.status}`)
+  ok(read.body.clients.find(c => c.client === 'Zingbus').hours.join(',') === '9,13',
+     'the screen is told which hours a client actually runs, to offer those and no others')
+  ok(read.body.clients.find(c => c.client === 'Cityflo_Mumbai').hours.length === 0,
+     'and is told plainly when a client has none')
+
+  const badDate = await api('POST', { kind:'hidden', action:'add', clients:['Zingbus'], dates:['2026-08-04'] })
+  ok(badDate.status === 400, 'an ISO date must be refused — it would hide nothing and look like a broken feature')
+
+  const ghost = await api('POST', { kind:'hidden', action:'add', clients:['Nope Ltd'], dates:[D4] })
+  ok(ghost.status === 400 && /Not in Client_Timings/.test(ghost.body.error),
+     'a client the timings sheet has never heard of cannot be hidden')
+
+  const offHour = await api('POST', { kind:'note', action:'add', clients:['Zingbus'], hours:[11], note:'x' })
+  ok(offHour.status === 400 && /does not run these at that hour/.test(offHour.body.error),
+     'a note at an hour the client does not run in must be refused, not written where nobody will see it')
+
+  const noText = await api('POST', { kind:'note', action:'add', clients:['Zingbus'], hours:[13], note:'   ' })
+  ok(noText.status === 400, 'an empty note must be refused')
+
+  const good = await api('POST', { kind:'note', action:'add', clients:['Zingbus'], hours:[9, 13], note:'Check carefully' })
+  ok(good.status === 200 && good.body.written === 2, `two hours should write two rows, got ${JSON.stringify(good.body)}`)
+
+  const multi = await api('POST', { kind:'hidden', action:'add', clients:['Zingbus','Cityflo_Mumbai'], dates:[D4, D5] })
+  ok(multi.status === 200 && multi.body.written === 4,
+     `two clients over two days is four rows, got ${JSON.stringify(multi.body)}`)
+  console.log('   bad dates, unknown clients and unreachable hours are all turned away')
+}
+
+// ══ 9 · The tabs are created rather than failing the first save ════════
+console.log('\n9  A book that has never had these tabs')
+{
+  const src = code('pages/api/admin/client-rules.js')
+  ok(/ensureTab\(CRM_SHEET_ID, TABS\.CLIENT_HIDDEN/.test(src), 'the hidden tab is created before the first write')
+  ok(/ensureTab\(CRM_SHEET_ID, TABS\.CLIENT_NOTES/.test(src), 'and so is the notes tab')
+
+  const sh = code('lib/sheets.js')
+  ok(/addSheet:/.test(sh), 'ensureTab adds a sheet')
+  ok(!/deleteSheet|deleteDimension|clear\(/.test(sh),
+     'nothing in the sheet layer may delete or clear — a live book is not the place for it')
+
+  const rs = code('lib/roster.js')
+  ok(/CLIENT_HIDDEN\}!A:F`, TTL\.ROSTER\)\.catch\(\(\) => null\)/.test(rs),
+     'a book without the tab must read as "nothing hidden", not fail the roster')
+  ok(/hidden: hiddenRows \? parseHidden\(hiddenRows\) : \{\}/.test(rs),
+     'and a failed read must NOT fall back to a stale copy — a stale hiding takes a client off a board it belongs on')
+  console.log('   created on demand, and a missing tab means "nothing hidden"')
+}
+
+// ══ 10 · An absent tab must not cost every screen a round trip ═════════
+//
+// These two ranges are warmed with the rest, so on a book where the tabs do
+// not exist yet Google fails the WHOLE batchGet — one absent range dragging
+// eleven healthy ones into the single-read fallback, and every screen on the
+// platform going from one request to a dozen. Seen the moment the ranges were
+// added: "Unable to parse range: Client_Hidden!A:F", then a fallback, on every
+// request. So an absent OPTIONAL tab is remembered and resolves as empty
+// without being asked for again.
+//
+// ── And the list of what counts as optional is the whole safety of it ──
+//
+// "Missing tab means empty" is only true where empty is an ANSWER. For the
+// vehicle source it would mean "no vehicles", which moves clients between
+// people and shrinks every total — a silent wrong answer, and shuffle-check
+// exists to make sure that case still FAILS. Both faults were caught by the
+// existing suite when this rule was first written too broadly; this pins the
+// narrow version.
+console.log('\n10 A tab that is not there, and the ones that must still raise')
+{
+  const sh = code('lib/sheets.js')
+  ok(/const OPTIONAL_TABS = new Set\(\[TABS\.CLIENT_HIDDEN, TABS\.CLIENT_NOTES\]\)/.test(sh),
+     'the "absent means empty" rule must be a named short list, never a rule about missing tabs in general')
+  ok(/if \(!OPTIONAL_TABS\.has\(\(range \|\| ''\)\.split\('!'\)\[0\]\)\) return false/.test(sh),
+     'and it must be checked before anything else, so no other tab can fall into it')
+  ok(/if \(tabIsMissing\(spreadsheetId, range\)\) return \[\]/.test(sh),
+     'a tab already known absent must never reach a batch again')
+  ok(/forgetMissingTab\(spreadsheetId, tab\)/.test(sh),
+     'creating the tab must forget it immediately, or the first save would appear to do nothing')
+  ok(/MISSING_TAB_MS = 300000/.test(sh),
+     'and it is forgotten after a while anyway, so a tab created by hand needs no deploy')
+
+  // Behaviourally: the second read of an absent optional tab costs nothing.
+  reset()
+  sheets.invalidateSheetCache('crm-book', '')
+  behaviour.data = { 'Credentials!A:H': [['EmpID','Name']] }   // Client_Hidden absent
+  await sheets.readSheetCached('crm-book', 'Client_Hidden!A:F', 1).catch(() => null)
+  const before = calls.get.length + calls.batchGet.length
+  await sheets.readSheetCached('crm-book', 'Client_Hidden!A:F', 1)
+  await sheets.readSheetCached('crm-book', 'Client_Hidden!A:F', 1)
+  ok(calls.get.length + calls.batchGet.length === before,
+     'an absent optional tab was asked for again — every screen would pay for it')
+  console.log('   asked once, then treated as empty; every other tab still raises')
+}
+
+console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)
+process.exit(fail === 0 ? 0 : 1)

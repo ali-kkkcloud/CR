@@ -174,6 +174,16 @@ export default function MyClientsTab({
   // person working the hour it looked random, and it undid the whole point of
   // ordering the list — they were being handed the work in an order nobody
   // chose. Both now ask the same function.
+  //
+  // ── A note puts its client first ────────────────────────────────────
+  //
+  // An admin pinning a note to a client at an hour is saying "this one, and
+  // read this before you start". That is only worth doing if the client is
+  // where it will be seen, so a noted client sorts above everything — but
+  // ONLY while it is still outstanding. Once it has been done it drops into
+  // the ordinary order with everything else: keeping it pinned to the top
+  // after the work is finished would leave the thing already dealt with
+  // sitting where the next thing to do should be.
   const inUpdateOrder = useCallback((rows) => {
     const rankOf = (c) => {
       const done = isDone(filled, c.client)
@@ -183,9 +193,10 @@ export default function MyClientsTab({
         elsewhere: done ? null : updatedToday[c.client],
       })
     }
+    const noted = (c) => (c.note && !isDone(filled, c.client) ? 0 : 1)
     return rows
-      .map(c => ({ c, r: rankOf(c) }))
-      .sort((a, b) => (a.r - b.r) || a.c.client.localeCompare(b.c.client))
+      .map(c => ({ c, n: noted(c), r: rankOf(c) }))
+      .sort((a, b) => (a.n - b.n) || (a.r - b.r) || a.c.client.localeCompare(b.c.client))
       .map(x => x.c)
   }, [filled, updatedToday])
 
@@ -481,6 +492,24 @@ export default function MyClientsTab({
                       display:'block', color: on ? C.text : C.text2,
                       fontSize:T.base, fontWeight: on ? 700 : 600,
                     }}>{c.client}</span>
+                    {/* A note the admin pinned to this client for this hour.
+                        Shown on the row, not only inside the client, because
+                        the whole point of pinning it is that it is read
+                        BEFORE the work starts — a note you have to open the
+                        client to find is a note that arrives too late. */}
+                    {c.note && (
+                      <span style={{
+                        display:'flex', alignItems:'flex-start', gap:'5px',
+                        marginTop:'4px', padding:'4px 7px',
+                        background:C.amberBg, border:`1px solid ${C.amber}55`,
+                        borderRadius:R.sm,
+                      }}>
+                        <Icon name="alerts" size={11} color={C.amber} />
+                        <span style={{ color:C.amber, fontSize:T.xs, fontWeight:600, lineHeight:1.35 }}>
+                          {c.note}
+                        </span>
+                      </span>
+                    )}
                     {/* One meta line, not two. The row used to carry the
                         client's name, then its vehicle count, then a full
                         sentence about when it was last filled — three lines
@@ -527,6 +556,7 @@ export default function MyClientsTab({
                 <div style={{ minWidth:0 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:SP[2], flexWrap:'wrap' }}>
                     <span style={{ color:C.text, fontSize:T.xl, fontWeight:800, letterSpacing:'-0.4px' }}>{sel}</span>
+                    {selMeta?.note && <Tag color={C.amber} dot>READ THE NOTE</Tag>}
                     {selMeta?.isSpecific && <Tag color={C.blue} dot>YOUR FIXED CLIENT</Tag>}
                     {dirty
                       ? <Tag color={C.amber} dot>UNSAVED</Tag>

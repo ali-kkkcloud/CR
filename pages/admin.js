@@ -23,6 +23,7 @@ import ErrorBoundary from '../components/ErrorBoundary'
 import WorkloadPanel from '../components/tabs/WorkloadPanel'
 import ScoresPanel from '../components/tabs/ScoresPanel'
 import ReportsPanel from '../components/tabs/ReportsPanel'
+import ClientRulesPanel from '../components/tabs/ClientRulesPanel'
 import IntegrityPanel from '../components/tabs/IntegrityPanel'
 
 // "7pm", for listing hours compactly inside a sentence.
@@ -70,6 +71,7 @@ const SECTION_TABS = {
     { value:'fullday',        label:'Hour by hour' },
     { value:'redistribution', label:'Work moved' },
     { value:'stale',          label:'Still not updated' },
+    { value:'clientrules',    label:'Client rules' },
   ],
   requests: [
     { value:'footage',   label:'Footage' },
@@ -1014,6 +1016,9 @@ export default function Admin() {
 
           {/* ══════════ REPORTS ══════════ */}
           {activeTab === 'reports' && <ReportsPanel />}
+
+          {/* ══════════ CLIENT RULES ══════════ */}
+          {activeTab === 'clientrules' && <ClientRulesPanel />}
 
           {/* ══════════ NOT YET LIVE ══════════ */}
           {['leaves','analytics','alerts','settings'].includes(activeTab) && (
