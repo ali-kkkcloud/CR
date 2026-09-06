@@ -588,7 +588,7 @@ export default function Admin() {
       title:'Fixed-client rows that do nothing',
       sub:'Client_Timings decides whether a client runs. A pin only says who does it — so these are skipped.',
       rows: pinIssues.map(p => ({
-        primary:`${p.name} · ${fmtHourShort(p.hour)} · ${p.client}`,
+        primary: p.hour == null ? `${p.name} · ${p.client}` : `${p.name} · ${fmtHourShort(p.hour)} · ${p.client}`,
         secondary:p.reason, tone:C.amber,
       })),
     }),

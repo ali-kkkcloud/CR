@@ -7,7 +7,7 @@ import {
   vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
 import { employees, weekOffNamesFor, orphanedPins, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
-import { loadScheduleData } from '../../../lib/roster'
+import { loadScheduleData, duplicateTimingRows, unusableHourRows } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan, staleClientsFrom } from '../../../lib/dayplan'
 import { computeScore, whoWorkedOn } from '../../../lib/score'
@@ -127,6 +127,25 @@ export default async function handler(req, res) {
     const clientIssues = Object.entries(clientTimings())
       .filter(([, hours]) => !hours || hours.length === 0)
       .map(([client]) => ({ client, reason: 'no hours set in Client_Timings' }))
+
+    // ── One client written on two rows ────────────────────────────────
+    //
+    // The hours are unioned rather than one row silently replacing the other,
+    // because losing an hour somebody typed is the worse mistake. But the
+    // union can be wrong the other way — a row meant to REPLACE and never
+    // deleted now adds hours — so the duplicate is named here and the admin
+    // decides. Both tabs are already warmed, so this costs nothing.
+    //
+    // Found live: KARTHIKEYA TOURS AND TRAVELS on two rows with different
+    // hours, six of which nobody had been watching.
+    const [timingRows, hourRows] = await Promise.all([
+      readSheetCached(CRM_SHEET_ID, `${TABS.CLIENT_TIMINGS}!A:B`, TTL.ROSTER).catch(() => null),
+      readSheetCached(CRM_SHEET_ID, `${TABS.EMPLOYEE_HOURS}!A:D`, TTL.ROSTER).catch(() => null),
+    ])
+    duplicateTimingRows(timingRows || []).forEach(d => clientIssues.push({
+      client: d.client,
+      reason: `written on ${d.rows} rows — hours merged from ${d.hours.join('  |  ')}`,
+    }))
 
     const todayShifts = shiftRows.slice(1).filter(r => r[2] === today)
     // Anyone who actually clocked in is here, whatever any flag says.
@@ -636,7 +655,16 @@ export default async function handler(req, res) {
       // silent: on the live book fourteen pins stopped working the day that
       // landed, and the person who typed them had no way to find out. A row
       // somebody wrote that quietly does nothing is its own kind of invisible.
-      pinIssues: orphanedPins(),
+      pinIssues: [
+        ...orphanedPins(),
+        // Rows the parser cannot use at all — a blank hour, a missing name.
+        // These never reach orphanedPins because they are dropped before the
+        // schedule ever sees them, so they would be the one kind of dead row
+        // nothing reported.
+        ...unusableHourRows(hourRows || []).map(u => ({
+          name: u.name || '(no name)', hour: null, client: `row ${u.row}`, reason: u.reason,
+        })),
+      ],
       coverageGaps,
       // Clients with not one update against them since seven this morning.
       staleClients: staleOut,

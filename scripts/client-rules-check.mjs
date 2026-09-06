@@ -38,7 +38,8 @@ process.env.JWT_SECRET = 'test-secret'
 const { behaviour, calls, reset } = await import('./fake-googleapis.mjs')
 const sheets = await import('../lib/sheets.js')
 const { signToken } = await import('../lib/auth.js')
-const { loadScheduleData, parseHidden, parseClientNotes } = await import('../lib/roster.js')
+const { loadScheduleData, parseHidden, parseClientNotes, parseTimings,
+        duplicateTimingRows, unusableHourRows } = await import('../lib/roster.js')
 const schedule = await import('../lib/schedule.js')
 const rules = (await import('../pages/api/admin/client-rules.js')).default
 
@@ -67,6 +68,13 @@ function floor({ timings = [], empHours = [], hidden = [], notes = [] } = {}) {
   ;['crm-book', 'source-book', 'issue-book'].forEach(b => sheets.invalidateSheetCache(b, ''))
   globalThis.__cautioRoster = { lastGood: null }
   globalThis.__cautioPlanMemo = []
+  // The "this tab does not exist" memory lives five minutes and is NOT part of
+  // the read cache. Left standing, check 10 — which deliberately makes
+  // Client_Hidden absent — silently emptied that tab for every check after it,
+  // and three of them failed for a reason that had nothing to do with their
+  // subject. A fixture has to start from nothing, including this.
+  globalThis.__cautioSheets.missingTabs = new Map()
+  globalThis.__cautioSheets.tabsSeen = new Set()
   behaviour.data = {
     'Credentials!A:H': [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
       ['E1','Nesiya',   'x','employee','8','17','No','No'],
@@ -372,15 +380,32 @@ console.log('\n10 A tab that is not there, and the ones that must still raise')
      'and it is forgotten after a while anyway, so a tab created by hand needs no deploy')
 
   // Behaviourally: the second read of an absent optional tab costs nothing.
+  //
+  // `broken` is what makes the fake answer the way Google does for a range
+  // whose tab does not exist — "Unable to parse range". Simply leaving the
+  // range out of behaviour.data is NOT the same thing: the fake hands back
+  // placeholder rows, the read succeeds, and this check passed for a reason
+  // that had nothing to do with what it claims to test.
   reset()
   sheets.invalidateSheetCache('crm-book', '')
-  behaviour.data = { 'Credentials!A:H': [['EmpID','Name']] }   // Client_Hidden absent
+  behaviour.data = { 'Credentials!A:H': [['EmpID','Name']] }
+  behaviour.broken.add('Client_Hidden!A:F')
   await sheets.readSheetCached('crm-book', 'Client_Hidden!A:F', 1).catch(() => null)
   const before = calls.get.length + calls.batchGet.length
   await sheets.readSheetCached('crm-book', 'Client_Hidden!A:F', 1)
   await sheets.readSheetCached('crm-book', 'Client_Hidden!A:F', 1)
   ok(calls.get.length + calls.batchGet.length === before,
      'an absent optional tab was asked for again — every screen would pay for it')
+
+  // And a tab that is NOT optional must still raise, every time. This is the
+  // half that matters: "missing means empty" on the vehicle source would mean
+  // "no vehicles", which moves clients between people and shrinks every total.
+  behaviour.broken.add('Others!A:B')
+  let raised = 0
+  for (let i = 0; i < 2; i++) {
+    try { await sheets.readSheetCached('source-book', 'Others!A:B', 1) } catch { raised++ }
+  }
+  ok(raised === 2, `a non-optional missing tab raised ${raised} times out of 2 — it must never be treated as empty`)
   console.log('   asked once, then treated as empty; every other tab still raises')
 }
 
@@ -648,7 +673,7 @@ console.log('\n17 A date that cannot be hidden')
 console.log('\n18 The refused pins are shown to somebody')
 {
   const ov = code('pages/api/admin/overview.js')
-  ok(/pinIssues: orphanedPins\(\)/.test(ov), 'the overview must report them')
+  ok(/pinIssues: \[\s*\n\s*\.\.\.orphanedPins\(\),/.test(ov), 'the overview must report them')
   ok(/orphanedPins/.test(ov.split('\n')[8] || '') || /import \{[^}]*orphanedPins/.test(ov),
      'and import it')
 
@@ -760,6 +785,116 @@ console.log('\n20 Nothing calls a function that does not exist')
     ok(bad.length === 0, `${f} calls ${bad.join(", ")} — not imported and not declared in the file`)
   }
   console.log(`   ${screens.length} screens read for names that do not resolve`)
+}
+
+// ══ 21 · Two rows for one client, and six unwatched hours ══════════════
+//
+// Found on the live book by going looking. "KARTHIKEYA TOURS AND TRAVELS" is
+// written on two rows with DIFFERENT hours — "7, 12, 15, 19, 21, 0, 3, 5" and
+// "10, 12, 14, 18, 22, 0, 2, 4, 6". Assigned by name, the second silently
+// replaced the first, and six hours somebody had typed in were on nobody's
+// board. Nothing said so: the client appeared on boards all day, so it looked
+// entirely healthy.
+//
+// The union is the only reading where no typed hour is lost. It can be wrong
+// the other way — a row meant to REPLACE and never deleted now adds hours — so
+// the duplicate is reported rather than merged in silence.
+console.log('\n21 One client on two rows loses nothing')
+{
+  const rows = [['Client','Hours'],
+    ['KARTHIKEYA TOURS AND TRAVELS', '7, 12, 15, 19, 21, 0, 3, 5'],
+    ['Zingbus', '9'],
+    ['KARTHIKEYA TOURS AND TRAVELS', '10, 12, 14, 18, 22, 0, 2, 4, 6'],
+    ['  zingbus  ', '13'],                       // same client, different case
+  ]
+  const t = parseTimings(rows)
+  const k = t['KARTHIKEYA TOURS AND TRAVELS']
+  ok(JSON.stringify(k) === JSON.stringify([0,2,3,4,5,6,7,10,12,14,15,18,19,21,22]),
+     `hours came out as ${JSON.stringify(k)} — the second row is still overwriting the first`)
+  ok(k.includes(7) && k.includes(15) && k.includes(19) && k.includes(21) && k.includes(3),
+     'the hours only the FIRST row had are the ones that were being lost')
+
+  ok(JSON.stringify(t['Zingbus']) === JSON.stringify([9, 13]),
+     `a client written twice in different cases must merge, got ${JSON.stringify(t['Zingbus'])}`)
+  ok(t['  zingbus  '] === undefined, 'and must not become a second client under the other spelling')
+
+  const dups = duplicateTimingRows(rows)
+  ok(dups.length === 2, `${dups.length} duplicates reported, expected 2`)
+  ok(dups.find(d => /KARTHIKEYA/.test(d.client))?.rows === 2, 'the duplicate is named with how many rows it has')
+  ok(duplicateTimingRows([['Client','Hours'], ['Zingbus', '9']]).length === 0,
+     'a client on one row is not a duplicate')
+  console.log(`   15 hours from two rows, and both rows reported so the sheet can be tidied`)
+}
+
+// ══ 22 · The EMPLOYEE column has the same name fault ═══════════════════
+//
+// The client names were fixed; the employee column was not. Found live:
+// Employee_Hours rows 23 and 24 say "Kiran" while Credentials says "KIRAN", so
+// both of that person's pins were doing nothing at all — stored under one
+// spelling, looked up under another.
+//
+// It matters more for a custom duty than for a pin. A pinned client still
+// reaches somebody through the ordinary rotation, but an hour set aside for
+// training or calls that is not recognised hands that person a full board
+// instead — the exact opposite of the instruction.
+console.log('\n22 An employee name typed in another case is the same person')
+{
+  floor({
+    timings: [['Zingbus', '5, 23'], ['Bharat Cabs', '5']],
+    empHours: [
+      ['Kiran', '5',  'Zingbus', ''],       // roster says KIRAN
+      ['Kiran', '23', 'Zingbus', ''],
+      [' nesiya ', '9', '', 'OFFLINE REPORTS'],
+    ],
+  })
+  behaviour.data['Credentials!A:H'] = [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
+    ['E1','KIRAN',  'x','employee','0','9','Yes','No'],
+    ['E2','Nesiya', 'x','employee','8','17','No','No']]
+  await loadScheduleData()
+
+  ok(JSON.stringify(schedule.specificClientsFor('KIRAN', 5)) === '["Zingbus"]',
+     'a pin typed as "Kiran" must reach the roster\'s "KIRAN"')
+  ok(JSON.stringify(schedule.specificClientsFor('KIRAN', 23)) === '["Zingbus"]', 'both hours')
+  ok(schedule.customTextFor('Nesiya', 9) === 'OFFLINE REPORTS',
+     'a custom duty must be recognised too — unrecognised, the hour hands them a full board instead')
+
+  // And a name the roster genuinely does not have is named, not guessed at.
+  floor({ timings: [['Zingbus', '5']], empHours: [['Ghost Person', '5', 'Zingbus', '']] })
+  await loadScheduleData()
+  const orph = schedule.orphanedPins()
+  ok(orph.some(o => o.name === 'Ghost Person' && /not on the roster/.test(o.reason)),
+     'a row against somebody who is not on the roster must be reported')
+  console.log('   "Kiran" reaches KIRAN, " nesiya " keeps her custom duty, a stranger is named')
+}
+
+// ══ 23 · Rows the parser cannot use at all ═════════════════════════════
+//
+// These never reach orphanedPins, because they are dropped before the
+// schedule ever sees them — so they were the one kind of dead row nothing
+// reported. Found live: a row naming two clients for "Nesiya" with the hour
+// column left blank, doing nothing since the day it was typed.
+console.log('\n23 A row with no usable hour is named, not dropped')
+{
+  const bad = unusableHourRows([['Employee','Hour','Fixed Clients','Custom Text'],
+    ['Nesiya', '',   'INF_SSRVM NORTH, INF_SSRVM East', ''],   // the live one
+    ['Sunil',  '9',  'Zingbus', ''],                            // fine
+    ['',       '9',  'Zingbus', ''],                            // no name
+    ['Mahesh', '99', 'Zingbus', ''],                            // not an hour
+    ['Afzal',  '9',  '', ''],                                   // nothing to do
+    ['',       '',   '', ''],                                   // an empty row is just empty
+  ])
+  ok(bad.length === 4, `${bad.length} unusable rows, expected 4 — ${JSON.stringify(bad.map(b => b.row))}`)
+  ok(bad.find(b => b.name === 'Nesiya')?.reason.includes('must be 0-23'), 'the blank hour is named')
+  ok(bad.find(b => b.reason === 'no employee name'), 'a row with no name is named')
+  ok(bad.find(b => b.name === 'Mahesh'), 'an hour outside 0-23 is named')
+  ok(bad.find(b => b.name === 'Afzal')?.reason === 'no clients and no custom text', 'a row that asks for nothing is named')
+  ok(!bad.some(b => b.name === 'Sunil'), 'a usable row must not be reported')
+  ok(bad.every(b => b.row >= 2), 'the row numbers are the ones the admin sees in the sheet')
+
+  const ov = code('pages/api/admin/overview.js')
+  ok(/unusableHourRows\(hourRows \|\| \[\]\)/.test(ov), 'and the Command Center reports them')
+  ok(/duplicateTimingRows\(timingRows \|\| \[\]\)/.test(ov), 'along with the duplicated client rows')
+  console.log('   four dead rows, each with the sheet row number and why')
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)
