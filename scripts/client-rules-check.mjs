@@ -1027,5 +1027,83 @@ console.log('\n25 Nothing is dropped when two spellings meet on one hour')
   console.log('   both pins kept, TRAINING kept, and both kinds of clash named')
 }
 
+// ══ 26 · A tab that does not exist must not cost fourteen requests ═════
+//
+// This is the one that reached the floor. Two tabs are created on demand and
+// did not exist on the live book yet, and they were in the warm list. A batch
+// is all or nothing, so Google failed the whole call for them — and the
+// fallback read every range SINGLY.
+//
+// Measured: every cold serverless instance sent 15 requests where 1 would do.
+// Google allows 60 a minute for the whole platform, so a burst of cold starts
+// spent the floor's entire allowance on tabs that were not there. Reads were
+// refused, Shift_Log came back empty, and employees who WERE on shift were
+// told their shift had not started — the screen curing itself a minute later
+// as instances warmed and the missing-tab memory took hold.
+//
+// The range Google names is dropped and the BATCH is retried. One failure plus
+// a retry is two requests, not fifteen.
+console.log('\n26 A missing tab costs a retry, not a request per range')
+{
+  reset()
+  sheets.invalidateSheetCache('crm-book', '')
+  globalThis.__cautioSheets.missingTabs = new Map()
+  behaviour.data = {}
+  behaviour.broken.add('Client_Hidden!A:F')
+  behaviour.broken.add('Client_Notes!A:F')
+
+  const ranges = [...sheets.SHIFT_SCREEN_TABS, `${sheets.TABS.FOOTAGE_FOLLOWUP}!A:J`]
+  await sheets.warmTogether('crm-book', ranges).catch(() => null)
+  const cold = calls.batchGet.length + calls.get.length
+  ok(cold <= 4, `a cold instance sent ${cold} requests for ${ranges.length} ranges — it must retry the batch, not read them singly`)
+  ok(calls.get.length === 0, `${calls.get.length} single reads — the per-range fallback is the thing that cost the floor its quota`)
+
+  // And the healthy ranges must still arrive.
+  const rows = await sheets.readSheetCached('crm-book', `${sheets.TABS.SHIFT_LOG}!A:H`, 60000)
+  ok(Array.isArray(rows) && rows.length > 0, 'the tabs that DO exist must still come back — this is Shift_Log, which decides whether somebody is on shift')
+
+  // Warm again: the memory means one request now.
+  const before = calls.batchGet.length + calls.get.length
+  sheets.invalidateSheetCache('crm-book', '')
+  await sheets.warmTogether('crm-book', ranges).catch(() => null)
+  const warm = calls.batchGet.length + calls.get.length - before
+  ok(warm === 1, `a warm instance sent ${warm} requests, expected 1`)
+  console.log(`   cold ${cold} requests for ${ranges.length} ranges, warm 1 — it was 15`)
+
+  // A batch that breaks for an UNKNOWN reason must still fall back to singles,
+  // or one bad range would take five healthy ones down with it.
+  reset()
+  sheets.invalidateSheetCache('crm-book', '')
+  behaviour.data = { 'Shift_Log!A:H': [['a']], 'Breaks!A:H': [['b']] }
+  behaviour.failBatch = true
+  const [a, b] = await Promise.all([
+    sheets.readSheetCached('crm-book', 'Shift_Log!A:H', 60000),
+    sheets.readSheetCached('crm-book', 'Breaks!A:H', 60000),
+  ])
+  ok(a.length && b.length, 'an unexplained batch failure must still deliver every range one at a time')
+  console.log('   and an unexplained failure still falls back, so nothing is lost')
+}
+
+// ══ 27 · The same person, the same hour, typed twice ═══════════════════
+//
+// The two-spellings clash was fixed in setScheduleData, but the ordinary
+// mistake needs no case difference: the same name on two rows for one hour
+// collapsed inside the parser, before the merge above ever saw it. The custom
+// duty went with it.
+console.log('\n27 One name, one hour, two rows')
+{
+  const both = parseEmployeeHours([['E','H','F','C'],
+    ['Kiran', '9', 'Zingbus', ''], ['Kiran', '9', 'Shatabdi', '']])
+  ok(JSON.stringify(both.Kiran['9'].clients) === '["Zingbus","Shatabdi"]',
+     `one of the two rows was dropped: ${JSON.stringify(both.Kiran['9'])}`)
+
+  const duty = parseEmployeeHours([['E','H','F','C'],
+    ['Kiran', '9', '', 'TRAINING'], ['Kiran', '9', 'Zingbus', '']])
+  ok(duty.Kiran['9'].text === 'TRAINING',
+     'the custom duty must survive — losing it hands somebody a full board for an hour set aside')
+  ok(duty.Kiran['9'].clients.includes('Zingbus'), 'and the other row is kept too')
+  console.log('   both rows kept, whichever way round they are written')
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)
 process.exit(fail === 0 ? 0 : 1)
