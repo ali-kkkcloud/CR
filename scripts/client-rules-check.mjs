@@ -39,7 +39,8 @@ const { behaviour, calls, reset } = await import('./fake-googleapis.mjs')
 const sheets = await import('../lib/sheets.js')
 const { signToken } = await import('../lib/auth.js')
 const { loadScheduleData, parseHidden, parseClientNotes, parseTimings,
-        duplicateTimingRows, unusableHourRows } = await import('../lib/roster.js')
+        duplicateTimingRows, unusableHourRows, readHourRow,
+        parseEmployeeHours } = await import('../lib/roster.js')
 const schedule = await import('../lib/schedule.js')
 const rules = (await import('../pages/api/admin/client-rules.js')).default
 
@@ -705,8 +706,13 @@ console.log('\n19 Every tab knows which section and heading it belongs to')
   const adminSrc = fs.readFileSync('pages/admin.js', 'utf8')
   const sideSrc  = fs.readFileSync('components/Sidebar.js', 'utf8')
 
+  // Any identifier, not just lowercase letters. `[a-z]+` quietly skipped
+  // `clientRules`, `tab2` and `client_rules` — and the length guard below
+  // would not have noticed, because twelve tabs is still more than eight. A
+  // check written to stop exactly this bug cannot have its own scope depend
+  // on how somebody spells the next tab.
   const tabs = [...(adminSrc.match(/const SECTION_TABS = \{[\s\S]*?\n\}/) || [''])[0]
-    .matchAll(/value:\s*'([a-z]+)'/g)].map(m => m[1])
+    .matchAll(/value:\s*'([A-Za-z0-9_]+)'/g)].map(m => m[1])
   ok(tabs.length > 8, `only ${tabs.length} tabs found — this check is scanning nothing`)
 
   const meta    = (adminSrc.match(/const TAB_META = \{[\s\S]*?\n\}/) || [''])[0]
@@ -753,7 +759,16 @@ console.log('\n20 Nothing calls a function that does not exist')
       .filter(l => !l.trim().startsWith('//')).join('\n')
     // Strings hold prose and CSS, and prose contains things like "the server
     // (…)". Scanning them for calls finds words, not code.
-    const bare = src.replace(/`[^`]*`/g, '``')
+    //
+    // But a template literal is BOTH. Blanking it whole threw away every call
+    // inside a ${…}, and this codebase puts a lot of them there — including
+    // one on pages/admin.js that a recent commit added. So the literal text is
+    // dropped and the interpolations are kept, which is exactly the split
+    // between prose and code.
+    const bare = src
+      .replace(/`(?:[^`\\$]|\\.|\$(?!\{))*`/g, '``')            // no interpolation: drop it all
+      .replace(/`((?:[^`\\]|\\.)*)`/g, (_, body) =>              // otherwise keep only ${…}
+        (body.match(/\$\{[^{}]*\}/g) || []).join(';'))
       .replace(/"(?:\\.|[^"\\])*"/g, '""')
       .replace(/'(?:\\.|[^'\\])*'/g, "''")
     const known = new Set(BUILTIN)
@@ -771,15 +786,30 @@ console.log('\n20 Nothing calls a function that does not exist')
       m[1].split(',').forEach(x => { const n = x.split('=')[0].trim(); if (/^[A-Za-z_$][\w$]*$/.test(n)) known.add(n) })
     for (const m of src.matchAll(/\(\s*\{([^}]*)\}\s*\)/g))
       m[1].split(',').forEach(x => { const n = x.split(/[:=]/)[0].trim(); if (/^[A-Za-z_$][\w$]*$/.test(n)) known.add(n) })
+    // Method definitions — a class's constructor(), render(), or an object's
+    // shorthand method. These LOOK like calls at the start of a line and are
+    // declarations; ErrorBoundary.js reported all four of React's lifecycle
+    // methods as undefined until they were counted.
+    for (const m of src.matchAll(/(?:^|\n)\s*(?:static\s+|async\s+)*([A-Za-z_$][\w$]*)\s*\([^()]*\)\s*\{/g)) known.add(m[1])
     const bad = new Set()
-    for (const m of bare.matchAll(/(^|[^.\w$\'"`])([a-z][A-Za-z0-9_$]*)\s*\(/g))
+    // Capitalised names as well. A helper called Fmt() is exactly as undefined
+    // as one called fmt(), and JSX component names resolve the same way. The
+    // known-set already carries every import and declaration, so this costs
+    // nothing but catches a whole shape the lowercase-only scan let through.
+    for (const m of bare.matchAll(/(^|[^.\w$\'"`])([A-Za-z][A-Za-z0-9_$]*)\s*\(/g))
       if (!known.has(m[2])) bad.add(m[2])
     return [...bad]
   }
 
-  const screens = ['components/tabs/ClientRulesPanel.js', 'components/tabs/ReportsPanel.js',
-                   'components/tabs/MyClientsTab.js', 'components/tabs/ScoresPanel.js',
-                   'components/tabs/EmpDashboardTab.js', 'components/Shell.js', 'pages/admin.js']
+  // Every screen, not a hand-picked seven. The list left out pages/dashboard.js
+  // — the whole employee side — and components/Sidebar.js, which the commit
+  // that introduced this check had itself edited.
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    const path = `${dir}/${e.name}`
+    if (e.isDirectory()) return e.name === 'node_modules' ? [] : walk(path)
+    return e.name.endsWith('.js') && !path.includes('/api/') ? [path] : []
+  })
+  const screens = [...walk('components'), ...walk('pages')]
   for (const f of screens) {
     const bad = undefinedCalls(f)
     ok(bad.length === 0, `${f} calls ${bad.join(", ")} — not imported and not declared in the file`)
@@ -895,6 +925,106 @@ console.log('\n23 A row with no usable hour is named, not dropped')
   ok(/unusableHourRows\(hourRows \|\| \[\]\)/.test(ov), 'and the Command Center reports them')
   ok(/duplicateTimingRows\(timingRows \|\| \[\]\)/.test(ov), 'along with the duplicated client rows')
   console.log('   four dead rows, each with the sheet row number and why')
+}
+
+// ══ 24 · The parser and the reporter read a row the same way ═══════════
+//
+// They measured "is this row usable" differently, and the gap was exactly the
+// kind of row that most needed reporting. The parser splits the clients cell
+// on commas and drops the blanks, so " , , " gives it nothing and the row is
+// discarded. The reporter only trimmed the cell, and " , , " is not empty, so
+// it called the row healthy.
+//
+// A row with the client names deleted but the commas left behind therefore did
+// nothing AND was reported nowhere — the invisible dead row this reporter
+// exists to abolish. One function decides now and both read its answer.
+console.log('\n24 One reading of a row, for the parser and the reporter')
+{
+  const rows = [['Employee','Hour','Fixed Clients','Custom Text'],
+    ['Nesiya', '9', ' , , ', ''],          // commas left behind
+    ['Sunil',  '9', 'Zingbus', ''],
+  ]
+  const kept = parseEmployeeHours(rows)
+  const said = unusableHourRows(rows)
+  ok(!kept['Nesiya'], 'the parser still drops a row whose clients cell is only commas')
+  ok(said.some(u => u.name === 'Nesiya'),
+     'and the reporter must now name it — it was silent, which is the whole fault')
+  ok(!said.some(u => u.name === 'Sunil'), 'a usable row is still not reported')
+
+  // The shared reading, directly.
+  ok(readHourRow(['Nesiya','9',' , , ','']).problem === 'no clients and no custom text',
+     'readHourRow is the one place that decides')
+  ok(readHourRow(['Sunil','9','Zingbus','']).problem === null, 'and passes a good row')
+  ok(readHourRow(['','','','']).problem === 'empty', 'an empty row is empty, not a fault to report')
+
+  // Every row the parser drops must be a row the reporter names, and vice
+  // versa. That equality IS the fix; anything else is the same gap again.
+  const mixed = [['Employee','Hour','Fixed','Custom'],
+    ['A','9','X',''], ['B','','X',''], ['C','9',' , ',''], ['','9','X',''],
+    ['D','99','X',''], ['E','9','','TRAINING'], ['','','',''],
+  ]
+  const parsedNames = new Set(Object.keys(parseEmployeeHours(mixed)))
+  const namedRows   = new Set(unusableHourRows(mixed).map(u => u.row))
+  mixed.slice(1).forEach((r, i) => {
+    const rowNo = i + 2
+    const usable = readHourRow(r).problem === null
+    const isEmpty = readHourRow(r).problem === 'empty'
+    if (isEmpty) return
+    ok(usable ? !namedRows.has(rowNo) : namedRows.has(rowNo),
+       `row ${rowNo} is ${usable ? 'usable but reported' : 'dropped but not reported'}`)
+  })
+  ok(parsedNames.has('A') && parsedNames.has('E'), 'the good rows are still parsed')
+  console.log('   every dropped row is named, and every named row was dropped')
+}
+
+// ══ 25 · One person under two spellings, on the same hour ══════════════
+//
+// The roster matching was right, but the merge was not: spreading the hour
+// maps replaced the whole cell, so the loser's clients vanished and nothing
+// said so. Worse where the loser held a CUSTOM DUTY — "TRAINING" simply
+// disappeared and the person was handed a full board for an hour that had been
+// set aside, which is the exact opposite of the instruction, and the case this
+// matching was fixed for in the first place.
+console.log('\n25 Nothing is dropped when two spellings meet on one hour')
+{
+  floor({
+    timings: [['Zingbus', '9'], ['Shatabdi', '9']],
+    empHours: [['Kiran', '9', 'Zingbus', ''], ['KIRAN', '9', 'Shatabdi', '']],
+  })
+  behaviour.data['Credentials!A:H'] = [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
+    ['E1','KIRAN','x','employee','0','9','Yes','No']]
+  await loadScheduleData()
+
+  const both = schedule.specificClientsFor('KIRAN', 9) || []
+  ok(both.includes('Zingbus') && both.includes('Shatabdi'),
+     `one of the two pins was dropped: ${JSON.stringify(both)}`)
+  ok(schedule.nameClashes().some(c => c.name === 'KIRAN' && c.hour === 9),
+     'and the clash must be reported, so the sheet gets tidied')
+
+  // The custom duty, which is the case that actually costs somebody their hour.
+  floor({
+    timings: [['Zingbus', '9']],
+    empHours: [['Kiran', '9', '', 'TRAINING'], ['KIRAN', '9', 'Zingbus', '']],
+  })
+  behaviour.data['Credentials!A:H'] = [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
+    ['E1','KIRAN','x','employee','0','9','Yes','No']]
+  await loadScheduleData()
+  ok(schedule.customTextFor('KIRAN', 9) === 'TRAINING',
+     'the custom duty must survive — losing it hands somebody a full board for an hour set aside')
+
+  // Two roster entries that are the same name to the platform. Nobody loses a
+  // client, but a pin written for one reaches the other, so it is named.
+  floor({ timings: [['Zingbus', '9']], empHours: [['Kiran', '9', 'Zingbus', '']] })
+  behaviour.data['Credentials!A:H'] = [['EmpID','Name','Pw','Role','Start','End','Night','WeekOff'],
+    ['E1','Kiran','x','employee','0','9','Yes','No'],
+    ['E2','KIRAN','x','employee','0','9','Yes','No']]
+  await loadScheduleData()
+  ok(schedule.nameClashes().some(c => /Credentials also has/.test(c.reason)),
+     'two roster names that differ only in case must be reported')
+
+  const ov = code('pages/api/admin/overview.js')
+  ok(/\.\.\.nameClashes\(\)\.map/.test(ov), 'and the Command Center shows them')
+  console.log('   both pins kept, TRAINING kept, and both kinds of clash named')
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)

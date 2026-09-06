@@ -6,7 +6,7 @@ import {
   getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, nowIST, getWatchlistNames, TTL, warmTogether, SHIFT_SCREEN_TABS,
   vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
-import { employees, weekOffNamesFor, orphanedPins, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
+import { employees, weekOffNamesFor, orphanedPins, nameClashes, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
 import { loadScheduleData, duplicateTimingRows, unusableHourRows } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan, staleClientsFrom } from '../../../lib/dayplan'
@@ -657,6 +657,9 @@ export default async function handler(req, res) {
       // somebody wrote that quietly does nothing is its own kind of invisible.
       pinIssues: [
         ...orphanedPins(),
+        // One person under two spellings, and roster names that collide.
+        // Both are only answerable by editing the sheet.
+        ...nameClashes().map(c => ({ name: c.name, hour: c.hour, client: '—', reason: c.reason })),
         // Rows the parser cannot use at all — a blank hour, a missing name.
         // These never reach orphanedPins because they are dropped before the
         // schedule ever sees them, so they would be the one kind of dead row
