@@ -373,5 +373,136 @@ console.log('\n10 A tab that is not there, and the ones that must still raise')
   console.log('   asked once, then treated as empty; every other tab still raises')
 }
 
+// ══ 11 · One spelling of a client's name ═══════════════════════════════
+//
+// Found by going looking, not by anybody reporting it — and it would have been
+// the worst of the lot. Four sheets name the same client and people type them
+// by hand, so "Zingbus", "zingbus" and " Zingbus " all occur. Once
+// Client_Timings decides whether a pin is honoured, an exact-match lookup
+// means a stray capital in Employee_Hours SILENTLY DROPS a pinned client: it
+// stops reaching anybody, and nothing anywhere says so.
+//
+// That is the one outcome this platform must never produce, and the change
+// that was meant to prevent a client appearing wrongly would have introduced
+// it. Matched on a normalised key now, and returned in Client_Timings' own
+// spelling so everything downstream speaks one name for one client.
+console.log('\n11 A name typed with a different capital is the same client')
+{
+  floor({
+    timings: [['Zingbus', '9'], ['Bharat Cabs', '9']],
+    empHours: [['Sunil', '9', ' zingbus ', '']],          // lower case, padded
+    hidden:  [[D4, 'BHARAT CABS', '', 'Boss', '', 'Hidden']],
+    notes:   [['  zingbus', '9', 'read this', 'Boss', '', 'Active']],
+  })
+  await loadScheduleData()
+
+  ok(JSON.stringify(schedule.specificClientsFor('Sunil', 9)) === '["Zingbus"]',
+     'a pin typed in a different case must still be delivered, in the timings sheet\'s spelling')
+  ok(schedule.canonicalClient('  ZiNgBuS  ') === 'Zingbus', 'the canonical name is the timings sheet\'s own')
+  ok(schedule.canonicalClient('Nope Ltd') === null, 'a client the timings sheet does not have has no canonical name')
+  ok(schedule.hiddenClientsOn(D4).has('Bharat Cabs'),
+     'a hiding typed in a different case must still hide — as the sheet spells it')
+  ok(schedule.noteFor('Zingbus', 9) === 'read this', 'and a note must still be found')
+
+  // Returned in one spelling, so a Set built from clientTimings can match it.
+  const dist = schedule.distributeClientsForHour(9, ['Sunil', 'Nesiya'], {}, {}, true, schedule.hiddenClientsOn(D4))
+  const all = Object.values(dist).flat().map(c => c.client)
+  ok(all.includes('Zingbus'), `the pinned client went missing: ${JSON.stringify(all)}`)
+  ok(!all.includes('Bharat Cabs'), `the hidden client is still on a board: ${JSON.stringify(all)}`)
+  console.log('   " zingbus " and "BHARAT CABS" both resolve to the sheet\'s spelling')
+
+  // The stored set is module state. Handing out the real one lets any caller
+  // quietly change what every other screen believes is hidden.
+  const a = schedule.hiddenClientsOn(D4)
+  a.add('Zingbus')
+  ok(!schedule.hiddenClientsOn(D4).has('Zingbus'),
+     'hiddenClientsOn returned the live set — one screen can now hide clients on every other')
+  console.log('   and the set handed out is a copy, not the live one')
+}
+
+// ══ 12 · The audit must not raise an alarm for cancelled work ══════════
+//
+// A client on no board is invisible, and the Command Center shouts about it —
+// correctly, because that is the worst way for work to go missing. But a
+// client an admin deliberately took off the day is not missing, and the audit
+// was measuring the hour against a list the split was never given.
+//
+// Seen with an empty pool: all three clients came back as unassigned INCLUDING
+// the hidden one. The loudest alarm on the platform, firing for work that was
+// cancelled on purpose.
+console.log('\n12 A hidden client is not "reaching no board"')
+{
+  const { computeDayPlan } = await import('../lib/dayplan.js')
+  floor({
+    timings: [['Zingbus', '9'], ['Bharat Cabs', '9'], ['Coral Tours', '9']],
+    hidden: [[D4, 'Coral Tours', '', 'Boss', '', 'Hidden']],
+  })
+  await loadScheduleData()
+
+  // Nobody on shift — which is exactly when the audit reports unassigned work.
+  const plan = computeDayPlan({
+    date: D4, today: D4, nowHour: 11, yesterday: '03/08/2026',
+    shiftRows: [['EmpID','Name','Date','In','Out','','Status','']],
+    updateRows: [['Date','Time','Emp','Client','Hour','Status','','','','','','']],
+    breakRows: [['h']], leaveMap: {}, overridesMap: {}, vehicleMap: {}, weekOffNames: new Set(),
+  })
+  const h9 = plan.hours.find(h => h.hour === 9)
+  ok(!h9.unassigned.includes('Coral Tours'),
+     `the hidden client is reported as reaching no board: ${JSON.stringify(h9.unassigned)}`)
+  ok(h9.unassigned.includes('Zingbus') && h9.unassigned.includes('Bharat Cabs'),
+     'the genuinely uncovered clients must still be reported — this alarm has to keep working')
+  console.log(`   nobody on shift → ${JSON.stringify(h9.unassigned)}, and Coral Tours is not among them`)
+}
+
+// ══ 13 · Work already done on a client that is then hidden ═════════════
+//
+// An admin can hide a client half way through the day, after somebody has
+// already worked it. The record of that work must survive — finished work
+// stays with whoever finished it — without the day's totals going incoherent.
+console.log('\n13 Hidden after the work was already done')
+{
+  const { computeDayPlan } = await import('../lib/dayplan.js')
+  floor({
+    timings: [['Zingbus', '9'], ['Bharat Cabs', '9']],
+    hidden: [[D4, 'Zingbus', '', 'Boss', '', 'Hidden']],
+  })
+  await loadScheduleData()
+
+  const plan = computeDayPlan({
+    date: D4, today: D4, nowHour: 11, yesterday: '03/08/2026',
+    shiftRows: [['EmpID','Name','Date','In','Out','','Status',''],
+                ['E1','Nesiya', D4, '08:00:00 am', '', '', 'Active', '']],
+    updateRows: [['Date','Time','Emp','Client','Hour','Status','Mis','Alerts','Fat','FC','Notes','Live'],
+                 [D4, '09:15:00 am', 'Nesiya', 'Zingbus', '9', 'Updated', '', '0', 'No', '0', '', '50']],
+    breakRows: [['h']], leaveMap: {}, overridesMap: {}, vehicleMap: {}, weekOffNames: new Set(),
+  })
+  const me = plan.byEmployee['Nesiya']
+  const at9 = (me.hours[9] || []).map(c => c.client)
+  ok(at9.includes('Zingbus'), 'work already recorded must not vanish when the client is hidden')
+  ok(me.clientsDone <= me.clients,
+     `${me.clientsDone} done against ${me.clients} assigned — a hidden client left the total incoherent`)
+  console.log(`   ${me.clientsDone} of ${me.clients} done, and the finished Zingbus is still on the record`)
+}
+
+// ══ 14 · Two admins creating the same tab at once ══════════════════════
+console.log('\n14 The tab race, and the write path')
+{
+  const sh = code('lib/sheets.js')
+  ok(/if \(!\/already exists\/i\.test\(e\?\.message \|\| ''\)\) throw e/.test(sh),
+     'two admins saving together both create the tab; the loser must not have their save fail for it')
+
+  const red = code('pages/api/admin/apply-leave-redistribution.js')
+  ok(/const hidden = hiddenClientsOn\(date\)/.test(red),
+     'marking leave must not hand a hidden client to somebody, or write a redistribution row for it')
+  ok(/distributeClientsForHour\(hour, withThem, vehicleMap, \{\}, false, hidden\)/.test(red) &&
+     /distributeClientsForHour\(hour, withoutThem, vehicleMap, lockedWithoutEmp, false, hidden\)/.test(red),
+     'both sides of the redistribution have to see the same day')
+
+  const dp = code('lib/dayplan.js')
+  ok(/auditHourAssignment\(hour, pool, vehicleMap, \{\}, true, hidden\)/.test(dp),
+     'the audit inside the day plan must be given the same hidden set as the split')
+  console.log('   the three places that could still have disagreed with the day')
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)
 process.exit(fail === 0 ? 0 : 1)

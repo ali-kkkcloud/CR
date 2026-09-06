@@ -75,14 +75,18 @@ export default async function handler(req, res) {
         Object.entries(lockedAll).filter(([, v]) => v !== empName)
       )
 
-      const oldDist      = distributeClientsForHour(hour, withThem, vehicleMap, {})
+      // A client taken off this day is not work that needs a new owner. Left
+      // out of both splits, so leave never hands one to somebody — and never
+      // writes a Redistribution_Log row for work nobody was meant to do.
+      const hidden = hiddenClientsOn(date)
+      const oldDist      = distributeClientsForHour(hour, withThem, vehicleMap, {}, false, hidden)
       const theirClients = (oldDist[empName] || [])
         .map(c => c.client)
         .filter(c => !lockedAll[c] || lockedAll[c] === empName)
 
       if (!theirClients.length) continue
 
-      const newDist = distributeClientsForHour(hour, withoutThem, vehicleMap, lockedWithoutEmp)
+      const newDist = distributeClientsForHour(hour, withoutThem, vehicleMap, lockedWithoutEmp, false, hidden)
 
       theirClients.forEach(client => {
         let newOwner = null
