@@ -32,13 +32,27 @@ import {
 import { loadScheduleData } from '../../../lib/roster'
 import { clientTimings, hiddenMap, clientNotes } from '../../../lib/schedule'
 
-const DATE = /^\d{2}\/\d{2}\/\d{4}$/
+const DATE = /^(\d{2})\/(\d{2})\/(\d{4})$/
 
 // The operating day is what every date column in these sheets holds, so a
 // date typed on the screen has to arrive in that shape and no other. A
 // malformed one would sit in the tab hiding nothing, which looks exactly like
 // the feature not working.
-const validDate = (d) => DATE.test(d)
+//
+// The shape is not enough on its own: "99/99/2026" matches the pattern and is
+// not a day, so it would be written, hide nothing, and sit in the tab looking
+// like it worked. Round-tripped through a real Date so only days that exist
+// get through.
+function validDate(d) {
+  const m = DATE.exec(d || '')
+  if (!m) return false
+  const [, dd, mm, yyyy] = m.map(Number)
+  const dt = new Date(yyyy, mm - 1, dd)
+  return dt.getFullYear() === yyyy && dt.getMonth() === mm - 1 && dt.getDate() === dd
+}
+
+// dd/mm/yyyy as a sortable number, for comparing against today.
+const ord = (d) => { const m = DATE.exec(d || ''); return m ? Number(m[3] + m[2] + m[1]) : 0 }
 
 export default async function handler(req, res) {
   const user = getUserFromReq(req)
@@ -85,7 +99,24 @@ export default async function handler(req, res) {
       if (!dates.length)   return res.status(400).json({ error: 'Pick at least one date.' })
 
       const bad = dates.filter(d => !validDate(d))
-      if (bad.length) return res.status(400).json({ error: `Dates must be dd/mm/yyyy — got ${bad[0]}` })
+      if (bad.length) return res.status(400).json({ error: `Dates must be a real dd/mm/yyyy — got ${bad[0]}` })
+
+      // ── A day that has already finished cannot be taken off ───────────
+      //
+      // The screen offers today and forward, but it works out "today" once
+      // when it is opened, and this floor runs 24x7 with the operating day
+      // rolling at seven in the morning. A tab left open across that rollover
+      // would let an admin add yesterday — which changes a day that is already
+      // recorded and settled. Removing an old entry is still allowed, so a
+      // mistake made earlier can always be undone.
+      if (action !== 'remove') {
+        const past = dates.filter(d => ord(d) < ord(todayStr()))
+        if (past.length) {
+          return res.status(400).json({
+            error: `${past[0]} has already finished — a day can only be taken off today or later. Refresh the screen if it has been open a while.`,
+          })
+        }
+      }
 
       // A client the timings sheet has never heard of cannot be hidden,
       // because it was never shown. Refusing it here is how a typo is caught

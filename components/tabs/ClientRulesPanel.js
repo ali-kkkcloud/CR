@@ -124,6 +124,26 @@ function HiddenSection({ clients, rows, busy, send }) {
   const [oneDate, setOneDate] = useState(() => isoOf(operatingToday()))
   const [reason, setReason] = useState('')
 
+  // ── "Today" moves, and this screen may be open when it does ──────────
+  //
+  // The operating day rolls at seven in the morning and this floor works
+  // through it. A tab left open across that rollover would keep offering
+  // yesterday as the earliest date, and an admin could add a day that has
+  // already finished and been settled. Re-checked every minute so the picker
+  // and its minimum move with the clock. The server refuses a past date too —
+  // this is so nobody is offered one in the first place.
+  const [floorToday, setFloorToday] = useState(() => isoOf(operatingToday()))
+  useEffect(() => {
+    const t = setInterval(() => setFloorToday(isoOf(operatingToday())), 60000)
+    return () => clearInterval(t)
+  }, [])
+  useEffect(() => {
+    setOneDate(d => (d < floorToday ? floorToday : d))
+    // Compared as ISO. The list holds dd/mm/yyyy, and those do not sort:
+    // "05/09/2026" reads as later than "30/08/2026" to a string comparison.
+    setDates(ds => ds.filter(d => toISO(d) >= floorToday))
+  }, [floorToday])
+
   const addDate = () => {
     const d = fromISO(oneDate)
     if (d && !dates.includes(d)) setDates([...dates, d])
@@ -145,7 +165,7 @@ function HiddenSection({ clients, rows, busy, send }) {
 
         <div style={{ display:'flex', alignItems:'flex-end', gap:SP[3], flexWrap:'wrap', marginTop:SP[4] }}>
           <Field label="Date" hint="Today or any day ahead" style={{ minWidth:'170px' }}>
-            <input type="date" value={oneDate} min={isoOf(operatingToday())}
+            <input type="date" value={oneDate} min={floorToday}
                    onChange={e => setOneDate(e.target.value)} />
           </Field>
           <Button variant="ghost" icon="plus" onClick={addDate}>Add date</Button>

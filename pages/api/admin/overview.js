@@ -6,7 +6,7 @@ import {
   getAwayOnBreakNames, fetchClientVehicleCounts, calcDurationMinutes, nowStr, nowIST, getWatchlistNames, TTL, warmTogether, SHIFT_SCREEN_TABS,
   vehicleKey, vehicleMapHealth,
 } from '../../../lib/sheets'
-import { employees, weekOffNamesFor, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
+import { employees, weekOffNamesFor, orphanedPins, isScheduledAtHour, distributeClientsForHour, clientTimings, getScheduledEmployeesAtHour, auditHourAssignment, specificClientsFor } from '../../../lib/schedule'
 import { loadScheduleData } from '../../../lib/roster'
 import { buildHourPool, buildLockedAssignments, collapseSlotOwners } from '../../../lib/distribution'
 import { computeDayPlan, staleClientsFrom } from '../../../lib/dayplan'
@@ -629,6 +629,14 @@ export default async function handler(req, res) {
       workload,
       rosterIssues,
       clientIssues,
+      // ── Pins Client_Timings refuses ──────────────────────────────────
+      //
+      // Employee_Hours used to deliver a named client whether or not the
+      // timings sheet scheduled it. It no longer does — which is correct, and
+      // silent: on the live book fourteen pins stopped working the day that
+      // landed, and the person who typed them had no way to find out. A row
+      // somebody wrote that quietly does nothing is its own kind of invisible.
+      pinIssues: orphanedPins(),
       coverageGaps,
       // Clients with not one update against them since seven this morning.
       staleClients: staleOut,

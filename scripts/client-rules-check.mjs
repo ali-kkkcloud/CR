@@ -49,6 +49,17 @@ const code = f => fs.readFileSync(f, 'utf8')
 
 const D4 = '04/08/2026', D5 = '05/08/2026'
 
+// Dates the API will accept. A day that has already finished cannot be taken
+// off — see check 17 — so anything POSTed has to be today or later, and
+// hard-coding one would make this file pass now and fail next month. The
+// operating day, because that is what the server compares against.
+const opToday = () => { const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  if (d.getHours() < 7) d.setDate(d.getDate() - 1); return d }
+const ahead = (n) => { const d = opToday(); d.setDate(d.getDate() + n)
+  const p = x => String(x).padStart(2, '0')
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}` }
+const F1 = ahead(1), F2 = ahead(2)
+
 // Client_Timings: Client | Hours   ·   Employee_Hours: Employee | Hour | Fixed | Custom
 // Client_Hidden: Date|Client|Reason|By|At|Status  ·  Client_Notes: Client|Hour|Note|By|At|Status
 function floor({ timings = [], empHours = [], hidden = [], notes = [] } = {}) {
@@ -288,7 +299,7 @@ console.log('\n8  What the Command Center will not save')
   const badDate = await api('POST', { kind:'hidden', action:'add', clients:['Zingbus'], dates:['2026-08-04'] })
   ok(badDate.status === 400, 'an ISO date must be refused — it would hide nothing and look like a broken feature')
 
-  const ghost = await api('POST', { kind:'hidden', action:'add', clients:['Nope Ltd'], dates:[D4] })
+  const ghost = await api('POST', { kind:'hidden', action:'add', clients:['Nope Ltd'], dates:[F1] })
   ok(ghost.status === 400 && /Not in Client_Timings/.test(ghost.body.error),
      'a client the timings sheet has never heard of cannot be hidden')
 
@@ -302,7 +313,7 @@ console.log('\n8  What the Command Center will not save')
   const good = await api('POST', { kind:'note', action:'add', clients:['Zingbus'], hours:[9, 13], note:'Check carefully' })
   ok(good.status === 200 && good.body.written === 2, `two hours should write two rows, got ${JSON.stringify(good.body)}`)
 
-  const multi = await api('POST', { kind:'hidden', action:'add', clients:['Zingbus','Cityflo_Mumbai'], dates:[D4, D5] })
+  const multi = await api('POST', { kind:'hidden', action:'add', clients:['Zingbus','Cityflo_Mumbai'], dates:[F1, F2] })
   ok(multi.status === 200 && multi.body.written === 4,
      `two clients over two days is four rows, got ${JSON.stringify(multi.body)}`)
   console.log('   bad dates, unknown clients and unreachable hours are all turned away')
@@ -502,6 +513,147 @@ console.log('\n14 The tab race, and the write path')
   ok(/auditHourAssignment\(hour, pool, vehicleMap, \{\}, true, hidden\)/.test(dp),
      'the audit inside the day plan must be given the same hidden set as the split')
   console.log('   the three places that could still have disagreed with the day')
+}
+
+// ══ 15 · "Put back" must work whatever case it was typed in ════════════
+//
+// The nastiest of the lot, and the same fault as check 11 wearing different
+// clothes. Check 11 fixed the LOOKUP; this is the COLLAPSE that happens
+// before it.
+//
+// Both tabs are append-only: removing something appends a row marked Removed
+// and the parser keeps the last row per key. Keyed on the raw name, a "Hidden"
+// row for "Zingbus" and a "Removed" row for "zingbus" are two different keys.
+// Both survive, both canonicalise to the same client, and Hidden wins.
+//
+// The admin presses "Put back", is told it worked, and the client stays off
+// every board — and out of the denominator, so no alarm fires either. The tab
+// is hand-editable and this platform runs on spreadsheets people type into, so
+// the two spellings genuinely occur.
+console.log('\n15 Removing something that was typed in another case')
+{
+  floor({
+    timings: [['Zingbus', '9'], ['Bharat Cabs', '9']],
+    hidden: [
+      [D4, 'Zingbus', '', 'Boss', '', 'Hidden'],
+      [D4, 'zingbus', '', 'Boss', '', 'Removed'],     // put back, lower case
+    ],
+    notes: [
+      ['Zingbus', '9', 'check driver cam', 'Boss', '', 'Active'],
+      ['  ZINGBUS ', '9', '', 'Boss', '', 'Removed'], // removed, padded + upper
+    ],
+  })
+  await loadScheduleData()
+
+  ok(schedule.hiddenClientsOn(D4).size === 0,
+     `"Put back" typed in another case did not put it back: ${JSON.stringify([...schedule.hiddenClientsOn(D4)])}`)
+  ok(schedule.noteFor('Zingbus', 9) === null,
+     'a note removed under a different capital is still in force')
+
+  const on = schedule.distributeClientsForHour(9, ['Nesiya'], {}, {}, true, schedule.hiddenClientsOn(D4))
+    .Nesiya.map(c => c.client)
+  ok(on.includes('Zingbus'), `the client is still off every board: ${JSON.stringify(on)}`)
+
+  // The collapse itself, directly — this is where the fault lived.
+  const h = parseHidden([['Date','Client','Reason','By','At','Status'],
+    [D4, 'Coral Tours', '', 'B', '', 'Hidden'],
+    [D4, ' coral tours ', '', 'B', '', 'Removed'],
+  ])
+  ok(!h[D4] || !h[D4].size, 'parseHidden must collapse the two spellings onto one key')
+  // One entry, not two — and it is the later row's text. The key it comes
+  // back under is that row's own spelling; turning it into Client_Timings'
+  // spelling is setScheduleData's job, checked above.
+  const n = parseClientNotes([['Client','Hour','Note','By','At','Status'],
+    ['Coral Tours', '9', 'first', 'B', '', 'Active'],
+    ['CORAL TOURS', '9', 'second', 'B', '', 'Active'],
+  ])
+  ok(Object.keys(n).length === 1, `two spellings collapsed to ${Object.keys(n).length} entries, expected 1`)
+  ok(Object.values(n)[0][9] === 'second', 'and the later note must win across spellings')
+  console.log('   the last row wins whatever capital it was typed in')
+}
+
+// ══ 16 · The header, and the row that would have been eaten ════════════
+//
+// Both tabs are created on demand, and the parsers all skip row 1. A data row
+// that lands there is not corrupted, it is INVISIBLE — the admin is told the
+// client is off for the day and it never is.
+//
+// Two ways in, and the second needs no error at all:
+//   · the loser of the create race returns early, appends onto row 1 of an
+//     empty sheet, and the winner's header write to A1 overwrites it
+//   · an admin arriving a moment AFTER the sheet was created but before its
+//     header was written sees the tab in the listing, returns straight away,
+//     and appends onto row 1 just the same
+//
+// Closed by making the header part of what "ensured" means: nobody leaves
+// ensureTab until row one is on the sheet.
+console.log('\n16 Nobody leaves ensureTab before the header is written')
+{
+  const sh = code('lib/sheets.js')
+  const fn = (sh.match(/export async function ensureTab[\s\S]*?\n\}/) || [''])[0]
+
+  ok(/values\.get\(\{ spreadsheetId, range: `\$\{tab\}!A1:A1` \}/.test(fn),
+     'the header must be CHECKED, not assumed — an existing tab may have been created a moment ago')
+  ok(!/if \(!\/already exists\/i\.test\(e\?\.message \|\| ''\)\) throw e\s*\n\s*seen\.add/.test(fn),
+     'the "already exists" branch must not return before the header check')
+  // The header write comes after the existence check, and both paths reach it.
+  const iCheck = fn.indexOf('A1:A1')
+  const iWrite = fn.indexOf('values.update')
+  const iSeen  = fn.lastIndexOf('seen.add')
+  ok(iCheck > 0 && iWrite > iCheck && iSeen > iWrite,
+     'the order must be: exists → check header → write header → done')
+  ok(/if \(!firstRow\.length \|\| !\(firstRow\[0\] \|\| ''\)\.toString\(\)\.trim\(\)\)/.test(fn),
+     'and the header is only written when row one is genuinely empty, so it can never clobber data')
+  console.log('   exists → check row 1 → write it if empty → only then return')
+}
+
+// ══ 17 · Dates that are not days, and days that have gone ══════════════
+console.log('\n17 A date that cannot be hidden')
+{
+  floor({ timings: [['Zingbus', '9']] })
+  await loadScheduleData()
+
+  const nonsense = await api('POST', { kind:'hidden', action:'add', clients:['Zingbus'], dates:['99/99/2026'] })
+  ok(nonsense.status === 400,
+     '"99/99/2026" matches the pattern and is not a day — it would be written, hide nothing, and look like it worked')
+
+  // The screen offers today and forward, but it works out "today" once when it
+  // is opened, and this floor runs through the seven o'clock rollover. A tab
+  // left open across it would let an admin change a day already settled.
+  const past = await api('POST', { kind:'hidden', action:'add', clients:['Zingbus'], dates:['01/01/2020'] })
+  ok(past.status === 400 && /already finished/.test(past.body.error || ''),
+     'a day that has already finished cannot be taken off')
+
+  // Undoing an old mistake must still be possible.
+  const undo = await api('POST', { kind:'hidden', action:'remove', clients:['Zingbus'], dates:['01/01/2020'] })
+  ok(undo.status === 200, 'removing an entry on a past day must still work, or an old mistake is permanent')
+
+  const panel = code('components/tabs/ClientRulesPanel.js')
+  ok(/setInterval\(\(\) => setFloorToday\(isoOf\(operatingToday\(\)\)\), 60000\)/.test(panel),
+     'the screen re-checks the operating day, so a tab left open across 7am stops offering yesterday')
+  ok(/setDates\(ds => ds\.filter\(d => toISO\(d\) >= floorToday\)\)/.test(panel),
+     'and dates already picked are compared as ISO — dd/mm/yyyy strings do not sort')
+  console.log('   99/99 refused, a finished day refused, and undoing one still allowed')
+}
+
+// ══ 18 · A pin that does nothing reaches the Command Center ════════════
+//
+// The behaviour is right and silent: fourteen pins stopped working on the live
+// book the day this landed, and the person who typed them had no way to find
+// out. A row somebody wrote that quietly does nothing is its own kind of
+// invisible — the same fault, one level up.
+console.log('\n18 The refused pins are shown to somebody')
+{
+  const ov = code('pages/api/admin/overview.js')
+  ok(/pinIssues: orphanedPins\(\)/.test(ov), 'the overview must report them')
+  ok(/orphanedPins/.test(ov.split('\n')[8] || '') || /import \{[^}]*orphanedPins/.test(ov),
+     'and import it')
+
+  const ad = code('pages/admin.js')
+  ok(/const pinIssues\s+= overview\?\.pinIssues \|\| \[\]/.test(ad), 'the screen must read it')
+  ok(/title:'Fixed-client rows that do nothing'/.test(ad), 'and raise it beside the other things the sheet cannot deliver')
+  ok(/rows: pinIssues\.map/.test(ad), 'listing each one by name, with its reason')
+  console.log('   Employee_Hours rows that are ignored are named on the Command Center')
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)

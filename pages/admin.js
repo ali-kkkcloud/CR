@@ -462,6 +462,7 @@ export default function Admin() {
   const { employees, kpis, redistribution } = overview
   const rosterIssues = overview?.rosterIssues || []
   const clientIssues = overview?.clientIssues || []
+  const pinIssues    = overview?.pinIssues || []
 
   const statusMeta = (st) => ({
     'Active':      { color:C.accent, label:'Active' },
@@ -573,6 +574,22 @@ export default function Admin() {
       title:'Clients the sheet cannot deliver',
       sub:'Each of these needs a change in the spreadsheet — the platform cannot guess it',
       rows: clientIssues.map(c => ({ primary:c.client, secondary:c.reason, tone:C.red })),
+    }),
+  })
+  // A row in Employee_Hours naming a client Client_Timings does not schedule
+  // is honoured no longer — the timings sheet is the master list. That is the
+  // right behaviour and an invisible one: the row stays in the sheet looking
+  // like it works. Named here so whoever wrote it can fix it or delete it.
+  if (pinIssues.length>0) aiAlerts.push({
+    sev:'medium', icon:'alerts', title:'Fixed-client rows that do nothing',
+    desc:`${pinIssues.length} row${pinIssues.length===1?'':'s'} in Employee_Hours name a client Client_Timings does not run at that hour, so ${pinIssues.length===1?'it is':'they are'} ignored`,
+    act:()=>setListModal({
+      title:'Fixed-client rows that do nothing',
+      sub:'Client_Timings decides whether a client runs. A pin only says who does it — so these are skipped.',
+      rows: pinIssues.map(p => ({
+        primary:`${p.name} · ${fmtHourShort(p.hour)} · ${p.client}`,
+        secondary:p.reason, tone:C.amber,
+      })),
     }),
   })
   if (rosterIssues.length>0) aiAlerts.push({
