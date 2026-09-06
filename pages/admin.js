@@ -52,6 +52,7 @@ const TAB_META = {
   fullday:        { title: 'Hour by hour',        sub: 'Every hour of today, for every employee' },
   redistribution: { title: 'Hour by hour',        sub: "Where today's work moved, and why" },
   stale:          { title: 'Hour by hour',        sub: 'Clients no one has filled since 7am — whoever they belonged to' },
+  clientrules:    { title: 'Hour by hour',        sub: 'Days a client is off, and notes pinned to an hour' },
   footage:        { title: 'Requests',            sub: 'Footage requests raised by the floor' },
   followups:      { title: 'Requests',            sub: 'Requests handed on at the end of a shift' },
   progress:       { title: 'Team',                sub: 'Attendance and output across a date range' },

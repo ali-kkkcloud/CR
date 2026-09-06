@@ -31,7 +31,7 @@ export const TAB_SECTION = {
   // opening it jumped the sidebar to Dashboard AND emptied the row of section
   // tabs — the screen rendered correctly underneath, but every signpost said
   // you were somewhere else. 'stale' was missing.
-  fullday:'day', redistribution:'day', stale:'day',
+  fullday:'day', redistribution:'day', stale:'day', clientrules:'day',
   footage:'requests', followups:'requests',
   progress:'people', breaks:'people', leaves:'people',
   reports:'more', analytics:'more', alerts:'more', settings:'more',

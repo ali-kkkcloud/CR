@@ -631,8 +631,11 @@ console.log('\n17 A date that cannot be hidden')
   const panel = code('components/tabs/ClientRulesPanel.js')
   ok(/setInterval\(\(\) => setFloorToday\(isoOf\(operatingToday\(\)\)\), 60000\)/.test(panel),
      'the screen re-checks the operating day, so a tab left open across 7am stops offering yesterday')
+  // Compared as ISO, and the helper that does it EXISTS. Asserting only that
+  // the call is written was worse than useless — see check 20.
   ok(/setDates\(ds => ds\.filter\(d => toISO\(d\) >= floorToday\)\)/.test(panel),
      'and dates already picked are compared as ISO — dd/mm/yyyy strings do not sort')
+  ok(/const toISO = \(d\) =>/.test(panel), 'toISO must be defined in the file that calls it')
   console.log('   99/99 refused, a finished day refused, and undoing one still allowed')
 }
 
@@ -654,6 +657,109 @@ console.log('\n18 The refused pins are shown to somebody')
   ok(/title:'Fixed-client rows that do nothing'/.test(ad), 'and raise it beside the other things the sheet cannot deliver')
   ok(/rows: pinIssues\.map/.test(ad), 'listing each one by name, with its reason')
   console.log('   Employee_Hours rows that are ignored are named on the Command Center')
+}
+
+// ══ 19 · A tab has to be registered in BOTH maps ═══════════════════════
+//
+// Reported from the floor within a day of the last release: clicking "Client
+// rules" showed the panel under a heading that said "Dashboard", and the row
+// of section tabs vanished, so there was no way back.
+//
+// Neither is a rendering fault. A tab needs an entry in TAB_SECTION (which
+// sidebar section it belongs to) and in TAB_META (its heading). Both fall back
+// silently — TAB_SECTION to 'live', TAB_META to overview — so a tab with
+// neither renders its content correctly under every signpost pointing
+// somewhere else.
+//
+// This has happened before. The comment above TAB_SECTION says so, by name:
+// "'stale' was missing". Adding a tab and forgetting the two maps is clearly
+// the easy mistake, so it is checked rather than remembered.
+console.log('\n19 Every tab knows which section and heading it belongs to')
+{
+  const fs = await import('fs')
+  const adminSrc = fs.readFileSync('pages/admin.js', 'utf8')
+  const sideSrc  = fs.readFileSync('components/Sidebar.js', 'utf8')
+
+  const tabs = [...(adminSrc.match(/const SECTION_TABS = \{[\s\S]*?\n\}/) || [''])[0]
+    .matchAll(/value:\s*'([a-z]+)'/g)].map(m => m[1])
+  ok(tabs.length > 8, `only ${tabs.length} tabs found — this check is scanning nothing`)
+
+  const meta    = (adminSrc.match(/const TAB_META = \{[\s\S]*?\n\}/) || [''])[0]
+  const section = (sideSrc.match(/export const TAB_SECTION = \{[\s\S]*?\n\}/) || [''])[0]
+  for (const t of tabs) {
+    ok(new RegExp(`\\b${t}\\s*:`).test(meta),    `${t} has no TAB_META entry — its heading will say "Dashboard"`)
+    ok(new RegExp(`\\b${t}\\s*:`).test(section), `${t} has no TAB_SECTION entry — the section tabs will vanish and strand it`)
+  }
+  console.log(`   ${tabs.length} tabs, each with a section and a heading`)
+}
+
+// ══ 20 · A function that is called must exist ══════════════════════════
+//
+// Check 17 asserted that a line CONTAINING `toISO(d)` was present in the
+// panel. The line was present. The function was not — it exists in two other
+// panels as a module-local const, exported from neither. The check passed
+// BECAUSE the bug was there.
+//
+// It would have thrown at seven in the morning, and only then: the effect
+// re-runs when the operating day changes and at no other time, and only if the
+// admin had a date staged. ClientRulesPanel sits outside every ErrorBoundary
+// on that page, so a ReferenceError there takes the whole Command Center to a
+// blank screen — during night-shift handover.
+//
+// A source scan cannot tell whether a name resolves. So this one reads the
+// file properly: every name called as a function must be imported, declared,
+// a JS builtin or a CSS function. Verified by putting the fault back — it
+// reports `toISO` by name.
+console.log('\n20 Nothing calls a function that does not exist')
+{
+  const fs = await import('fs')
+  const BUILTIN = new Set(['require','parseInt','parseFloat','String','Number','Boolean','Array','Object',
+    'Set','Map','Date','JSON','Math','Promise','isNaN','isFinite','encodeURIComponent','decodeURIComponent',
+    'setTimeout','clearTimeout','setInterval','clearInterval','fetch','alert','confirm','console','Error',
+    'URLSearchParams','Blob','FormData','RegExp','Symbol','BigInt','structuredClone','queueMicrotask',
+    'if','for','while','switch','catch','return','function','typeof','await','super','new','of','in',
+    'async','else','do','try','yield','delete','void',
+    // CSS function names, which appear in style strings
+    'minmax','repeat','calc','translateX','translateY','rotate','scale','url','var','rgba','linear'])
+
+  const undefinedCalls = (file) => {
+    const raw = fs.readFileSync(file, 'utf8')
+    const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
+      .filter(l => !l.trim().startsWith('//')).join('\n')
+    // Strings hold prose and CSS, and prose contains things like "the server
+    // (…)". Scanning them for calls finds words, not code.
+    const bare = src.replace(/`[^`]*`/g, '``')
+      .replace(/"(?:\\.|[^"\\])*"/g, '""')
+      .replace(/'(?:\\.|[^'\\])*'/g, "''")
+    const known = new Set(BUILTIN)
+    for (const m of src.matchAll(/import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*from/g)) {
+      if (m[1]) known.add(m[1])
+      ;(m[2] || '').split(',').forEach(x => { const n = x.split(/\s+as\s+/).pop().trim(); if (n) known.add(n) })
+    }
+    for (const m of src.matchAll(/(?:function|class)\s+([A-Za-z_$][\w$]*)/g)) known.add(m[1])
+    for (const m of src.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) known.add(m[1])
+    for (const m of src.matchAll(/(?:const|let|var)\s*[\{\[]([^}\]]*)[\}\]]/g))
+      m[1].split(',').forEach(x => { const n = x.split(':').pop().trim().replace(/^\.\.\./, ''); if (/^[A-Za-z_$][\w$]*$/.test(n)) known.add(n) })
+    for (const m of src.matchAll(/\(([^()]*)\)\s*=>/g))
+      m[1].split(',').forEach(x => { const n = x.split('=')[0].trim().replace(/^\.\.\./, ''); if (/^[A-Za-z_$][\w$]*$/.test(n)) known.add(n) })
+    for (const m of src.matchAll(/function\s*[A-Za-z_$\w]*\s*\(([^()]*)\)/g))
+      m[1].split(',').forEach(x => { const n = x.split('=')[0].trim(); if (/^[A-Za-z_$][\w$]*$/.test(n)) known.add(n) })
+    for (const m of src.matchAll(/\(\s*\{([^}]*)\}\s*\)/g))
+      m[1].split(',').forEach(x => { const n = x.split(/[:=]/)[0].trim(); if (/^[A-Za-z_$][\w$]*$/.test(n)) known.add(n) })
+    const bad = new Set()
+    for (const m of bare.matchAll(/(^|[^.\w$\'"`])([a-z][A-Za-z0-9_$]*)\s*\(/g))
+      if (!known.has(m[2])) bad.add(m[2])
+    return [...bad]
+  }
+
+  const screens = ['components/tabs/ClientRulesPanel.js', 'components/tabs/ReportsPanel.js',
+                   'components/tabs/MyClientsTab.js', 'components/tabs/ScoresPanel.js',
+                   'components/tabs/EmpDashboardTab.js', 'components/Shell.js', 'pages/admin.js']
+  for (const f of screens) {
+    const bad = undefinedCalls(f)
+    ok(bad.length === 0, `${f} calls ${bad.join(", ")} — not imported and not declared in the file`)
+  }
+  console.log(`   ${screens.length} screens read for names that do not resolve`)
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} checks passed, ${fail} failed\n`)

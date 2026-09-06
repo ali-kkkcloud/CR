@@ -36,6 +36,13 @@ const fromISO = (s) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '')
   return m ? `${m[3]}/${m[2]}/${m[1]}` : ''
 }
+// The other direction. Needed because dd/mm/yyyy strings do not sort —
+// "05/09/2026" reads as later than "30/08/2026" to a string comparison — so
+// anything comparing dates has to do it in ISO.
+const toISO = (d) => {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(d || '')
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : ''
+}
 // The operating day, 07:00 to 07:00 — before seven the platform is still on
 // yesterday's date, so "today" on this screen has to mean the same thing it
 // means everywhere else.
